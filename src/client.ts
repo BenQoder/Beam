@@ -1,0 +1,1735 @@
+import { Idiomorph } from 'idiomorph'
+import { newWebSocketRpcSession, type RpcStub } from 'capnweb'
+
+// ============ BEAM - capnweb RPC Client ============
+//
+// Uses capnweb for:
+// - Promise pipelining (multiple calls in one round-trip)
+// - Bidirectional RPC (server can call client callbacks)
+// - Automatic reconnection
+// - Type-safe method calls
+
+// Get endpoint from meta tag or default to /beam
+// Usage: <meta name="beam-endpoint" content="/custom-endpoint">
+function getEndpoint(): string {
+  const meta = document.querySelector('meta[name="beam-endpoint"]')
+  return meta?.getAttribute('content') ?? '/beam'
+}
+
+// BeamServer interface (mirrors server-side RpcTarget)
+interface BeamServer {
+  call(action: string, data?: Record<string, unknown>): Promise<string>
+  modal(modalId: string, data?: Record<string, unknown>): Promise<string>
+  drawer(drawerId: string, data?: Record<string, unknown>): Promise<string>
+  registerCallback(callback: (event: string, data: unknown) => void): Promise<void>
+}
+
+// RPC stub type for the BeamServer
+type BeamServerStub = RpcStub<BeamServer>
+
+let isOnline = navigator.onLine
+let rpcSession: BeamServerStub | null = null
+let connectingPromise: Promise<BeamServerStub> | null = null
+
+// Client callback handler for server-initiated updates
+function handleServerEvent(event: string, data: unknown): void {
+  // Dispatch custom event for app to handle
+  window.dispatchEvent(new CustomEvent('beam:server-event', { detail: { event, data } }))
+
+  // Built-in handlers
+  if (event === 'toast') {
+    const { message, type } = data as { message: string; type?: 'success' | 'error' }
+    showToast(message, type || 'success')
+  } else if (event === 'refresh') {
+    const { selector } = data as { selector: string }
+    // Could trigger a refresh of specific elements
+    window.dispatchEvent(new CustomEvent('beam:refresh', { detail: { selector } }))
+  }
+}
+
+function connect(): Promise<BeamServerStub> {
+  if (connectingPromise) {
+    return connectingPromise
+  }
+
+  if (rpcSession) {
+    return Promise.resolve(rpcSession)
+  }
+
+  connectingPromise = new Promise((resolve, reject) => {
+    try {
+      const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
+      const endpoint = getEndpoint()
+      const url = `${protocol}//${location.host}${endpoint}`
+
+      // Create capnweb RPC session with BeamServer type
+      const session = newWebSocketRpcSession<BeamServer>(url)
+
+      // Register client callback for bidirectional communication
+      // @ts-ignore - capnweb stub methods are dynamically typed
+      session.registerCallback?.(handleServerEvent)?.catch?.(() => {
+        // Server may not support callbacks, that's ok
+      })
+
+      rpcSession = session
+      connectingPromise = null
+      resolve(session)
+    } catch (err) {
+      connectingPromise = null
+      reject(err)
+    }
+  })
+
+  return connectingPromise
+}
+
+async function ensureConnected(): Promise<BeamServerStub> {
+  if (rpcSession) {
+    return rpcSession
+  }
+  return connect()
+}
+
+// API wrapper that ensures connection before calls
+const api = {
+  async call(action: string, data: Record<string, unknown> = {}): Promise<string> {
+    const session = await ensureConnected()
+    // @ts-ignore - capnweb stub methods are dynamically typed
+    return session.call(action, data)
+  },
+
+  async modal(modalId: string, params: Record<string, unknown> = {}): Promise<string> {
+    const session = await ensureConnected()
+    // @ts-ignore - capnweb stub methods are dynamically typed
+    return session.modal(modalId, params)
+  },
+
+  async drawer(drawerId: string, params: Record<string, unknown> = {}): Promise<string> {
+    const session = await ensureConnected()
+    // @ts-ignore - capnweb stub methods are dynamically typed
+    return session.drawer(drawerId, params)
+  },
+
+  // Direct access to RPC session for advanced usage (promise pipelining, etc.)
+  async getSession(): Promise<BeamServerStub> {
+    return ensureConnected()
+  },
+}
+
+// ============ DOM HELPERS ============
+
+let activeModal: HTMLElement | null = null
+let activeDrawer: HTMLElement | null = null
+
+function $(selector: string): Element | null {
+  return document.querySelector(selector)
+}
+
+function $$(selector: string): NodeListOf<Element> {
+  return document.querySelectorAll(selector)
+}
+
+function morph(target: Element, html: string, options?: { keepElements?: string[] }): void {
+  // Handle beam-keep elements
+  const keepSelectors = options?.keepElements || []
+  const keptElements = new Map<string, { el: Element; placeholder: Comment }>()
+
+  // Preserve elements marked with beam-keep
+  target.querySelectorAll('[beam-keep]').forEach((el) => {
+    const id = el.id || `beam-keep-${Math.random().toString(36).slice(2)}`
+    if (!el.id) el.id = id
+    const placeholder = document.createComment(`beam-keep:${id}`)
+    el.parentNode?.insertBefore(placeholder, el)
+    keptElements.set(id, { el, placeholder })
+    el.remove()
+  })
+
+  // Also handle explicitly specified keep selectors
+  keepSelectors.forEach((selector) => {
+    target.querySelectorAll(selector).forEach((el) => {
+      const id = el.id || `beam-keep-${Math.random().toString(36).slice(2)}`
+      if (!el.id) el.id = id
+      if (!keptElements.has(id)) {
+        const placeholder = document.createComment(`beam-keep:${id}`)
+        el.parentNode?.insertBefore(placeholder, el)
+        keptElements.set(id, { el, placeholder })
+        el.remove()
+      }
+    })
+  })
+
+  // @ts-ignore - idiomorph types
+  Idiomorph.morph(target, html, { morphStyle: 'innerHTML' })
+
+  // Restore kept elements
+  keptElements.forEach(({ el, placeholder }, id) => {
+    // Find the placeholder or element with same ID in new content
+    const walker = document.createTreeWalker(target, NodeFilter.SHOW_COMMENT)
+    let node: Comment | null
+    while ((node = walker.nextNode() as Comment | null)) {
+      if (node.textContent === `beam-keep:${id}`) {
+        node.parentNode?.replaceChild(el, node)
+        return
+      }
+    }
+    // If no placeholder, look for element with same ID to replace
+    const newEl = target.querySelector(`#${id}`)
+    if (newEl) {
+      newEl.parentNode?.replaceChild(el, newEl)
+    }
+  })
+}
+
+function getParams(el: HTMLElement): Record<string, unknown> {
+  // Start with beam-params JSON if present
+  const params: Record<string, unknown> = JSON.parse(el.getAttribute('beam-params') || '{}')
+
+  // Collect beam-data-* attributes
+  for (const attr of el.attributes) {
+    if (attr.name.startsWith('beam-data-')) {
+      const key = attr.name.slice(10) // remove 'beam-data-'
+      // Try to parse as JSON for numbers/booleans, fallback to string
+      try {
+        params[key] = JSON.parse(attr.value)
+      } catch {
+        params[key] = attr.value
+      }
+    }
+  }
+
+  return params
+}
+
+// ============ CONFIRMATION DIALOGS ============
+// Usage: <button beam-action="delete" beam-confirm="Are you sure?">Delete</button>
+// Usage: <button beam-action="delete" beam-confirm.prompt="Type DELETE to confirm|DELETE">Delete</button>
+
+function checkConfirm(el: HTMLElement): boolean {
+  const confirmMsg = el.getAttribute('beam-confirm')
+  if (!confirmMsg) return true
+
+  // Check for .prompt modifier (e.g., beam-confirm.prompt="message|expected")
+  if (el.hasAttribute('beam-confirm-prompt')) {
+    const [message, expected] = (el.getAttribute('beam-confirm-prompt') || '').split('|')
+    const input = prompt(message)
+    return input === expected
+  }
+
+  return confirm(confirmMsg)
+}
+
+// ============ LOADING INDICATORS ============
+
+// Store active actions with their params: Map<action, Set<paramsJSON>>
+const activeActions = new Map<string, Set<string>>()
+
+// Store disabled elements during request
+const disabledElements = new Map<HTMLElement, { elements: HTMLElement[]; originalStates: boolean[] }>()
+
+function setLoading(el: HTMLElement, loading: boolean, action?: string, params?: Record<string, unknown>): void {
+  // Loading state on trigger element
+  el.toggleAttribute('beam-loading', loading)
+
+  // Handle beam-disable
+  if (loading && el.hasAttribute('beam-disable')) {
+    const disableSelector = el.getAttribute('beam-disable')
+    let elementsToDisable: HTMLElement[]
+
+    if (!disableSelector || disableSelector === '' || disableSelector === 'true') {
+      // Disable the element itself and its children
+      elementsToDisable = [el, ...Array.from(el.querySelectorAll<HTMLElement>('button, input, select, textarea'))]
+    } else {
+      // Disable specific elements by selector
+      elementsToDisable = Array.from(document.querySelectorAll<HTMLElement>(disableSelector))
+    }
+
+    const originalStates = elementsToDisable.map((e) => (e as HTMLButtonElement).disabled || false)
+    elementsToDisable.forEach((e) => ((e as HTMLButtonElement).disabled = true))
+    disabledElements.set(el, { elements: elementsToDisable, originalStates })
+  } else if (!loading && disabledElements.has(el)) {
+    // Restore disabled state
+    const { elements, originalStates } = disabledElements.get(el)!
+    elements.forEach((e, i) => ((e as HTMLButtonElement).disabled = originalStates[i]))
+    disabledElements.delete(el)
+  }
+
+  // Legacy: disable buttons inside if no beam-disable specified
+  if (!el.hasAttribute('beam-disable')) {
+    el.querySelectorAll<HTMLButtonElement | HTMLInputElement>('button, input[type="submit"]').forEach((child) => {
+      child.disabled = loading
+    })
+  }
+
+  // Set .beam-active class on element during loading
+  el.classList.toggle('beam-active', loading)
+
+  // Broadcast to loading indicators
+  if (action) {
+    const paramsKey = JSON.stringify(params || {})
+    if (loading) {
+      if (!activeActions.has(action)) {
+        activeActions.set(action, new Set())
+      }
+      activeActions.get(action)!.add(paramsKey)
+    } else {
+      activeActions.get(action)?.delete(paramsKey)
+      if (activeActions.get(action)?.size === 0) {
+        activeActions.delete(action)
+      }
+    }
+    updateLoadingIndicators()
+  }
+}
+
+function getLoadingParams(el: HTMLElement): Record<string, unknown> {
+  // Start with beam-loading-params JSON if present
+  const params: Record<string, unknown> = JSON.parse(el.getAttribute('beam-loading-params') || '{}')
+
+  // Collect beam-loading-data-* attributes (override JSON params)
+  for (const attr of el.attributes) {
+    if (attr.name.startsWith('beam-loading-data-')) {
+      const key = attr.name.slice(18) // remove 'beam-loading-data-'
+      try {
+        params[key] = JSON.parse(attr.value)
+      } catch {
+        params[key] = attr.value
+      }
+    }
+  }
+  return params
+}
+
+function matchesParams(required: Record<string, unknown>, activeParamsSet: Set<string>): boolean {
+  const requiredKeys = Object.keys(required)
+  if (requiredKeys.length === 0) return true // No params required, match any
+
+  for (const paramsJson of activeParamsSet) {
+    const params = JSON.parse(paramsJson)
+    const matches = requiredKeys.every((key) => String(params[key]) === String(required[key]))
+    if (matches) return true
+  }
+  return false
+}
+
+function updateLoadingIndicators(): void {
+  document.querySelectorAll<HTMLElement>('[beam-loading-for]').forEach((el) => {
+    const targets = el
+      .getAttribute('beam-loading-for')!
+      .split(',')
+      .map((s) => s.trim())
+    const requiredParams = getLoadingParams(el)
+
+    let isActive = false
+    if (targets.includes('*')) {
+      // Match any action
+      isActive = activeActions.size > 0
+    } else {
+      // Match specific action(s) with optional params
+      isActive = targets.some((action) => {
+        const actionParams = activeActions.get(action)
+        return actionParams && matchesParams(requiredParams, actionParams)
+      })
+    }
+
+    // Show/hide
+    if (el.hasAttribute('beam-loading-remove')) {
+      el.style.display = isActive ? 'none' : ''
+    } else if (!el.hasAttribute('beam-loading-class')) {
+      el.style.display = isActive ? '' : 'none'
+    }
+
+    // Add/remove class
+    const loadingClass = el.getAttribute('beam-loading-class')
+    if (loadingClass) {
+      el.classList.toggle(loadingClass, isActive)
+    }
+  })
+}
+
+// Hide loading indicators by default on page load
+document.querySelectorAll<HTMLElement>('[beam-loading-for]:not([beam-loading-remove]):not([beam-loading-class])').forEach((el) => {
+  el.style.display = 'none'
+})
+
+// ============ OPTIMISTIC UI ============
+
+interface OptimisticHandle {
+  rollback: () => void
+}
+
+function optimistic(el: HTMLElement): OptimisticHandle {
+  const template = el.getAttribute('beam-optimistic')
+  const targetSelector = el.getAttribute('beam-target')
+  let snapshot: string | null = null
+
+  if (template && targetSelector) {
+    const targetEl = $(targetSelector)
+    if (targetEl) {
+      snapshot = targetEl.innerHTML
+      const params = getParams(el)
+      const html = template.replace(/\{\{(\w+)\}\}/g, (_, key) => String(params[key] ?? ''))
+      morph(targetEl, html)
+    }
+  }
+
+  return {
+    rollback() {
+      if (snapshot && targetSelector) {
+        const targetEl = $(targetSelector)
+        if (targetEl) morph(targetEl, snapshot)
+      }
+    },
+  }
+}
+
+// ============ PLACEHOLDER ============
+// Usage: <button beam-action="load" beam-target="#content" beam-placeholder="<p>Loading...</p>">
+
+interface PlaceholderHandle {
+  restore: () => void
+}
+
+function showPlaceholder(el: HTMLElement): PlaceholderHandle {
+  const placeholder = el.getAttribute('beam-placeholder')
+  const targetSelector = el.getAttribute('beam-target')
+  let snapshot: string | null = null
+
+  if (placeholder && targetSelector) {
+    const targetEl = $(targetSelector)
+    if (targetEl) {
+      snapshot = targetEl.innerHTML
+      // Check if placeholder is a selector (starts with # or .)
+      if (placeholder.startsWith('#') || placeholder.startsWith('.')) {
+        const tpl = document.querySelector(placeholder)
+        if (tpl instanceof HTMLTemplateElement) {
+          targetEl.innerHTML = tpl.innerHTML
+        } else if (tpl) {
+          targetEl.innerHTML = tpl.innerHTML
+        }
+      } else {
+        targetEl.innerHTML = placeholder
+      }
+    }
+  }
+
+  return {
+    restore() {
+      if (snapshot && targetSelector) {
+        const targetEl = $(targetSelector)
+        if (targetEl) targetEl.innerHTML = snapshot
+      }
+    },
+  }
+}
+
+// ============ SWAP STRATEGIES ============
+
+function swap(target: Element, html: string, mode: string, trigger?: HTMLElement): void {
+  const { main, oob } = parseOobSwaps(html)
+
+  switch (mode) {
+    case 'append':
+      trigger?.remove()
+      target.insertAdjacentHTML('beforeend', main)
+      break
+    case 'prepend':
+      trigger?.remove()
+      target.insertAdjacentHTML('afterbegin', main)
+      break
+    case 'replace':
+      target.innerHTML = main
+      break
+    case 'delete':
+      target.remove()
+      break
+    case 'morph':
+    default:
+      morph(target, main)
+      break
+  }
+
+  // Out-of-band swaps
+  for (const { selector, content, swapMode } of oob) {
+    const oobTarget = $(selector)
+    if (oobTarget) {
+      if (swapMode === 'morph' || !swapMode) {
+        morph(oobTarget, content)
+      } else {
+        swap(oobTarget, content, swapMode)
+      }
+    }
+  }
+
+  // Process hungry elements - auto-update elements that match IDs in response
+  processHungryElements(html)
+}
+
+function parseOobSwaps(html: string): { main: string; oob: Array<{ selector: string; content: string; swapMode: string }> } {
+  const temp = document.createElement('div')
+  temp.innerHTML = html
+
+  const oob: Array<{ selector: string; content: string; swapMode: string }> = []
+
+  temp.querySelectorAll('template[beam-touch]').forEach((tpl) => {
+    const selector = tpl.getAttribute('beam-touch')
+    const swapMode = tpl.getAttribute('beam-swap') || 'morph'
+    if (selector) {
+      oob.push({ selector, content: (tpl as HTMLTemplateElement).innerHTML, swapMode })
+    }
+    tpl.remove()
+  })
+
+  return { main: temp.innerHTML, oob }
+}
+
+// ============ RPC WRAPPER ============
+
+async function rpc(action: string, data: Record<string, unknown>, el: HTMLElement): Promise<void> {
+  const targetSelector = el.getAttribute('beam-target')
+  const swapMode = el.getAttribute('beam-swap') || 'morph'
+  const opt = optimistic(el)
+  const placeholder = showPlaceholder(el)
+
+  setLoading(el, true, action, data)
+
+  try {
+    const html = await api.call(action, data)
+    if (targetSelector) {
+      const target = $(targetSelector)
+      if (target) {
+        swap(target, html, swapMode, el)
+      }
+    }
+
+    // Handle history
+    handleHistory(el)
+  } catch (err) {
+    opt.rollback()
+    placeholder.restore()
+    showToast('Something went wrong. Please try again.', 'error')
+    console.error('RPC error:', err)
+  } finally {
+    setLoading(el, false, action, data)
+  }
+}
+
+// ============ HISTORY MANAGEMENT ============
+// Usage: <a beam-action="load" beam-push="/new-url">Link</a>
+// Usage: <button beam-action="filter" beam-replace="?sort=name">Filter</button>
+
+function handleHistory(el: HTMLElement): void {
+  const pushUrl = el.getAttribute('beam-push')
+  const replaceUrl = el.getAttribute('beam-replace')
+
+  if (pushUrl) {
+    history.pushState({ beam: true }, '', pushUrl)
+  } else if (replaceUrl) {
+    history.replaceState({ beam: true }, '', replaceUrl)
+  }
+}
+
+// Handle back/forward navigation
+window.addEventListener('popstate', (e) => {
+  // Reload page on back/forward for now
+  // Could be enhanced to restore content from cache
+  if (e.state?.beam) {
+    location.reload()
+  }
+})
+
+// ============ BUTTON HANDLING ============
+
+// Instant click - trigger on mousedown for faster response
+document.addEventListener('mousedown', async (e) => {
+  const target = e.target as Element
+  if (!target?.closest) return
+  const btn = target.closest('[beam-action][beam-instant]:not(form)') as HTMLElement | null
+  if (!btn || btn.tagName === 'FORM') return
+
+  // Skip if submit button inside a beam form
+  if (btn.closest('form[beam-action]') && btn.getAttribute('type') === 'submit') return
+
+  e.preventDefault()
+
+  // Check confirmation
+  if (!checkConfirm(btn)) return
+
+  const action = btn.getAttribute('beam-action')
+  if (!action) return
+
+  const params = getParams(btn)
+  await rpc(action, params, btn)
+
+  if (btn.hasAttribute('beam-close')) {
+    closeModal()
+    closeDrawer()
+  }
+})
+
+// Regular click handling
+document.addEventListener('click', async (e) => {
+  const target = e.target as Element
+  if (!target?.closest) return
+  const btn = target.closest('[beam-action]:not(form):not([beam-instant])') as HTMLElement | null
+  if (!btn || btn.tagName === 'FORM') return
+
+  // Skip if submit button inside a beam form
+  if (btn.closest('form[beam-action]') && btn.getAttribute('type') === 'submit') return
+
+  e.preventDefault()
+
+  // Check confirmation
+  if (!checkConfirm(btn)) return
+
+  const action = btn.getAttribute('beam-action')
+  if (!action) return
+
+  const params = getParams(btn)
+
+  await rpc(action, params, btn)
+
+  if (btn.hasAttribute('beam-close')) {
+    closeModal()
+    closeDrawer()
+  }
+})
+
+// ============ MODALS ============
+
+document.addEventListener('click', (e) => {
+  const target = e.target as Element
+  if (!target?.closest) return
+
+  const trigger = target.closest('[beam-modal]') as HTMLElement | null
+  if (trigger) {
+    e.preventDefault()
+
+    // Check confirmation
+    if (!checkConfirm(trigger)) return
+
+    const modalId = trigger.getAttribute('beam-modal')
+    const params = getParams(trigger)
+    if (modalId) {
+      openModal(modalId, params)
+    }
+  }
+
+  // Close on backdrop click
+  if (target.matches?.('#modal-backdrop')) {
+    closeModal()
+  }
+
+  // Close button (handles both modal and drawer)
+  const closeBtn = target.closest('[beam-close]') as HTMLElement | null
+  if (closeBtn && !closeBtn.hasAttribute('beam-action')) {
+    if (activeDrawer) {
+      closeDrawer()
+    } else {
+      closeModal()
+    }
+  }
+})
+
+// Drawer triggers
+document.addEventListener('click', (e) => {
+  const target = e.target as Element
+  if (!target?.closest) return
+
+  const trigger = target.closest('[beam-drawer]') as HTMLElement | null
+  if (trigger) {
+    e.preventDefault()
+
+    // Check confirmation
+    if (!checkConfirm(trigger)) return
+
+    const drawerId = trigger.getAttribute('beam-drawer')
+    const position = trigger.getAttribute('beam-position') || 'right'
+    const size = trigger.getAttribute('beam-size') || 'medium'
+    const params = getParams(trigger)
+    if (drawerId) {
+      openDrawer(drawerId, params, { position, size })
+    }
+  }
+
+  // Close on backdrop click
+  if (target.matches?.('#drawer-backdrop')) {
+    closeDrawer()
+  }
+})
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    if (activeDrawer) {
+      closeDrawer()
+    } else if (activeModal) {
+      closeModal()
+    }
+  }
+})
+
+async function openModal(id: string, params: Record<string, unknown> = {}): Promise<void> {
+  try {
+    const html = await api.modal(id, params)
+
+    let backdrop = $('#modal-backdrop') as HTMLElement | null
+    if (!backdrop) {
+      backdrop = document.createElement('div')
+      backdrop.id = 'modal-backdrop'
+      document.body.appendChild(backdrop)
+    }
+
+    backdrop.innerHTML = `
+      <div id="modal-content" role="dialog" aria-modal="true">
+        ${html}
+      </div>
+    `
+
+    backdrop.offsetHeight
+    backdrop.classList.add('open')
+    document.body.classList.add('modal-open')
+
+    activeModal = $('#modal-content') as HTMLElement
+
+    const autoFocus = activeModal?.querySelector<HTMLElement>('[autofocus]')
+    const firstInput = activeModal?.querySelector<HTMLElement>('input, button, textarea, select')
+    ;(autoFocus || firstInput)?.focus()
+  } catch (err) {
+    showToast('Failed to open modal.', 'error')
+    console.error('Modal error:', err)
+  }
+}
+
+function closeModal(): void {
+  const backdrop = $('#modal-backdrop') as HTMLElement | null
+  if (backdrop) {
+    backdrop.classList.remove('open')
+    setTimeout(() => {
+      backdrop.innerHTML = ''
+    }, 200)
+  }
+  document.body.classList.remove('modal-open')
+  activeModal = null
+}
+
+// ============ DRAWERS ============
+
+interface DrawerOptions {
+  position: string
+  size: string
+}
+
+async function openDrawer(id: string, params: Record<string, unknown> = {}, options: DrawerOptions): Promise<void> {
+  try {
+    const html = await api.drawer(id, params)
+
+    let backdrop = $('#drawer-backdrop') as HTMLElement | null
+    if (!backdrop) {
+      backdrop = document.createElement('div')
+      backdrop.id = 'drawer-backdrop'
+      document.body.appendChild(backdrop)
+    }
+
+    // Set position and size as data attributes for CSS styling
+    const { position, size } = options
+    backdrop.innerHTML = `
+      <div id="drawer-content" role="dialog" aria-modal="true" data-position="${position}" data-size="${size}">
+        ${html}
+      </div>
+    `
+
+    backdrop.offsetHeight // Force reflow
+    backdrop.classList.add('open')
+    document.body.classList.add('drawer-open')
+
+    activeDrawer = $('#drawer-content') as HTMLElement
+
+    const autoFocus = activeDrawer?.querySelector<HTMLElement>('[autofocus]')
+    const firstInput = activeDrawer?.querySelector<HTMLElement>('input, button, textarea, select')
+    ;(autoFocus || firstInput)?.focus()
+  } catch (err) {
+    showToast('Failed to open drawer.', 'error')
+    console.error('Drawer error:', err)
+  }
+}
+
+function closeDrawer(): void {
+  const backdrop = $('#drawer-backdrop') as HTMLElement | null
+  if (backdrop) {
+    backdrop.classList.remove('open')
+    setTimeout(() => {
+      backdrop.innerHTML = ''
+    }, 200)
+  }
+  document.body.classList.remove('drawer-open')
+  activeDrawer = null
+}
+
+// ============ TOAST NOTIFICATIONS ============
+
+function showToast(message: string, type: 'success' | 'error' = 'success'): void {
+  let container = $('#toast-container') as HTMLElement | null
+  if (!container) {
+    container = document.createElement('div')
+    container.id = 'toast-container'
+    document.body.appendChild(container)
+  }
+
+  const toast = document.createElement('div')
+  toast.className = `toast toast-${type}`
+  toast.textContent = message
+  toast.setAttribute('role', 'alert')
+  container.appendChild(toast)
+
+  requestAnimationFrame(() => {
+    toast.classList.add('show')
+  })
+
+  setTimeout(() => {
+    toast.classList.remove('show')
+    setTimeout(() => toast.remove(), 300)
+  }, 3000)
+}
+
+// ============ OFFLINE DETECTION ============
+// Usage: <div beam-offline>You are offline</div>
+// Usage: <button beam-action="save" beam-offline-disable>Save</button>
+
+function updateOfflineState(): void {
+  isOnline = navigator.onLine
+
+  // Show/hide offline indicators
+  document.querySelectorAll<HTMLElement>('[beam-offline]').forEach((el) => {
+    const showClass = el.getAttribute('beam-offline-class')
+    if (showClass) {
+      el.classList.toggle(showClass, !isOnline)
+    } else {
+      el.style.display = isOnline ? 'none' : ''
+    }
+  })
+
+  // Disable/enable elements when offline
+  document.querySelectorAll<HTMLElement>('[beam-offline-disable]').forEach((el) => {
+    ;(el as HTMLButtonElement).disabled = !isOnline
+  })
+
+  // Add/remove body class
+  document.body.classList.toggle('beam-offline', !isOnline)
+}
+
+window.addEventListener('online', updateOfflineState)
+window.addEventListener('offline', updateOfflineState)
+
+// Initialize offline state
+updateOfflineState()
+
+// ============ NAVIGATION FEEDBACK ============
+// Usage: <nav beam-nav><a href="/home">Home</a></nav>
+// Links get .beam-current when they match current URL
+
+function updateNavigation(): void {
+  const currentPath = location.pathname
+  const currentUrl = location.href
+
+  document.querySelectorAll('[beam-nav] a, a[beam-nav]').forEach((link) => {
+    const href = link.getAttribute('href')
+    if (!href) return
+
+    // Check if link matches current path
+    const linkUrl = new URL(href, location.origin)
+    const isExact = linkUrl.pathname === currentPath
+    const isPartial = currentPath.startsWith(linkUrl.pathname) && linkUrl.pathname !== '/'
+
+    // Exact match or partial match (for section highlighting)
+    const isCurrent = link.hasAttribute('beam-nav-exact') ? isExact : isExact || isPartial
+
+    link.classList.toggle('beam-current', isCurrent)
+    if (isCurrent) {
+      link.setAttribute('aria-current', 'page')
+    } else {
+      link.removeAttribute('aria-current')
+    }
+  })
+}
+
+// Update navigation on page load and history changes
+updateNavigation()
+window.addEventListener('popstate', updateNavigation)
+
+// ============ CONDITIONAL SHOW/HIDE (beam-switch) ============
+// Usage: <select name="type" beam-switch=".type-options">
+//          <option value="a">A</option>
+//          <option value="b">B</option>
+//        </select>
+//        <div class="type-options" beam-show-for="a">Options for A</div>
+//        <div class="type-options" beam-show-for="b">Options for B</div>
+
+function setupSwitch(el: HTMLElement): void {
+  const targetSelector = el.getAttribute('beam-switch')!
+  const event = el.getAttribute('beam-switch-event') || 'input'
+
+  const updateTargets = () => {
+    const value = (el as HTMLInputElement | HTMLSelectElement).value
+
+    // Find targets within the switch region or document
+    const region = el.closest('[beam-switch-region]') || el.closest('form') || document
+    region.querySelectorAll<HTMLElement>(targetSelector).forEach((target) => {
+      const showFor = target.getAttribute('beam-show-for')
+      const hideFor = target.getAttribute('beam-hide-for')
+      const enableFor = target.getAttribute('beam-enable-for')
+      const disableFor = target.getAttribute('beam-disable-for')
+
+      // Handle show/hide
+      if (showFor !== null) {
+        const values = showFor.split(',').map((v) => v.trim())
+        const shouldShow = values.includes(value) || (showFor === '' && value !== '')
+        target.style.display = shouldShow ? '' : 'none'
+      }
+      if (hideFor !== null) {
+        const values = hideFor.split(',').map((v) => v.trim())
+        const shouldHide = values.includes(value)
+        target.style.display = shouldHide ? 'none' : ''
+      }
+
+      // Handle enable/disable
+      if (enableFor !== null) {
+        const values = enableFor.split(',').map((v) => v.trim())
+        const shouldEnable = values.includes(value)
+        ;(target as HTMLButtonElement).disabled = !shouldEnable
+      }
+      if (disableFor !== null) {
+        const values = disableFor.split(',').map((v) => v.trim())
+        const shouldDisable = values.includes(value)
+        ;(target as HTMLButtonElement).disabled = shouldDisable
+      }
+    })
+  }
+
+  el.addEventListener(event, updateTargets)
+
+  // Initial state
+  updateTargets()
+}
+
+// Observe switch elements
+const switchObserver = new MutationObserver(() => {
+  document.querySelectorAll<HTMLElement>('[beam-switch]:not([beam-switch-observed])').forEach((el) => {
+    el.setAttribute('beam-switch-observed', '')
+    setupSwitch(el)
+  })
+})
+
+switchObserver.observe(document.body, { childList: true, subtree: true })
+
+// Initialize existing switch elements
+document.querySelectorAll<HTMLElement>('[beam-switch]').forEach((el) => {
+  el.setAttribute('beam-switch-observed', '')
+  setupSwitch(el)
+})
+
+// ============ AUTO-SUBMIT FORMS ============
+// Usage: <form beam-action="filter" beam-autosubmit beam-debounce="300">
+
+function setupAutosubmit(form: HTMLFormElement): void {
+  const debounce = parseInt(form.getAttribute('beam-debounce') || '300', 10)
+  const event = form.getAttribute('beam-autosubmit-event') || 'input'
+  let timeout: ReturnType<typeof setTimeout>
+
+  const submitForm = () => {
+    clearTimeout(timeout)
+    timeout = setTimeout(() => {
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    }, debounce)
+  }
+
+  form.querySelectorAll('input, select, textarea').forEach((input) => {
+    input.addEventListener(event, submitForm)
+    // Also listen to change for selects and checkboxes
+    if (input.tagName === 'SELECT' || (input as HTMLInputElement).type === 'checkbox' || (input as HTMLInputElement).type === 'radio') {
+      input.addEventListener('change', submitForm)
+    }
+  })
+}
+
+// Observe autosubmit forms
+const autosubmitObserver = new MutationObserver(() => {
+  document.querySelectorAll<HTMLFormElement>('form[beam-autosubmit]:not([beam-autosubmit-observed])').forEach((form) => {
+    form.setAttribute('beam-autosubmit-observed', '')
+    setupAutosubmit(form)
+  })
+})
+
+autosubmitObserver.observe(document.body, { childList: true, subtree: true })
+
+// Initialize existing autosubmit forms
+document.querySelectorAll<HTMLFormElement>('form[beam-autosubmit]').forEach((form) => {
+  form.setAttribute('beam-autosubmit-observed', '')
+  setupAutosubmit(form)
+})
+
+// ============ BOOST LINKS ============
+// Usage: <main beam-boost>...all links become AJAX...</main>
+// Usage: <a href="/page" beam-boost>Single boosted link</a>
+
+document.addEventListener('click', async (e) => {
+  const target = e.target as Element
+  if (!target?.closest) return
+
+  // Check if click is on a link within a boosted container or a boosted link itself
+  const link = target.closest('a[href]') as HTMLAnchorElement | null
+  if (!link) return
+
+  const isBoosted = link.hasAttribute('beam-boost') || link.closest('[beam-boost]')
+  if (!isBoosted) return
+
+  // Skip if explicitly not boosted
+  if (link.hasAttribute('beam-boost-off')) return
+
+  // Skip external links
+  if (link.host !== location.host) return
+
+  // Skip if modifier keys or non-left click
+  if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return
+
+  // Skip if target="_blank"
+  if (link.target === '_blank') return
+
+  // Skip if download link
+  if (link.hasAttribute('download')) return
+
+  e.preventDefault()
+
+  // Check confirmation
+  if (!checkConfirm(link)) return
+
+  const href = link.href
+  const targetSelector = link.getAttribute('beam-target') || 'body'
+  const swapMode = link.getAttribute('beam-swap') || 'morph'
+
+  // Show placeholder if specified
+  const placeholder = showPlaceholder(link)
+
+  link.classList.add('beam-active')
+
+  try {
+    // Fetch the page
+    const response = await fetch(href, {
+      headers: { 'X-Beam-Boost': 'true' },
+    })
+    const html = await response.text()
+
+    // Parse response and extract target content
+    const parser = new DOMParser()
+    const doc = parser.parseFromString(html, 'text/html')
+
+    // Get content from target selector
+    const sourceEl = doc.querySelector(targetSelector)
+    if (sourceEl) {
+      const target = $(targetSelector)
+      if (target) {
+        swap(target, sourceEl.innerHTML, swapMode)
+      }
+    }
+
+    // Update title
+    const title = doc.querySelector('title')
+    if (title) {
+      document.title = title.textContent || ''
+    }
+
+    // Push to history
+    if (!link.hasAttribute('beam-replace')) {
+      history.pushState({ beam: true, url: href }, '', href)
+    } else {
+      history.replaceState({ beam: true, url: href }, '', href)
+    }
+
+    // Update navigation state
+    updateNavigation()
+  } catch (err) {
+    placeholder.restore()
+    // Fallback to normal navigation
+    console.error('Boost error, falling back to navigation:', err)
+    location.href = href
+  } finally {
+    link.classList.remove('beam-active')
+  }
+})
+
+// ============ INFINITE SCROLL ============
+// Usage: <div beam-infinite beam-action="loadMore" beam-params='{"page":2}' beam-target="#list"></div>
+
+const infiniteObserver = new IntersectionObserver(
+  async (entries) => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue
+
+      const sentinel = entry.target as HTMLElement
+      if (sentinel.hasAttribute('beam-loading')) continue
+
+      const action = sentinel.getAttribute('beam-action')
+      const targetSelector = sentinel.getAttribute('beam-target')
+      const swapMode = sentinel.getAttribute('beam-swap') || 'append'
+      if (!action || !targetSelector) continue
+
+      // Check confirmation
+      if (!checkConfirm(sentinel)) continue
+
+      const params = getParams(sentinel)
+
+      sentinel.setAttribute('beam-loading', '')
+      sentinel.classList.add('loading')
+      setLoading(sentinel, true, action, params)
+
+      try {
+        const html = await api.call(action, params)
+        const target = $(targetSelector)
+
+        if (target && html) {
+          swap(target, html, swapMode, sentinel)
+        }
+      } catch (err) {
+        console.error('Infinite scroll error:', err)
+        sentinel.removeAttribute('beam-loading')
+        sentinel.classList.remove('loading')
+        sentinel.classList.add('error')
+      } finally {
+        setLoading(sentinel, false, action, params)
+      }
+    }
+  },
+  { rootMargin: '200px' }
+)
+
+// Observe sentinels (now and future)
+new MutationObserver(() => {
+  document.querySelectorAll('[beam-infinite]:not([beam-observed])').forEach((el) => {
+    el.setAttribute('beam-observed', '')
+    infiniteObserver.observe(el)
+  })
+}).observe(document.body, { childList: true, subtree: true })
+
+document.querySelectorAll('[beam-infinite]').forEach((el) => {
+  el.setAttribute('beam-observed', '')
+  infiniteObserver.observe(el)
+})
+
+// ============ PRELOADING & CACHING ============
+// Usage: <a beam-action="getProduct" beam-data-id="1" beam-preload>View</a>
+// Usage: <button beam-action="getList" beam-cache="30s">Load</button>
+
+interface CacheEntry {
+  html: string
+  expires: number
+}
+
+const cache = new Map<string, CacheEntry>()
+const preloading = new Set<string>()
+
+function getCacheKey(action: string, params: Record<string, unknown>): string {
+  return `${action}:${JSON.stringify(params)}`
+}
+
+function parseCacheDuration(duration: string): number {
+  const match = duration.match(/^(\d+)(s|m|h)?$/)
+  if (!match) return 0
+  const value = parseInt(match[1], 10)
+  const unit = match[2] || 's'
+  switch (unit) {
+    case 'm':
+      return value * 60 * 1000
+    case 'h':
+      return value * 60 * 60 * 1000
+    default:
+      return value * 1000
+  }
+}
+
+async function fetchWithCache(action: string, params: Record<string, unknown>, cacheDuration?: string): Promise<string> {
+  const key = getCacheKey(action, params)
+
+  // Check cache
+  const cached = cache.get(key)
+  if (cached && cached.expires > Date.now()) {
+    return cached.html
+  }
+
+  // Fetch fresh
+  const html = await api.call(action, params)
+
+  // Store in cache if duration specified
+  if (cacheDuration) {
+    const duration = parseCacheDuration(cacheDuration)
+    if (duration > 0) {
+      cache.set(key, { html, expires: Date.now() + duration })
+    }
+  }
+
+  return html
+}
+
+async function preload(el: HTMLElement): Promise<void> {
+  const action = el.getAttribute('beam-action')
+  if (!action) return
+
+  const params = getParams(el)
+  const key = getCacheKey(action, params)
+
+  // Skip if already cached or preloading
+  if (cache.has(key) || preloading.has(key)) return
+
+  preloading.add(key)
+
+  try {
+    const html = await api.call(action, params)
+    // Cache for 30 seconds by default for preloaded content
+    cache.set(key, { html, expires: Date.now() + 30000 })
+  } catch {
+    // Silently fail preload
+  } finally {
+    preloading.delete(key)
+  }
+}
+
+// Preload on hover
+document.addEventListener(
+  'mouseenter',
+  (e) => {
+    const target = e.target as Element
+    if (!target?.closest) return
+    const el = target.closest('[beam-preload][beam-action]') as HTMLElement | null
+    if (el) {
+      preload(el)
+    }
+  },
+  true
+)
+
+// Preload on touchstart for mobile
+document.addEventListener(
+  'touchstart',
+  (e) => {
+    const target = e.target as Element
+    if (!target?.closest) return
+    const el = target.closest('[beam-preload][beam-action]') as HTMLElement | null
+    if (el) {
+      preload(el)
+    }
+  },
+  { passive: true }
+)
+
+// Clear cache utility
+function clearCache(action?: string): void {
+  if (action) {
+    for (const key of cache.keys()) {
+      if (key.startsWith(action + ':')) {
+        cache.delete(key)
+      }
+    }
+  } else {
+    cache.clear()
+  }
+}
+
+// ============ PROGRESSIVE ENHANCEMENT ============
+// Links with href fallback to full page navigation if JS fails
+// Usage: <a href="/products/1" beam-action="getProduct" beam-target="#main">View</a>
+
+document.addEventListener(
+  'click',
+  async (e) => {
+    const target = e.target as Element
+    if (!target?.closest) return
+    const link = target.closest('a[beam-action][href]:not([beam-instant])') as HTMLAnchorElement | null
+    if (!link) return
+
+    // Let normal navigation happen if:
+    // - Meta/Ctrl key held (new tab)
+    // - Middle click
+    // - Link has target="_blank"
+    if (e.metaKey || e.ctrlKey || e.button !== 0 || link.target === '_blank') return
+
+    e.preventDefault()
+
+    // Check confirmation
+    if (!checkConfirm(link)) return
+
+    const action = link.getAttribute('beam-action')
+    if (!action) return
+
+    const params = getParams(link)
+    const cacheDuration = link.getAttribute('beam-cache')
+
+    // Use cached result if available
+    const key = getCacheKey(action, params)
+    const cached = cache.get(key)
+
+    const targetSelector = link.getAttribute('beam-target')
+    const swapMode = link.getAttribute('beam-swap') || 'morph'
+
+    // Show placeholder
+    const placeholder = showPlaceholder(link)
+
+    setLoading(link, true, action, params)
+
+    try {
+      const html = cached && cached.expires > Date.now() ? cached.html : await fetchWithCache(action, params, cacheDuration || undefined)
+
+      if (targetSelector) {
+        const target = $(targetSelector)
+        if (target) {
+          swap(target, html, swapMode, link)
+        }
+      }
+
+      // Handle history
+      handleHistory(link)
+
+      // Update navigation
+      updateNavigation()
+    } catch (err) {
+      placeholder.restore()
+      // Fallback to normal navigation on error
+      console.error('Beam link error, falling back to navigation:', err)
+      location.href = link.href
+    } finally {
+      setLoading(link, false, action, params)
+    }
+  },
+  true
+)
+
+// ============ FORM HANDLING ============
+// Pure RPC forms - no traditional POST
+// Usage: <form beam-action="createProduct" beam-target="#result">
+
+document.addEventListener('submit', async (e) => {
+  const target = e.target as Element
+  if (!target?.closest) return
+  const form = target.closest('form[beam-action]') as HTMLFormElement | null
+  if (!form) return
+
+  e.preventDefault()
+
+  // Check confirmation
+  if (!checkConfirm(form)) return
+
+  const action = form.getAttribute('beam-action')
+  if (!action) return
+
+  const data = Object.fromEntries(new FormData(form))
+  const targetSelector = form.getAttribute('beam-target')
+  const swapMode = form.getAttribute('beam-swap') || 'morph'
+
+  // Show placeholder
+  const placeholder = showPlaceholder(form)
+
+  setLoading(form, true, action, data as Record<string, unknown>)
+
+  try {
+    const html = await api.call(action, data as Record<string, unknown>)
+
+    if (targetSelector) {
+      const target = $(targetSelector)
+      if (target) {
+        swap(target, html, swapMode)
+      }
+    }
+
+    if (form.hasAttribute('beam-reset')) {
+      form.reset()
+    }
+    if (form.hasAttribute('beam-close')) {
+      closeModal()
+    }
+
+    // Handle history
+    handleHistory(form)
+  } catch (err) {
+    placeholder.restore()
+    console.error('Beam form error:', err)
+    showToast('Something went wrong. Please try again.', 'error')
+  } finally {
+    setLoading(form, false, action, data as Record<string, unknown>)
+  }
+})
+
+// ============ REAL-TIME VALIDATION ============
+// Usage: <input name="email" beam-validate="#email-errors" beam-watch="input" beam-debounce="300">
+
+function setupValidation(el: HTMLElement): void {
+  const event = el.getAttribute('beam-watch') || 'change'
+  const debounce = parseInt(el.getAttribute('beam-debounce') || '300', 10)
+  const targetSelector = el.getAttribute('beam-validate')!
+
+  let timeout: ReturnType<typeof setTimeout>
+
+  el.addEventListener(event, () => {
+    clearTimeout(timeout)
+    timeout = setTimeout(async () => {
+      const form = el.closest('form') as HTMLFormElement | null
+      if (!form) return
+
+      const action = form.getAttribute('beam-action')
+      if (!action) return
+
+      const fieldName = el.getAttribute('name')
+      if (!fieldName) return
+
+      const formData = Object.fromEntries(new FormData(form))
+      const data = { ...formData, _validate: fieldName }
+
+      try {
+        const html = await api.call(action, data as Record<string, unknown>)
+        const target = $(targetSelector)
+        if (target) {
+          morph(target, html)
+        }
+      } catch (err) {
+        console.error('Validation error:', err)
+      }
+    }, debounce)
+  })
+}
+
+// Observe validation elements (current and future)
+const validationObserver = new MutationObserver(() => {
+  document.querySelectorAll<HTMLElement>('[beam-validate]:not([beam-validation-observed])').forEach((el) => {
+    el.setAttribute('beam-validation-observed', '')
+    setupValidation(el)
+  })
+})
+
+validationObserver.observe(document.body, { childList: true, subtree: true })
+
+// Initialize existing validation elements
+document.querySelectorAll<HTMLElement>('[beam-validate]').forEach((el) => {
+  el.setAttribute('beam-validation-observed', '')
+  setupValidation(el)
+})
+
+// ============ DEFERRED LOADING ============
+// Usage: <div beam-defer beam-action="loadComments" beam-target="#comments">Loading...</div>
+
+const deferObserver = new IntersectionObserver(
+  async (entries) => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue
+
+      const el = entry.target as HTMLElement
+      if (el.hasAttribute('beam-defer-loaded')) continue
+
+      el.setAttribute('beam-defer-loaded', '')
+      deferObserver.unobserve(el)
+
+      const action = el.getAttribute('beam-action')
+      if (!action) continue
+
+      const params = getParams(el)
+      const targetSelector = el.getAttribute('beam-target')
+      const swapMode = el.getAttribute('beam-swap') || 'morph'
+
+      setLoading(el, true, action, params)
+
+      try {
+        const html = await api.call(action, params)
+        const target = targetSelector ? $(targetSelector) : el
+        if (target) {
+          swap(target, html, swapMode)
+        }
+      } catch (err) {
+        console.error('Defer error:', err)
+      } finally {
+        setLoading(el, false, action, params)
+      }
+    }
+  },
+  { rootMargin: '100px' }
+)
+
+// Observe defer elements (current and future)
+const deferMutationObserver = new MutationObserver(() => {
+  document.querySelectorAll<HTMLElement>('[beam-defer]:not([beam-defer-observed])').forEach((el) => {
+    el.setAttribute('beam-defer-observed', '')
+    deferObserver.observe(el)
+  })
+})
+
+deferMutationObserver.observe(document.body, { childList: true, subtree: true })
+
+// Initialize existing defer elements
+document.querySelectorAll<HTMLElement>('[beam-defer]').forEach((el) => {
+  el.setAttribute('beam-defer-observed', '')
+  deferObserver.observe(el)
+})
+
+// ============ POLLING ============
+// Usage: <div beam-poll beam-interval="5000" beam-action="getStatus" beam-target="#status">...</div>
+
+const pollingElements = new Map<HTMLElement, ReturnType<typeof setInterval>>()
+
+function startPolling(el: HTMLElement): void {
+  if (pollingElements.has(el)) return
+
+  const interval = parseInt(el.getAttribute('beam-interval') || '5000', 10)
+  const action = el.getAttribute('beam-action')
+  if (!action) return
+
+  const poll = async () => {
+    // Stop if element is no longer in DOM
+    if (!document.body.contains(el)) {
+      stopPolling(el)
+      return
+    }
+
+    // Skip if offline
+    if (!isOnline) return
+
+    const params = getParams(el)
+    const targetSelector = el.getAttribute('beam-target')
+    const swapMode = el.getAttribute('beam-swap') || 'morph'
+
+    try {
+      const html = await api.call(action, params)
+      const target = targetSelector ? $(targetSelector) : el
+      if (target) {
+        swap(target, html, swapMode)
+      }
+    } catch (err) {
+      console.error('Poll error:', err)
+    }
+  }
+
+  const timerId = setInterval(poll, interval)
+  pollingElements.set(el, timerId)
+
+  // Initial poll immediately (unless beam-poll-delay is set)
+  if (!el.hasAttribute('beam-poll-delay')) {
+    poll()
+  }
+}
+
+function stopPolling(el: HTMLElement): void {
+  const timerId = pollingElements.get(el)
+  if (timerId) {
+    clearInterval(timerId)
+    pollingElements.delete(el)
+  }
+}
+
+// Observe polling elements (current and future)
+const pollMutationObserver = new MutationObserver(() => {
+  document.querySelectorAll<HTMLElement>('[beam-poll]:not([beam-poll-observed])').forEach((el) => {
+    el.setAttribute('beam-poll-observed', '')
+    startPolling(el)
+  })
+})
+
+pollMutationObserver.observe(document.body, { childList: true, subtree: true })
+
+// Initialize existing polling elements
+document.querySelectorAll<HTMLElement>('[beam-poll]').forEach((el) => {
+  el.setAttribute('beam-poll-observed', '')
+  startPolling(el)
+})
+
+// ============ HUNGRY AUTO-REFRESH ============
+// Usage: <span id="cart-count" beam-hungry>0</span>
+// When any RPC response contains an element with id="cart-count", it auto-updates
+
+function processHungryElements(html: string): void {
+  const temp = document.createElement('div')
+  temp.innerHTML = html
+
+  // Find hungry elements on the page
+  document.querySelectorAll<HTMLElement>('[beam-hungry]').forEach((hungry) => {
+    const id = hungry.id
+    if (!id) return
+
+    // Look for matching element in response
+    const fresh = temp.querySelector(`#${id}`)
+    if (fresh) {
+      morph(hungry, fresh.innerHTML)
+    }
+  })
+}
+
+// ============ CLIENT-SIDE UI STATE (Alpine.js Replacement) ============
+// Toggle, dropdown, collapse utilities that don't require server round-trips
+
+// === TOGGLE ===
+// Usage: <button beam-toggle="#menu">Menu</button>
+//        <div id="menu" beam-hidden>Content</div>
+document.addEventListener('click', (e) => {
+  const target = e.target as Element
+  if (!target?.closest) return
+
+  const trigger = target.closest('[beam-toggle]') as HTMLElement | null
+  if (trigger) {
+    e.preventDefault()
+    const selector = trigger.getAttribute('beam-toggle')!
+    const targetEl = document.querySelector(selector) as HTMLElement | null
+    if (targetEl) {
+      const isHidden = targetEl.hasAttribute('beam-hidden')
+      if (isHidden) {
+        targetEl.removeAttribute('beam-hidden')
+        trigger.setAttribute('aria-expanded', 'true')
+        // Handle transition
+        if (targetEl.hasAttribute('beam-transition')) {
+          targetEl.style.display = ''
+          // Force reflow for transition
+          targetEl.offsetHeight
+        }
+      } else {
+        targetEl.setAttribute('beam-hidden', '')
+        trigger.setAttribute('aria-expanded', 'false')
+      }
+    }
+  }
+})
+
+// === DROPDOWN (with outside-click auto-close) ===
+// Usage: <div beam-dropdown>
+//          <button beam-dropdown-trigger>Account ▼</button>
+//          <div beam-dropdown-content beam-hidden>
+//            <a href="/profile">Profile</a>
+//          </div>
+//        </div>
+document.addEventListener('click', (e) => {
+  const target = e.target as Element
+  if (!target?.closest) return
+
+  const trigger = target.closest('[beam-dropdown-trigger]') as HTMLElement | null
+  if (trigger) {
+    e.preventDefault()
+    e.stopPropagation()
+
+    const dropdown = trigger.closest('[beam-dropdown]')
+    const content = dropdown?.querySelector('[beam-dropdown-content]') as HTMLElement | null
+    if (content) {
+      const isHidden = content.hasAttribute('beam-hidden')
+
+      // Close all other dropdowns first
+      document.querySelectorAll('[beam-dropdown-content]:not([beam-hidden])').forEach((el) => {
+        if (el !== content) {
+          el.setAttribute('beam-hidden', '')
+          el.closest('[beam-dropdown]')?.querySelector('[beam-dropdown-trigger]')?.setAttribute('aria-expanded', 'false')
+        }
+      })
+
+      // Toggle this dropdown
+      if (isHidden) {
+        content.removeAttribute('beam-hidden')
+        trigger.setAttribute('aria-expanded', 'true')
+      } else {
+        content.setAttribute('beam-hidden', '')
+        trigger.setAttribute('aria-expanded', 'false')
+      }
+    }
+    return
+  }
+
+  // Close all dropdowns on outside click (if click is not inside a dropdown content)
+  if (!target.closest('[beam-dropdown-content]')) {
+    document.querySelectorAll('[beam-dropdown-content]:not([beam-hidden])').forEach((el) => {
+      el.setAttribute('beam-hidden', '')
+      el.closest('[beam-dropdown]')?.querySelector('[beam-dropdown-trigger]')?.setAttribute('aria-expanded', 'false')
+    })
+  }
+})
+
+// Close dropdowns on Escape key
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    document.querySelectorAll('[beam-dropdown-content]:not([beam-hidden])').forEach((el) => {
+      el.setAttribute('beam-hidden', '')
+      el.closest('[beam-dropdown]')?.querySelector('[beam-dropdown-trigger]')?.setAttribute('aria-expanded', 'false')
+    })
+  }
+})
+
+// === COLLAPSE with text swap ===
+// Usage: <button beam-collapse="#details" beam-collapse-text="Show less">Show more</button>
+//        <div id="details" beam-collapsed>Expanded content...</div>
+document.addEventListener('click', (e) => {
+  const target = e.target as Element
+  if (!target?.closest) return
+
+  const trigger = target.closest('[beam-collapse]') as HTMLElement | null
+  if (trigger) {
+    e.preventDefault()
+    const selector = trigger.getAttribute('beam-collapse')!
+    const targetEl = document.querySelector(selector) as HTMLElement | null
+    if (targetEl) {
+      const isCollapsed = targetEl.hasAttribute('beam-collapsed')
+
+      if (isCollapsed) {
+        targetEl.removeAttribute('beam-collapsed')
+        trigger.setAttribute('aria-expanded', 'true')
+      } else {
+        targetEl.setAttribute('beam-collapsed', '')
+        trigger.setAttribute('aria-expanded', 'false')
+      }
+
+      // Swap button text if beam-collapse-text is specified
+      const altText = trigger.getAttribute('beam-collapse-text')
+      if (altText) {
+        const currentText = trigger.textContent || ''
+        trigger.textContent = altText
+        trigger.setAttribute('beam-collapse-text', currentText)
+      }
+    }
+  }
+})
+
+// === CLASS TOGGLE ===
+// Usage: <button beam-class-toggle="active" beam-class-target="#sidebar">Toggle</button>
+// Or toggle on self: <button beam-class-toggle="active">Toggle</button>
+document.addEventListener('click', (e) => {
+  const target = e.target as Element
+  if (!target?.closest) return
+
+  const trigger = target.closest('[beam-class-toggle]') as HTMLElement | null
+  if (trigger) {
+    const className = trigger.getAttribute('beam-class-toggle')!
+    const targetSelector = trigger.getAttribute('beam-class-target')
+    const targetEl = targetSelector ? document.querySelector(targetSelector) : trigger
+
+    if (targetEl && className) {
+      targetEl.classList.toggle(className)
+    }
+  }
+})
+
+// ============ EXPORTS ============
+
+declare global {
+  interface Window {
+    beam: {
+      showToast: typeof showToast
+      closeModal: typeof closeModal
+      closeDrawer: typeof closeDrawer
+      clearCache: typeof clearCache
+      isOnline: () => boolean
+      getSession: typeof api.getSession
+    }
+  }
+}
+
+window.beam = {
+  showToast,
+  closeModal,
+  closeDrawer,
+  clearCache,
+  isOnline: () => isOnline,
+  getSession: api.getSession,
+}
+
+// Legacy exports for backwards compatibility
+;(window as any).showToast = showToast
+;(window as any).closeModal = closeModal
+;(window as any).closeDrawer = closeDrawer
+;(window as any).clearCache = clearCache
+
+// Initialize capnweb RPC connection
+connect().catch(console.error)

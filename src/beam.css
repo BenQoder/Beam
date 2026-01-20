@@ -1,0 +1,288 @@
+/* ============ BEAM CSS ============ */
+/* UI state utilities for toggle, dropdown, collapse */
+
+/* === HIDDEN / COLLAPSED BASE STATES === */
+[beam-hidden] {
+  display: none !important;
+}
+
+[beam-collapsed] {
+  display: none !important;
+}
+
+/* === TRANSITIONS === */
+
+/* Fade transition */
+[beam-transition="fade"] {
+  transition: opacity 150ms ease-out;
+}
+
+[beam-transition="fade"][beam-hidden] {
+  opacity: 0;
+  pointer-events: none;
+  /* Override display:none for transition */
+  display: block !important;
+}
+
+/* Slide transition (slides down from top) */
+[beam-transition="slide"] {
+  transition: opacity 150ms ease-out, transform 150ms ease-out;
+  transform-origin: top;
+}
+
+[beam-transition="slide"][beam-hidden] {
+  opacity: 0;
+  transform: translateY(-10px);
+  pointer-events: none;
+  display: block !important;
+}
+
+/* Slide up transition */
+[beam-transition="slide-up"] {
+  transition: opacity 150ms ease-out, transform 150ms ease-out;
+}
+
+[beam-transition="slide-up"][beam-hidden] {
+  opacity: 0;
+  transform: translateY(10px);
+  pointer-events: none;
+  display: block !important;
+}
+
+/* Scale transition */
+[beam-transition="scale"] {
+  transition: opacity 150ms ease-out, transform 150ms ease-out;
+  transform-origin: top;
+}
+
+[beam-transition="scale"][beam-hidden] {
+  opacity: 0;
+  transform: scale(0.95);
+  pointer-events: none;
+  display: block !important;
+}
+
+/* === DROPDOWN POSITIONING === */
+[beam-dropdown] {
+  position: relative;
+}
+
+[beam-dropdown-content] {
+  position: absolute;
+  z-index: 50;
+  min-width: 100%;
+}
+
+/* Common dropdown positions */
+[beam-dropdown-content][beam-position="left"] {
+  left: 0;
+}
+
+[beam-dropdown-content][beam-position="right"] {
+  right: 0;
+}
+
+[beam-dropdown-content][beam-position="center"] {
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+/* === COLLAPSE ANIMATION === */
+[beam-collapse-animate] {
+  overflow: hidden;
+  transition: max-height 200ms ease-out;
+}
+
+[beam-collapse-animate][beam-collapsed] {
+  max-height: 0 !important;
+  display: block !important;
+}
+
+/* === MODAL & DRAWER STYLES === */
+
+/* Modal backdrop */
+#modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  transition: background 200ms ease-out;
+  padding: 1rem;
+}
+
+#modal-backdrop.open {
+  background: rgba(0, 0, 0, 0.5);
+}
+
+#modal-content {
+  background: white;
+  border-radius: 0.5rem;
+  max-width: 32rem;
+  width: 100%;
+  max-height: calc(100vh - 2rem);
+  overflow: auto;
+  transform: scale(0.95);
+  opacity: 0;
+  transition: transform 200ms ease-out, opacity 200ms ease-out;
+}
+
+#modal-backdrop.open #modal-content {
+  transform: scale(1);
+  opacity: 1;
+}
+
+/* Drawer backdrop */
+#drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0);
+  z-index: 100;
+  transition: background 200ms ease-out;
+}
+
+#drawer-backdrop.open {
+  background: rgba(0, 0, 0, 0.5);
+}
+
+#drawer-content {
+  position: fixed;
+  background: white;
+  max-height: 100vh;
+  overflow: auto;
+  transition: transform 200ms ease-out;
+}
+
+/* Drawer positions */
+#drawer-content[data-position="right"] {
+  top: 0;
+  right: 0;
+  bottom: 0;
+  transform: translateX(100%);
+}
+
+#drawer-content[data-position="left"] {
+  top: 0;
+  left: 0;
+  bottom: 0;
+  transform: translateX(-100%);
+}
+
+#drawer-content[data-position="top"] {
+  top: 0;
+  left: 0;
+  right: 0;
+  transform: translateY(-100%);
+}
+
+#drawer-content[data-position="bottom"] {
+  bottom: 0;
+  left: 0;
+  right: 0;
+  transform: translateY(100%);
+}
+
+#drawer-backdrop.open #drawer-content {
+  transform: translateX(0) translateY(0);
+}
+
+/* Drawer sizes */
+#drawer-content[data-size="small"] {
+  width: 20rem;
+}
+
+#drawer-content[data-size="medium"] {
+  width: 28rem;
+}
+
+#drawer-content[data-size="large"] {
+  width: 36rem;
+}
+
+#drawer-content[data-size="full"] {
+  width: 100%;
+}
+
+/* Vertical drawers (top/bottom) use height instead */
+#drawer-content[data-position="top"][data-size="small"],
+#drawer-content[data-position="bottom"][data-size="small"] {
+  width: 100%;
+  height: 25vh;
+}
+
+#drawer-content[data-position="top"][data-size="medium"],
+#drawer-content[data-position="bottom"][data-size="medium"] {
+  width: 100%;
+  height: 50vh;
+}
+
+#drawer-content[data-position="top"][data-size="large"],
+#drawer-content[data-position="bottom"][data-size="large"] {
+  width: 100%;
+  height: 75vh;
+}
+
+/* Prevent body scroll when modal/drawer open */
+body.modal-open,
+body.drawer-open {
+  overflow: hidden;
+}
+
+/* === TOAST NOTIFICATIONS === */
+#toast-container {
+  position: fixed;
+  bottom: 1rem;
+  right: 1rem;
+  z-index: 150;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.toast {
+  padding: 0.75rem 1rem;
+  border-radius: 0.375rem;
+  color: white;
+  font-size: 0.875rem;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+  transform: translateX(100%);
+  opacity: 0;
+  transition: transform 300ms ease-out, opacity 300ms ease-out;
+}
+
+.toast.show {
+  transform: translateX(0);
+  opacity: 1;
+}
+
+.toast-success {
+  background: #10b981;
+}
+
+.toast-error {
+  background: #ef4444;
+}
+
+/* === LOADING STATES === */
+[beam-loading] {
+  pointer-events: none;
+  opacity: 0.7;
+}
+
+.beam-active {
+  pointer-events: none;
+}
+
+/* === OFFLINE STATE === */
+body.beam-offline [beam-offline-disable] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* === NAVIGATION === */
+[beam-nav] .beam-current,
+a[beam-nav].beam-current {
+  /* Override in your app styles */
+}
