@@ -1,5 +1,5 @@
-// Main server-side exports for @anthropic/beam
-export { createBeam } from './createBeam';
+// Main server-side exports for @benqoder/beam
+export { createBeam, KVSession, CookieSession } from './createBeam';
 export { render } from './render';
 export { ModalFrame } from './ModalFrame';
 export { DrawerFrame } from './DrawerFrame';

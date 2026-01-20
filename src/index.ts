@@ -1,6 +1,6 @@
-// Main server-side exports for @anthropic/beam
+// Main server-side exports for @benqoder/beam
 
-export { createBeam } from './createBeam'
+export { createBeam, KVSession, CookieSession } from './createBeam'
 export { render } from './render'
 export { ModalFrame } from './ModalFrame'
 export { DrawerFrame } from './DrawerFrame'
@@ -21,4 +21,11 @@ export type {
   BeamConfig,
   BeamInstance,
   BeamInitOptions,
+  BeamUser,
+  BeamContext,
+  BeamVariables,
+  AuthResolver,
+  BeamSession,
+  SessionConfig,
+  SessionStorageFactory,
 } from './types'

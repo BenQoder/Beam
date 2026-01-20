@@ -1166,6 +1166,148 @@ export function addToCart(c) {
 
 ---
 
+## Session Management
+
+Beam provides automatic session management with a simple `ctx.session` API. No boilerplate middleware required.
+
+### Quick Start
+
+1. **Enable sessions in vite.config.ts:**
+
+```typescript
+beamPlugin({
+  actions: '/app/actions/*.tsx',
+  modals: '/app/modals/*.tsx',
+  session: true, // Enable with defaults (cookie storage)
+})
+```
+
+2. **Add SESSION_SECRET to wrangler.toml:**
+
+```toml
+[vars]
+SESSION_SECRET = "your-secret-key-change-in-production"
+```
+
+3. **Use in actions:**
+
+```typescript
+// app/actions/cart.tsx
+export async function addToCart(ctx: BeamContext<Env>, data) {
+  const cart = await ctx.session.get<CartItem[]>('cart') || []
+  cart.push({ productId: data.productId, qty: data.qty })
+  await ctx.session.set('cart', cart)
+  return <CartBadge count={cart.length} />
+}
+```
+
+4. **Use in routes:**
+
+```typescript
+// app/routes/products/index.tsx
+export default createRoute(async (c) => {
+  const { session } = c.get('beam')
+  const cart = await session.get<CartItem[]>('cart') || []
+
+  return c.html(
+    <Layout cartCount={cart.length}>
+      <ProductList />
+    </Layout>
+  )
+})
+```
+
+### Session API
+
+```typescript
+// Get a value (returns null if not set)
+const cart = await ctx.session.get<CartItem[]>('cart')
+
+// Set a value
+await ctx.session.set('cart', [{ productId: '123', qty: 1 }])
+
+// Delete a value
+await ctx.session.delete('cart')
+```
+
+### Storage Options
+
+#### Cookie Storage (Default)
+
+Session data is stored in a signed cookie. Good for small data (~4KB limit).
+
+```typescript
+beamPlugin({
+  session: true, // Uses cookie storage
+})
+
+// Or with custom options:
+beamPlugin({
+  session: {
+    secretEnvKey: 'MY_SECRET',  // Default: 'SESSION_SECRET'
+    cookieName: 'my_sid',       // Default: 'beam_sid'
+    maxAge: 86400,              // Default: 1 year (in seconds)
+  },
+})
+```
+
+#### KV Storage (For WebSocket Actions)
+
+Cookie storage is read-only in WebSocket context. For actions that modify session data via WebSocket, use KV storage:
+
+```typescript
+// vite.config.ts
+beamPlugin({
+  session: { storage: '/app/session-storage.ts' },
+})
+```
+
+```typescript
+// app/session-storage.ts
+import { KVSession } from '@benqoder/beam'
+
+export default (sessionId: string, env: { KV: KVNamespace }) =>
+  new KVSession(sessionId, env.KV)
+```
+
+```toml
+# wrangler.toml
+[[kv_namespaces]]
+binding = "KV"
+id = "your-kv-namespace-id"
+
+[vars]
+SESSION_SECRET = "your-secret-key"
+```
+
+### Architecture
+
+```
+Request comes in
+    ↓
+Read session ID from signed cookie (beam_sid)
+    ↓
+Create session adapter with sessionId + env
+    ↓
+ctx.session.get('cart')  → adapter.get()
+ctx.session.set('cart')  → adapter.set()
+```
+
+**Two components:**
+- **Session ID**: Always stored in a signed cookie (`beam_sid`)
+- **Session data**: Configurable storage (cookies by default, KV optional)
+
+### Key Points
+
+- **Zero boilerplate** - Just enable in vite.config.ts and use `ctx.session`
+- **Works in actions** - Use `ctx.session.get/set/delete`
+- **Works in routes** - Use `c.get('beam').session.get/set/delete`
+- **Cookie storage limit** - ~4KB total size
+- **WebSocket limitation** - Cookie storage is read-only in WebSocket (use KV for write operations)
+- **Signed cookies** - Session ID is cryptographically signed to prevent tampering
+
+---
+
 ## Browser Support
 
 Beam requires modern browsers with WebSocket support:

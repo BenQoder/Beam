@@ -16,6 +16,33 @@ export interface BeamPluginOptions {
    * @default '/app/drawers/*.tsx'
    */
   drawers?: string
+  /**
+   * Path to auth resolver module (must export default AuthResolver function)
+   * @example '/app/auth.ts'
+   */
+  auth?: string
+  /**
+   * Session configuration.
+   * - `secretEnvKey`: Environment variable name containing the session secret (default: 'SESSION_SECRET')
+   * - `cookieName`: Cookie name (default: 'beam_sid')
+   * - `maxAge`: Cookie max age in seconds (default: 1 year)
+   * - `storage`: Path to custom storage factory module (default: cookie storage)
+   *
+   * Set to `true` for defaults (cookie storage), or provide partial config.
+   * @example
+   * ```typescript
+   * session: true // uses cookie storage with env.SESSION_SECRET
+   * session: { secretEnvKey: 'MY_SECRET', cookieName: 'my_sid' }
+   * session: { storage: '/app/session-storage.ts' } // custom KV storage
+   * ```
+   */
+  session?: boolean | {
+    secretEnvKey?: string
+    cookieName?: string
+    maxAge?: number
+    /** Path to custom storage factory module (must export default SessionStorageFactory) */
+    storage?: string
+  }
 }
 
 const VIRTUAL_MODULE_ID = 'virtual:beam'
@@ -50,6 +77,8 @@ export function beamPlugin(options: BeamPluginOptions = {}): Plugin {
     actions = '/app/actions/*.tsx',
     modals = '/app/modals/*.tsx',
     drawers = '/app/drawers/*.tsx',
+    auth,
+    session,
   } = options
 
   return {
@@ -63,9 +92,38 @@ export function beamPlugin(options: BeamPluginOptions = {}): Plugin {
 
     load(id) {
       if (id === RESOLVED_VIRTUAL_MODULE_ID) {
+        const authImport = auth ? `import auth from '${auth}'` : ''
+        const authConfig = auth ? ', auth' : ''
+
+        // Generate session config code
+        let sessionConfig = ''
+        let storageImport = ''
+        if (session) {
+          const sessionOpts = typeof session === 'object' ? session : {}
+          const secretEnvKey = sessionOpts.secretEnvKey || 'SESSION_SECRET'
+          const cookieName = sessionOpts.cookieName || 'beam_sid'
+          const maxAge = sessionOpts.maxAge || 365 * 24 * 60 * 60
+          const storagePath = sessionOpts.storage
+
+          // Import custom storage factory if provided
+          if (storagePath) {
+            storageImport = `import storageFactory from '${storagePath}'`
+          }
+
+          // Session secret is resolved at runtime from env
+          sessionConfig = `, session: {
+    secret: '', // Will be resolved from env.${secretEnvKey} at runtime
+    secretEnvKey: '${secretEnvKey}',
+    cookieName: '${cookieName}',
+    maxAge: ${maxAge}${storagePath ? ',\n    storageFactory' : ''}
+  }`
+        }
+
         // Generate plain JavaScript - TypeScript types are handled via virtual-beam.d.ts
         return `
 import { createBeam, collectHandlers } from '@benqoder/beam'
+${authImport}
+${storageImport}
 
 const { actions, modals, drawers } = collectHandlers({
   actions: import.meta.glob('${actions}', { eager: true }),
@@ -73,7 +131,7 @@ const { actions, modals, drawers } = collectHandlers({
   drawers: import.meta.glob('${drawers}', { eager: true }),
 })
 
-export const beam = createBeam({ actions, modals, drawers })
+export const beam = createBeam({ actions, modals, drawers${authConfig}${sessionConfig} })
 `
       }
     },
