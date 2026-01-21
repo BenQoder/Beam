@@ -1,5 +1,5 @@
 import { RpcTarget } from 'capnweb';
-import type { ActionHandler, ModalHandler, DrawerHandler, BeamConfig, BeamInstance, BeamContext, BeamSession } from './types';
+import type { ActionHandler, ActionResponse, ModalHandler, DrawerHandler, BeamConfig, BeamInstance, BeamContext, BeamSession } from './types';
 /**
  * Session implementation using KV storage.
  * Exported for users who need custom storage adapter.
@@ -56,7 +56,7 @@ declare class BeamServer<TEnv extends object> extends RpcTarget {
     /**
      * Call an action handler
      */
-    call(action: string, data?: Record<string, unknown>): Promise<string>;
+    call(action: string, data?: Record<string, unknown>): Promise<ActionResponse>;
     /**
      * Open a modal
      */

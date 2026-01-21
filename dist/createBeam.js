@@ -114,6 +114,22 @@ function parseSessionDataFromRequest(request) {
     }
 }
 /**
+ * Create a BeamContext with script() and render() helpers
+ */
+function createBeamContext(base) {
+    return {
+        ...base,
+        script: (code) => ({ script: code }),
+        render: (html, options) => {
+            if (html instanceof Promise) {
+                return html.then((resolved) => ({ html: resolved, script: options?.script }));
+            }
+            return { html, script: options?.script };
+        },
+        redirect: (url) => ({ redirect: url }),
+    };
+}
+/**
  * Beam RPC Server - extends RpcTarget for capnweb integration
  *
  * This enables:
@@ -142,7 +158,12 @@ class BeamServer extends RpcTarget {
         if (!handler) {
             throw new Error(`Unknown action: ${action}`);
         }
-        return await handler(this.ctx, data);
+        const result = await handler(this.ctx, data);
+        // Normalize string responses to ActionResponse format
+        if (typeof result === 'string') {
+            return { html: result };
+        }
+        return result;
     }
     /**
      * Open a modal
@@ -295,13 +316,13 @@ export function createBeam(config) {
                         delete: async () => { },
                     };
                 }
-                // Create context
-                const ctx = {
+                // Create context with script() and render() helpers
+                const ctx = createBeamContext({
                     env: c.env,
                     user,
                     request: c.req.raw,
                     session,
-                };
+                });
                 // Set in Hono context for use by routes
                 c.set('beam', ctx);
                 await next();
@@ -381,12 +402,12 @@ export function createBeam(config) {
                             delete: async () => { },
                         };
                     }
-                    ctx = {
+                    ctx = createBeamContext({
                         env: c.env,
                         user,
                         request: c.req.raw,
                         session,
-                    };
+                    });
                 }
                 // Create BeamServer instance with capnweb RpcTarget
                 const server = new BeamServer(ctx, actions, modals, drawers);

@@ -4,6 +4,7 @@ import { getSignedCookie, setSignedCookie } from 'hono/cookie'
 import { RpcTarget, newWorkersRpcResponse } from 'capnweb'
 import type {
   ActionHandler,
+  ActionResponse,
   ModalHandler,
   DrawerHandler,
   BeamConfig,
@@ -13,6 +14,7 @@ import type {
   BeamSession,
   SessionConfig,
   SessionStorageFactory,
+  RenderOptions,
 } from './types'
 
 /**
@@ -146,6 +148,28 @@ function parseSessionDataFromRequest(request: Request): Record<string, unknown> 
 }
 
 /**
+ * Create a BeamContext with script() and render() helpers
+ */
+function createBeamContext<TEnv>(base: {
+  env: TEnv
+  user: import('./types').BeamUser | null
+  request: Request
+  session: BeamSession
+}): BeamContext<TEnv> {
+  return {
+    ...base,
+    script: (code: string): ActionResponse => ({ script: code }),
+    render: (html: string | Promise<string>, options?: RenderOptions): ActionResponse | Promise<ActionResponse> => {
+      if (html instanceof Promise) {
+        return html.then((resolved) => ({ html: resolved, script: options?.script }))
+      }
+      return { html, script: options?.script }
+    },
+    redirect: (url: string): ActionResponse => ({ redirect: url }),
+  }
+}
+
+/**
  * Beam RPC Server - extends RpcTarget for capnweb integration
  *
  * This enables:
@@ -176,12 +200,17 @@ class BeamServer<TEnv extends object> extends RpcTarget {
   /**
    * Call an action handler
    */
-  async call(action: string, data: Record<string, unknown> = {}): Promise<string> {
+  async call(action: string, data: Record<string, unknown> = {}): Promise<ActionResponse> {
     const handler = this.actions[action]
     if (!handler) {
       throw new Error(`Unknown action: ${action}`)
     }
-    return await handler(this.ctx, data)
+    const result = await handler(this.ctx, data)
+    // Normalize string responses to ActionResponse format
+    if (typeof result === 'string') {
+      return { html: result }
+    }
+    return result
   }
 
   /**
@@ -347,13 +376,13 @@ export function createBeam<TEnv extends object = object>(
           }
         }
 
-        // Create context
-        const ctx: BeamContext<TEnv> = {
+        // Create context with script() and render() helpers
+        const ctx = createBeamContext<TEnv>({
           env: c.env,
           user,
           request: c.req.raw,
           session,
-        }
+        })
 
         // Set in Hono context for use by routes
         c.set('beam', ctx)
@@ -437,12 +466,12 @@ export function createBeam<TEnv extends object = object>(
             }
           }
 
-          ctx = {
+          ctx = createBeamContext<TEnv>({
             env: c.env,
             user,
             request: c.req.raw,
             session,
-          }
+          })
         }
 
         // Create BeamServer instance with capnweb RpcTarget

@@ -1,30 +1,37 @@
 import { type RpcStub } from 'capnweb';
+interface ActionResponse {
+    html?: string;
+    script?: string;
+    redirect?: string;
+}
 interface BeamServer {
-    call(action: string, data?: Record<string, unknown>): Promise<string>;
+    call(action: string, data?: Record<string, unknown>): Promise<ActionResponse>;
     modal(modalId: string, data?: Record<string, unknown>): Promise<string>;
     drawer(drawerId: string, data?: Record<string, unknown>): Promise<string>;
     registerCallback(callback: (event: string, data: unknown) => void): Promise<void>;
 }
 type BeamServerStub = RpcStub<BeamServer>;
-declare const api: {
-    call(action: string, data?: Record<string, unknown>): Promise<string>;
-    modal(modalId: string, params?: Record<string, unknown>): Promise<string>;
-    drawer(drawerId: string, params?: Record<string, unknown>): Promise<string>;
-    getSession(): Promise<BeamServerStub>;
-};
 declare function closeModal(): void;
 declare function closeDrawer(): void;
 declare function showToast(message: string, type?: 'success' | 'error'): void;
 declare function clearCache(action?: string): void;
+interface CallOptions {
+    target?: string;
+    swap?: string;
+}
+declare const beamUtils: {
+    showToast: typeof showToast;
+    closeModal: typeof closeModal;
+    closeDrawer: typeof closeDrawer;
+    clearCache: typeof clearCache;
+    isOnline: () => boolean;
+    getSession: () => Promise<BeamServerStub>;
+};
+type ActionCaller = (data?: Record<string, unknown>, options?: string | CallOptions) => Promise<ActionResponse>;
 declare global {
     interface Window {
-        beam: {
-            showToast: typeof showToast;
-            closeModal: typeof closeModal;
-            closeDrawer: typeof closeDrawer;
-            clearCache: typeof clearCache;
-            isOnline: () => boolean;
-            getSession: typeof api.getSession;
+        beam: typeof beamUtils & {
+            [action: string]: ActionCaller;
         };
     }
 }

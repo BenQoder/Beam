@@ -67,6 +67,17 @@ async function ensureConnected() {
     }
     return connect();
 }
+/**
+ * Execute a script string safely
+ */
+function executeScript(code) {
+    try {
+        new Function(code)();
+    }
+    catch (err) {
+        console.error('[beam] Script execution error:', err);
+    }
+}
 // API wrapper that ensures connection before calls
 const api = {
     async call(action, data = {}) {
@@ -417,12 +428,22 @@ async function rpc(action, data, el) {
     const placeholder = showPlaceholder(el);
     setLoading(el, true, action, data);
     try {
-        const html = await api.call(action, data);
-        if (targetSelector) {
+        const response = await api.call(action, data);
+        // Handle redirect (if present) - takes priority
+        if (response.redirect) {
+            location.href = response.redirect;
+            return;
+        }
+        // Handle HTML (if present)
+        if (response.html && targetSelector) {
             const target = $(targetSelector);
             if (target) {
-                swap(target, html, swapMode, el);
+                swap(target, response.html, swapMode, el);
             }
+        }
+        // Execute script (if present)
+        if (response.script) {
+            executeScript(response.script);
         }
         // Handle history
         handleHistory(el);
@@ -925,10 +946,14 @@ const infiniteObserver = new IntersectionObserver(async (entries) => {
         sentinel.classList.add('loading');
         setLoading(sentinel, true, action, params);
         try {
-            const html = await api.call(action, params);
+            const response = await api.call(action, params);
             const target = $(targetSelector);
-            if (target && html) {
-                swap(target, html, swapMode, sentinel);
+            if (target && response.html) {
+                swap(target, response.html, swapMode, sentinel);
+            }
+            // Execute script if present
+            if (response.script) {
+                executeScript(response.script);
             }
         }
         catch (err) {
@@ -978,18 +1003,18 @@ async function fetchWithCache(action, params, cacheDuration) {
     // Check cache
     const cached = cache.get(key);
     if (cached && cached.expires > Date.now()) {
-        return cached.html;
+        return cached.response;
     }
     // Fetch fresh
-    const html = await api.call(action, params);
+    const response = await api.call(action, params);
     // Store in cache if duration specified
     if (cacheDuration) {
         const duration = parseCacheDuration(cacheDuration);
         if (duration > 0) {
-            cache.set(key, { html, expires: Date.now() + duration });
+            cache.set(key, { response, expires: Date.now() + duration });
         }
     }
-    return html;
+    return response;
 }
 async function preload(el) {
     const action = el.getAttribute('beam-action');
@@ -1002,9 +1027,9 @@ async function preload(el) {
         return;
     preloading.add(key);
     try {
-        const html = await api.call(action, params);
+        const response = await api.call(action, params);
         // Cache for 30 seconds by default for preloaded content
-        cache.set(key, { html, expires: Date.now() + 30000 });
+        cache.set(key, { response, expires: Date.now() + 30000 });
     }
     catch {
         // Silently fail preload
@@ -1080,12 +1105,22 @@ document.addEventListener('click', async (e) => {
     const placeholder = showPlaceholder(link);
     setLoading(link, true, action, params);
     try {
-        const html = cached && cached.expires > Date.now() ? cached.html : await fetchWithCache(action, params, cacheDuration || undefined);
-        if (targetSelector) {
+        const response = cached && cached.expires > Date.now() ? cached.response : await fetchWithCache(action, params, cacheDuration || undefined);
+        // Handle redirect (if present) - takes priority
+        if (response.redirect) {
+            location.href = response.redirect;
+            return;
+        }
+        // Handle HTML (if present)
+        if (response.html && targetSelector) {
             const target = $(targetSelector);
             if (target) {
-                swap(target, html, swapMode, link);
+                swap(target, response.html, swapMode, link);
             }
+        }
+        // Execute script (if present)
+        if (response.script) {
+            executeScript(response.script);
         }
         // Handle history
         handleHistory(link);
@@ -1126,12 +1161,22 @@ document.addEventListener('submit', async (e) => {
     const placeholder = showPlaceholder(form);
     setLoading(form, true, action, data);
     try {
-        const html = await api.call(action, data);
-        if (targetSelector) {
+        const response = await api.call(action, data);
+        // Handle redirect (if present) - takes priority
+        if (response.redirect) {
+            location.href = response.redirect;
+            return;
+        }
+        // Handle HTML (if present)
+        if (response.html && targetSelector) {
             const target = $(targetSelector);
             if (target) {
-                swap(target, html, swapMode);
+                swap(target, response.html, swapMode);
             }
+        }
+        // Execute script (if present)
+        if (response.script) {
+            executeScript(response.script);
         }
         if (form.hasAttribute('beam-reset')) {
             form.reset();
@@ -1173,10 +1218,16 @@ function setupValidation(el) {
             const formData = Object.fromEntries(new FormData(form));
             const data = { ...formData, _validate: fieldName };
             try {
-                const html = await api.call(action, data);
-                const target = $(targetSelector);
-                if (target) {
-                    morph(target, html);
+                const response = await api.call(action, data);
+                if (response.html) {
+                    const target = $(targetSelector);
+                    if (target) {
+                        morph(target, response.html);
+                    }
+                }
+                // Execute script (if present)
+                if (response.script) {
+                    executeScript(response.script);
                 }
             }
             catch (err) {
@@ -1217,10 +1268,16 @@ const deferObserver = new IntersectionObserver(async (entries) => {
         const swapMode = el.getAttribute('beam-swap') || 'morph';
         setLoading(el, true, action, params);
         try {
-            const html = await api.call(action, params);
-            const target = targetSelector ? $(targetSelector) : el;
-            if (target) {
-                swap(target, html, swapMode);
+            const response = await api.call(action, params);
+            if (response.html) {
+                const target = targetSelector ? $(targetSelector) : el;
+                if (target) {
+                    swap(target, response.html, swapMode);
+                }
+            }
+            // Execute script (if present)
+            if (response.script) {
+                executeScript(response.script);
             }
         }
         catch (err) {
@@ -1267,10 +1324,16 @@ function startPolling(el) {
         const targetSelector = el.getAttribute('beam-target');
         const swapMode = el.getAttribute('beam-swap') || 'morph';
         try {
-            const html = await api.call(action, params);
-            const target = targetSelector ? $(targetSelector) : el;
-            if (target) {
-                swap(target, html, swapMode);
+            const response = await api.call(action, params);
+            if (response.html) {
+                const target = targetSelector ? $(targetSelector) : el;
+                if (target) {
+                    swap(target, response.html, swapMode);
+                }
+            }
+            // Execute script (if present)
+            if (response.script) {
+                executeScript(response.script);
             }
         }
         catch (err) {
@@ -1459,7 +1522,8 @@ document.addEventListener('click', (e) => {
         }
     }
 });
-window.beam = {
+// Base utilities that are always available on window.beam
+const beamUtils = {
     showToast,
     closeModal,
     closeDrawer,
@@ -1467,6 +1531,44 @@ window.beam = {
     isOnline: () => isOnline,
     getSession: api.getSession,
 };
+// Create a Proxy that handles both utility methods and dynamic action calls
+window.beam = new Proxy(beamUtils, {
+    get(target, prop) {
+        // Return existing utility methods
+        if (prop in target) {
+            return target[prop];
+        }
+        // Return a dynamic action caller for any other property
+        return async (data = {}, options) => {
+            const rawResponse = await api.call(prop, data);
+            // Normalize response: string -> {html: string}, object -> as-is
+            const response = typeof rawResponse === 'string'
+                ? { html: rawResponse }
+                : rawResponse;
+            // Handle redirect (takes priority)
+            if (response.redirect) {
+                location.href = response.redirect;
+                return response;
+            }
+            // Normalize options: string is shorthand for { target: string }
+            const opts = typeof options === 'string'
+                ? { target: options }
+                : (options || {});
+            // Handle HTML swap if target provided
+            if (response.html && opts.target) {
+                const targetEl = document.querySelector(opts.target);
+                if (targetEl) {
+                    swap(targetEl, response.html, opts.swap || 'morph');
+                }
+            }
+            // Execute script if present
+            if (response.script) {
+                executeScript(response.script);
+            }
+            return response;
+        };
+    }
+});
 window.showToast = showToast;
 window.closeModal = closeModal;
 window.closeDrawer = closeDrawer;

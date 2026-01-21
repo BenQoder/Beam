@@ -16,9 +16,16 @@ function getEndpoint(): string {
   return meta?.getAttribute('content') ?? '/beam'
 }
 
+// Action response type (mirrors server-side)
+interface ActionResponse {
+  html?: string
+  script?: string
+  redirect?: string
+}
+
 // BeamServer interface (mirrors server-side RpcTarget)
 interface BeamServer {
-  call(action: string, data?: Record<string, unknown>): Promise<string>
+  call(action: string, data?: Record<string, unknown>): Promise<ActionResponse>
   modal(modalId: string, data?: Record<string, unknown>): Promise<string>
   drawer(drawerId: string, data?: Record<string, unknown>): Promise<string>
   registerCallback(callback: (event: string, data: unknown) => void): Promise<void>
@@ -90,9 +97,20 @@ async function ensureConnected(): Promise<BeamServerStub> {
   return connect()
 }
 
+/**
+ * Execute a script string safely
+ */
+function executeScript(code: string): void {
+  try {
+    new Function(code)()
+  } catch (err) {
+    console.error('[beam] Script execution error:', err)
+  }
+}
+
 // API wrapper that ensures connection before calls
 const api = {
-  async call(action: string, data: Record<string, unknown> = {}): Promise<string> {
+  async call(action: string, data: Record<string, unknown> = {}): Promise<ActionResponse> {
     const session = await ensureConnected()
     // @ts-ignore - capnweb stub methods are dynamically typed
     return session.call(action, data)
@@ -493,12 +511,25 @@ async function rpc(action: string, data: Record<string, unknown>, el: HTMLElemen
   setLoading(el, true, action, data)
 
   try {
-    const html = await api.call(action, data)
-    if (targetSelector) {
+    const response = await api.call(action, data)
+
+    // Handle redirect (if present) - takes priority
+    if (response.redirect) {
+      location.href = response.redirect
+      return
+    }
+
+    // Handle HTML (if present)
+    if (response.html && targetSelector) {
       const target = $(targetSelector)
       if (target) {
-        swap(target, html, swapMode, el)
+        swap(target, response.html, swapMode, el)
       }
+    }
+
+    // Execute script (if present)
+    if (response.script) {
+      executeScript(response.script)
     }
 
     // Handle history
@@ -1081,11 +1112,16 @@ const infiniteObserver = new IntersectionObserver(
       setLoading(sentinel, true, action, params)
 
       try {
-        const html = await api.call(action, params)
+        const response = await api.call(action, params)
         const target = $(targetSelector)
 
-        if (target && html) {
-          swap(target, html, swapMode, sentinel)
+        if (target && response.html) {
+          swap(target, response.html, swapMode, sentinel)
+        }
+
+        // Execute script if present
+        if (response.script) {
+          executeScript(response.script)
         }
       } catch (err) {
         console.error('Infinite scroll error:', err)
@@ -1118,7 +1154,7 @@ document.querySelectorAll('[beam-infinite]').forEach((el) => {
 // Usage: <button beam-action="getList" beam-cache="30s">Load</button>
 
 interface CacheEntry {
-  html: string
+  response: ActionResponse
   expires: number
 }
 
@@ -1144,27 +1180,27 @@ function parseCacheDuration(duration: string): number {
   }
 }
 
-async function fetchWithCache(action: string, params: Record<string, unknown>, cacheDuration?: string): Promise<string> {
+async function fetchWithCache(action: string, params: Record<string, unknown>, cacheDuration?: string): Promise<ActionResponse> {
   const key = getCacheKey(action, params)
 
   // Check cache
   const cached = cache.get(key)
   if (cached && cached.expires > Date.now()) {
-    return cached.html
+    return cached.response
   }
 
   // Fetch fresh
-  const html = await api.call(action, params)
+  const response = await api.call(action, params)
 
   // Store in cache if duration specified
   if (cacheDuration) {
     const duration = parseCacheDuration(cacheDuration)
     if (duration > 0) {
-      cache.set(key, { html, expires: Date.now() + duration })
+      cache.set(key, { response, expires: Date.now() + duration })
     }
   }
 
-  return html
+  return response
 }
 
 async function preload(el: HTMLElement): Promise<void> {
@@ -1180,9 +1216,9 @@ async function preload(el: HTMLElement): Promise<void> {
   preloading.add(key)
 
   try {
-    const html = await api.call(action, params)
+    const response = await api.call(action, params)
     // Cache for 30 seconds by default for preloaded content
-    cache.set(key, { html, expires: Date.now() + 30000 })
+    cache.set(key, { response, expires: Date.now() + 30000 })
   } catch {
     // Silently fail preload
   } finally {
@@ -1273,13 +1309,25 @@ document.addEventListener(
     setLoading(link, true, action, params)
 
     try {
-      const html = cached && cached.expires > Date.now() ? cached.html : await fetchWithCache(action, params, cacheDuration || undefined)
+      const response = cached && cached.expires > Date.now() ? cached.response : await fetchWithCache(action, params, cacheDuration || undefined)
 
-      if (targetSelector) {
+      // Handle redirect (if present) - takes priority
+      if (response.redirect) {
+        location.href = response.redirect
+        return
+      }
+
+      // Handle HTML (if present)
+      if (response.html && targetSelector) {
         const target = $(targetSelector)
         if (target) {
-          swap(target, html, swapMode, link)
+          swap(target, response.html, swapMode, link)
         }
+      }
+
+      // Execute script (if present)
+      if (response.script) {
+        executeScript(response.script)
       }
 
       // Handle history
@@ -1327,13 +1375,25 @@ document.addEventListener('submit', async (e) => {
   setLoading(form, true, action, data as Record<string, unknown>)
 
   try {
-    const html = await api.call(action, data as Record<string, unknown>)
+    const response = await api.call(action, data as Record<string, unknown>)
 
-    if (targetSelector) {
+    // Handle redirect (if present) - takes priority
+    if (response.redirect) {
+      location.href = response.redirect
+      return
+    }
+
+    // Handle HTML (if present)
+    if (response.html && targetSelector) {
       const target = $(targetSelector)
       if (target) {
-        swap(target, html, swapMode)
+        swap(target, response.html, swapMode)
       }
+    }
+
+    // Execute script (if present)
+    if (response.script) {
+      executeScript(response.script)
     }
 
     if (form.hasAttribute('beam-reset')) {
@@ -1380,10 +1440,16 @@ function setupValidation(el: HTMLElement): void {
       const data = { ...formData, _validate: fieldName }
 
       try {
-        const html = await api.call(action, data as Record<string, unknown>)
-        const target = $(targetSelector)
-        if (target) {
-          morph(target, html)
+        const response = await api.call(action, data as Record<string, unknown>)
+        if (response.html) {
+          const target = $(targetSelector)
+          if (target) {
+            morph(target, response.html)
+          }
+        }
+        // Execute script (if present)
+        if (response.script) {
+          executeScript(response.script)
         }
       } catch (err) {
         console.error('Validation error:', err)
@@ -1432,10 +1498,16 @@ const deferObserver = new IntersectionObserver(
       setLoading(el, true, action, params)
 
       try {
-        const html = await api.call(action, params)
-        const target = targetSelector ? $(targetSelector) : el
-        if (target) {
-          swap(target, html, swapMode)
+        const response = await api.call(action, params)
+        if (response.html) {
+          const target = targetSelector ? $(targetSelector) : el
+          if (target) {
+            swap(target, response.html, swapMode)
+          }
+        }
+        // Execute script (if present)
+        if (response.script) {
+          executeScript(response.script)
         }
       } catch (err) {
         console.error('Defer error:', err)
@@ -1490,10 +1562,16 @@ function startPolling(el: HTMLElement): void {
     const swapMode = el.getAttribute('beam-swap') || 'morph'
 
     try {
-      const html = await api.call(action, params)
-      const target = targetSelector ? $(targetSelector) : el
-      if (target) {
-        swap(target, html, swapMode)
+      const response = await api.call(action, params)
+      if (response.html) {
+        const target = targetSelector ? $(targetSelector) : el
+        if (target) {
+          swap(target, response.html, swapMode)
+        }
+      }
+      // Execute script (if present)
+      if (response.script) {
+        executeScript(response.script)
       }
     } catch (err) {
       console.error('Poll error:', err)
@@ -1703,20 +1781,13 @@ document.addEventListener('click', (e) => {
 
 // ============ EXPORTS ============
 
-declare global {
-  interface Window {
-    beam: {
-      showToast: typeof showToast
-      closeModal: typeof closeModal
-      closeDrawer: typeof closeDrawer
-      clearCache: typeof clearCache
-      isOnline: () => boolean
-      getSession: typeof api.getSession
-    }
-  }
+interface CallOptions {
+  target?: string
+  swap?: string  // 'morph' | 'innerHTML' | 'append' | 'prepend' | etc.
 }
 
-window.beam = {
+// Base utilities that are always available on window.beam
+const beamUtils = {
   showToast,
   closeModal,
   closeDrawer,
@@ -1724,6 +1795,63 @@ window.beam = {
   isOnline: () => isOnline,
   getSession: api.getSession,
 }
+
+// Type for the dynamic action caller
+type ActionCaller = (data?: Record<string, unknown>, options?: string | CallOptions) => Promise<ActionResponse>
+
+declare global {
+  interface Window {
+    beam: typeof beamUtils & {
+      [action: string]: ActionCaller
+    }
+  }
+}
+
+// Create a Proxy that handles both utility methods and dynamic action calls
+window.beam = new Proxy(beamUtils, {
+  get(target, prop: string) {
+    // Return existing utility methods
+    if (prop in target) {
+      return (target as any)[prop]
+    }
+
+    // Return a dynamic action caller for any other property
+    return async (data: Record<string, unknown> = {}, options?: string | CallOptions): Promise<ActionResponse> => {
+      const rawResponse = await api.call(prop, data)
+
+      // Normalize response: string -> {html: string}, object -> as-is
+      const response: ActionResponse = typeof rawResponse === 'string'
+        ? { html: rawResponse }
+        : rawResponse
+
+      // Handle redirect (takes priority)
+      if (response.redirect) {
+        location.href = response.redirect
+        return response
+      }
+
+      // Normalize options: string is shorthand for { target: string }
+      const opts: CallOptions = typeof options === 'string'
+        ? { target: options }
+        : (options || {})
+
+      // Handle HTML swap if target provided
+      if (response.html && opts.target) {
+        const targetEl = document.querySelector(opts.target)
+        if (targetEl) {
+          swap(targetEl as HTMLElement, response.html, opts.swap || 'morph')
+        }
+      }
+
+      // Execute script if present
+      if (response.script) {
+        executeScript(response.script)
+      }
+
+      return response
+    }
+  }
+}) as typeof beamUtils & { [action: string]: ActionCaller }
 
 // Legacy exports for backwards compatibility
 ;(window as any).showToast = showToast

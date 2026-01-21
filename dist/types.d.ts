@@ -19,6 +19,13 @@ export interface BeamSession {
     delete(key: string): Promise<void>;
 }
 /**
+ * Render options for ctx.render()
+ */
+export interface RenderOptions {
+    /** JavaScript to execute on client after rendering */
+    script?: string;
+}
+/**
  * Context passed to all handlers
  */
 export interface BeamContext<TEnv = object> {
@@ -26,15 +33,42 @@ export interface BeamContext<TEnv = object> {
     user: BeamUser | null;
     request: Request;
     session: BeamSession;
+    /**
+     * Return JavaScript to execute on the client (no DOM update)
+     * @example ctx.script('showToast("Success!")')
+     */
+    script(code: string): ActionResponse;
+    /**
+     * Return HTML with optional script to execute
+     * @example ctx.render(<ProductList />, { script: 'playSound("ding")' })
+     */
+    render(html: string | Promise<string>, options?: RenderOptions): ActionResponse | Promise<ActionResponse>;
+    /**
+     * Redirect the client to a new URL
+     * @example ctx.redirect('/dashboard')
+     * @example ctx.redirect('https://example.com')
+     */
+    redirect(url: string): ActionResponse;
 }
 /**
  * Auth resolver function - user provides this to extract user from request
  */
 export type AuthResolver<TEnv = object> = (request: Request, env: TEnv) => Promise<BeamUser | null>;
 /**
- * Type for action handlers - receives context and data, returns HTML string
+ * Response type for actions - can include HTML and/or script to execute
  */
-export type ActionHandler<TEnv = object> = (ctx: BeamContext<TEnv>, data: Record<string, unknown>) => Promise<string>;
+export interface ActionResponse {
+    /** HTML to render (optional) */
+    html?: string;
+    /** JavaScript to execute on client (optional) */
+    script?: string;
+    /** URL to redirect to (optional) */
+    redirect?: string;
+}
+/**
+ * Type for action handlers - receives context and data, returns ActionResponse
+ */
+export type ActionHandler<TEnv = object> = (ctx: BeamContext<TEnv>, data: Record<string, unknown>) => Promise<ActionResponse> | ActionResponse;
 /**
  * Type for modal handlers - receives context and params, returns HTML string
  */
