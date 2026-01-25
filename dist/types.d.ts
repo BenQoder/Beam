@@ -55,6 +55,25 @@ export interface BeamContext<TEnv = object> {
  */
 export type AuthResolver<TEnv = object> = (request: Request, env: TEnv) => Promise<BeamUser | null>;
 /**
+ * Auth token payload - signed and short-lived
+ * Used for secure in-band WebSocket authentication
+ */
+export interface AuthTokenPayload {
+    /** Session ID */
+    sid: string;
+    /** User ID (null for guest) */
+    uid: string | null;
+    /** Expiration timestamp (ms) */
+    exp: number;
+}
+/**
+ * Auth token configuration
+ */
+export interface AuthTokenConfig {
+    /** Token lifetime in milliseconds (default: 5 minutes) */
+    tokenLifetime?: number;
+}
+/**
  * Response type for actions - can include HTML and/or script to execute
  */
 export interface ActionResponse {
@@ -128,6 +147,8 @@ export interface BeamInitOptions {
  */
 export interface BeamVariables<TEnv = object> {
     beam: BeamContext<TEnv>;
+    /** Short-lived auth token for in-band WebSocket authentication */
+    beamAuthToken: string;
 }
 /**
  * The Beam instance returned by createBeam
@@ -147,5 +168,12 @@ export interface BeamInstance<TEnv extends object = object> {
         Bindings: TEnv;
         Variables: BeamVariables<TEnv>;
     }>;
+    /**
+     * Generate a short-lived auth token for in-band WebSocket authentication.
+     * This token should be embedded in the page and used by the client to authenticate.
+     * @param ctx - The Beam context (from authMiddleware)
+     * @returns A signed, short-lived token string
+     */
+    generateAuthToken: (ctx: BeamContext<TEnv>) => Promise<string>;
 }
 //# sourceMappingURL=types.d.ts.map

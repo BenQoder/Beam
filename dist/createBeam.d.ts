@@ -1,5 +1,5 @@
 import { RpcTarget } from 'capnweb';
-import type { ActionHandler, ActionResponse, ModalHandler, DrawerHandler, BeamConfig, BeamInstance, BeamContext, BeamSession } from './types';
+import type { ActionHandler, ActionResponse, ModalHandler, DrawerHandler, BeamConfig, BeamInstance, BeamContext, BeamSession, SessionConfig } from './types';
 /**
  * Session implementation using KV storage.
  * Exported for users who need custom storage adapter.
@@ -100,5 +100,52 @@ declare class BeamServer<TEnv extends object> extends RpcTarget {
  * ```
  */
 export declare function createBeam<TEnv extends object = object>(config: BeamConfig<TEnv>): BeamInstance<TEnv>;
-export { BeamServer };
+/**
+ * Public Beam RPC Server - initial unauthenticated API
+ *
+ * This follows the capnweb in-band authentication pattern:
+ * - WebSocket connections start with this unauthenticated API
+ * - Client calls authenticate(token) to get the authenticated BeamServer
+ * - This prevents Cross-Site WebSocket Hijacking (CSWSH) attacks
+ */
+declare class PublicBeamServer<TEnv extends object> extends RpcTarget {
+    private secret;
+    private sessionConfig;
+    private env;
+    private request;
+    private actions;
+    private modals;
+    private drawers;
+    private auth;
+    constructor(secret: string, sessionConfig: SessionConfig<TEnv> | undefined, env: TEnv, request: Request, actions: Record<string, ActionHandler<TEnv>>, modals: Record<string, ModalHandler<TEnv>>, drawers: Record<string, DrawerHandler<TEnv>>, auth: ((request: Request, env: TEnv) => Promise<import('./types').BeamUser | null>) | undefined);
+    /**
+     * Authenticate with a token and return the authenticated API
+     * This is the only method available on the public API
+     */
+    authenticate(token: string): Promise<BeamServer<TEnv>>;
+}
+/**
+ * Generate the auth token meta tag HTML for in-band WebSocket authentication.
+ * Call this in your layout/page to inject the token.
+ *
+ * @example
+ * ```tsx
+ * // app/routes/_renderer.tsx
+ * import { beamTokenMeta } from '@benqoder/beam'
+ *
+ * export default defineRenderer((c, { Layout, children }) => {
+ *   const token = c.get('beamAuthToken')
+ *   return (
+ *     <html>
+ *       <head>
+ *         <RawHTML>{beamTokenMeta(token)}</RawHTML>
+ *       </head>
+ *       <body>{children}</body>
+ *     </html>
+ *   )
+ * })
+ * ```
+ */
+export declare function beamTokenMeta(token: string): string;
+export { BeamServer, PublicBeamServer };
 //# sourceMappingURL=createBeam.d.ts.map

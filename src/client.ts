@@ -8,12 +8,24 @@ import { newWebSocketRpcSession, type RpcStub } from 'capnweb'
 // - Bidirectional RPC (server can call client callbacks)
 // - Automatic reconnection
 // - Type-safe method calls
+//
+// SECURITY: Implements in-band authentication pattern
+// - WebSocket connections start unauthenticated (PublicApi)
+// - Client must call authenticate(token) to get AuthenticatedApi
+// - Token is obtained from same-origin page (prevents CSWSH attacks)
 
 // Get endpoint from meta tag or default to /beam
 // Usage: <meta name="beam-endpoint" content="/custom-endpoint">
 function getEndpoint(): string {
   const meta = document.querySelector('meta[name="beam-endpoint"]')
   return meta?.getAttribute('content') ?? '/beam'
+}
+
+// Get auth token from meta tag
+// Usage: <meta name="beam-token" content="...">
+function getAuthToken(): string {
+  const meta = document.querySelector('meta[name="beam-token"]')
+  return meta?.getAttribute('content') ?? ''
 }
 
 // Action response type (mirrors server-side)
@@ -23,7 +35,7 @@ interface ActionResponse {
   redirect?: string
 }
 
-// BeamServer interface (mirrors server-side RpcTarget)
+// BeamServer interface (authenticated API - mirrors server-side RpcTarget)
 interface BeamServer {
   call(action: string, data?: Record<string, unknown>): Promise<ActionResponse>
   modal(modalId: string, data?: Record<string, unknown>): Promise<string>
@@ -31,8 +43,14 @@ interface BeamServer {
   registerCallback(callback: (event: string, data: unknown) => void): Promise<void>
 }
 
-// RPC stub type for the BeamServer
+// PublicBeamServer interface (unauthenticated - only has authenticate method)
+interface PublicBeamServer {
+  authenticate(token: string): Promise<BeamServer>
+}
+
+// RPC stub types
 type BeamServerStub = RpcStub<BeamServer>
+type PublicBeamServerStub = RpcStub<PublicBeamServer>
 
 let isOnline = navigator.onLine
 let rpcSession: BeamServerStub | null = null
@@ -63,29 +81,40 @@ function connect(): Promise<BeamServerStub> {
     return Promise.resolve(rpcSession)
   }
 
-  connectingPromise = new Promise((resolve, reject) => {
+  connectingPromise = (async () => {
     try {
       const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
       const endpoint = getEndpoint()
       const url = `${protocol}//${location.host}${endpoint}`
 
-      // Create capnweb RPC session with BeamServer type
-      const session = newWebSocketRpcSession<BeamServer>(url)
+      // Get auth token from page (proves same-origin access)
+      const token = getAuthToken()
+      if (!token) {
+        throw new Error('No auth token found. Ensure <meta name="beam-token" content="..."> is set.')
+      }
+
+      // Create capnweb RPC session - starts with PublicBeamServer
+      const publicSession = newWebSocketRpcSession<PublicBeamServer>(url)
+
+      // Authenticate to get the full BeamServer API
+      // This is the capnweb in-band authentication pattern
+      // @ts-ignore - capnweb stub methods are dynamically typed
+      const authenticatedSession = await publicSession.authenticate(token) as BeamServerStub
 
       // Register client callback for bidirectional communication
       // @ts-ignore - capnweb stub methods are dynamically typed
-      session.registerCallback?.(handleServerEvent)?.catch?.(() => {
+      authenticatedSession.registerCallback?.(handleServerEvent)?.catch?.(() => {
         // Server may not support callbacks, that's ok
       })
 
-      rpcSession = session
+      rpcSession = authenticatedSession
       connectingPromise = null
-      resolve(session)
+      return authenticatedSession
     } catch (err) {
       connectingPromise = null
-      reject(err)
+      throw err
     }
-  })
+  })()
 
   return connectingPromise
 }

@@ -1,6 +1,6 @@
 // Main server-side exports for @benqoder/beam
 
-export { createBeam, KVSession, CookieSession } from './createBeam'
+export { createBeam, KVSession, CookieSession, beamTokenMeta } from './createBeam'
 export { render } from './render'
 export { ModalFrame } from './ModalFrame'
 export { DrawerFrame } from './DrawerFrame'
@@ -28,4 +28,5 @@ export type {
   BeamSession,
   SessionConfig,
   SessionStorageFactory,
+  AuthTokenPayload,
 } from './types'
