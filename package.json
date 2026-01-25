@@ -2,6 +2,13 @@
   "name": "@benqoder/beam",
   "version": "0.1.0",
   "type": "module",
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/benqoder/beam.git"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -16,14 +23,15 @@
       "import": "./dist/vite.js"
     },
     "./virtual": {
-      "types": "./dist/virtual-beam.d.ts"
+      "types": "./src/virtual-beam.d.ts"
     },
     "./styles": "./src/beam.css",
     "./beam.css": "./src/beam.css"
   },
   "files": [
     "dist",
-    "src/beam.css"
+    "src/beam.css",
+    "src/virtual-beam.d.ts"
   ],
   "scripts": {
     "build": "tsc",

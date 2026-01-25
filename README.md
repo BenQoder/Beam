@@ -282,7 +282,7 @@ export function shoppingCart(c) {
 | `beam-infinite` | Load more when scrolled near bottom (auto-trigger) | `beam-infinite` |
 | `beam-load-more` | Load more on click (manual trigger) | `beam-load-more` |
 | `beam-action` | Action to call for next page | `beam-action="loadMore"` |
-| `beam-item-id` | Unique ID for list items (enables fresh data sync on restore) | `beam-item-id={item.id}` |
+| `beam-item-id` | Unique ID for list items (deduplication + fresh data sync) | `beam-item-id={item.id}` |
 
 ### Navigation Feedback
 
@@ -1496,6 +1496,28 @@ On back navigation:
 3. Server data takes precedence for items in both
 
 This ensures Page 1 items always have fresh data (prices, stock, etc.) while preserving the full scroll state.
+
+#### Automatic Deduplication
+
+When using `beam-item-id`, Beam automatically handles duplicate items when appending or prepending content:
+
+1. **Duplicates are replaced**: If an item with the same `beam-item-id` already exists, it's morphed with fresh data
+2. **No double-insertion**: The duplicate is removed from incoming HTML after updating
+
+This is useful when:
+- New items are inserted while the user is scrolling (causing offset shifts)
+- Real-time updates add items that might already exist
+- Race conditions between pagination requests
+
+```html
+<!-- Items with beam-item-id are automatically deduplicated -->
+<div id="feed" class="post-list">
+  <article beam-item-id="post-123">...</article>
+  <article beam-item-id="post-124">...</article>
+</div>
+```
+
+If incoming content contains `post-123` again, the existing one is updated with fresh data instead of adding a duplicate.
 
 The action should return the new items plus the next trigger (sentinel or button):
 

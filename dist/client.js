@@ -369,16 +369,46 @@ function showPlaceholder(el) {
     };
 }
 // ============ SWAP STRATEGIES ============
+/**
+ * Deduplicate items by beam-item-id before inserting.
+ * - Updates existing items with fresh data (morphs in place)
+ * - Removes duplicates from incoming HTML (so they don't double-insert)
+ */
+function dedupeItems(target, html) {
+    const temp = document.createElement('div');
+    temp.innerHTML = html;
+    // Collect existing item IDs
+    const existingIds = new Set();
+    target.querySelectorAll('[beam-item-id]').forEach((el) => {
+        const id = el.getAttribute('beam-item-id');
+        if (id)
+            existingIds.add(id);
+    });
+    // Process incoming items
+    temp.querySelectorAll('[beam-item-id]').forEach((el) => {
+        const id = el.getAttribute('beam-item-id');
+        if (id && existingIds.has(id)) {
+            // Morph existing item with fresh data
+            const existing = target.querySelector(`[beam-item-id="${id}"]`);
+            if (existing) {
+                morph(existing, el.outerHTML);
+            }
+            // Remove from incoming HTML (already updated in place)
+            el.remove();
+        }
+    });
+    return temp.innerHTML;
+}
 function swap(target, html, mode, trigger) {
     const { main, oob } = parseOobSwaps(html);
     switch (mode) {
         case 'append':
             trigger?.remove();
-            target.insertAdjacentHTML('beforeend', main);
+            target.insertAdjacentHTML('beforeend', dedupeItems(target, main));
             break;
         case 'prepend':
             trigger?.remove();
-            target.insertAdjacentHTML('afterbegin', main);
+            target.insertAdjacentHTML('afterbegin', dedupeItems(target, main));
             break;
         case 'replace':
             target.innerHTML = main;
