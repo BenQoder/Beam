@@ -160,9 +160,19 @@ function createBeamContext(base) {
         script: (code) => ({ script: code }),
         render: (html, options) => {
             if (html instanceof Promise) {
-                return html.then((resolved) => ({ html: resolved, script: options?.script }));
+                return html.then((resolved) => ({
+                    html: resolved,
+                    script: options?.script,
+                    target: options?.target,
+                    swap: options?.swap,
+                }));
             }
-            return { html, script: options?.script };
+            return {
+                html,
+                script: options?.script,
+                target: options?.target,
+                swap: options?.swap,
+            };
         },
         redirect: (url) => ({ redirect: url }),
     };
