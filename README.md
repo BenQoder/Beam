@@ -279,8 +279,10 @@ export function shoppingCart(c) {
 
 | Attribute | Description | Example |
 |-----------|-------------|---------|
-| `beam-infinite` | Load more when scrolled near bottom | `beam-infinite` |
+| `beam-infinite` | Load more when scrolled near bottom (auto-trigger) | `beam-infinite` |
+| `beam-load-more` | Load more on click (manual trigger) | `beam-load-more` |
 | `beam-action` | Action to call for next page | `beam-action="loadMore"` |
+| `beam-item-id` | Unique ID for list items (enables fresh data sync on restore) | `beam-item-id={item.id}` |
 
 ### Navigation Feedback
 
@@ -1305,6 +1307,233 @@ ctx.session.set('cart')  → adapter.set()
 - **Cookie storage limit** - ~4KB total size
 - **WebSocket limitation** - Cookie storage is read-only in WebSocket (use KV for write operations)
 - **Signed cookies** - Session ID is cryptographically signed to prevent tampering
+
+---
+
+## Programmatic API
+
+Call actions directly from JavaScript using `window.beam`:
+
+```javascript
+// Call action with RPC only (no DOM update)
+const response = await window.beam.logout()
+
+// Call action and swap HTML into target
+await window.beam.getCartBadge({}, '#cart-count')
+
+// With swap mode
+await window.beam.loadMoreProducts({ page: 2 }, { target: '#products', swap: 'append' })
+
+// Full options object
+await window.beam.addToCart({ productId: 123 }, {
+  target: '#cart-badge',
+  swap: 'morph'  // 'morph' | 'innerHTML' | 'append' | 'prepend'
+})
+```
+
+### API Signature
+
+```typescript
+window.beam.actionName(data?, options?) → Promise<ActionResponse>
+
+// data: Record<string, unknown> - parameters passed to the action
+// options: string | { target?: string, swap?: string }
+//   - string shorthand: treated as target selector
+//   - object: full options with target and swap mode
+
+// ActionResponse: { html?: string, script?: string, redirect?: string }
+```
+
+### Response Handling
+
+The API automatically handles:
+- **HTML swapping**: If `options.target` is provided, swaps HTML into the target element
+- **Script execution**: If response contains a script, executes it
+- **Redirects**: If response contains a redirect URL, navigates to it
+
+```javascript
+// Server returns script - executed automatically
+await window.beam.showNotification({ message: 'Hello!' })
+
+// Server returns redirect - navigates automatically
+await window.beam.logout()  // ctx.redirect('/login')
+
+// Server returns HTML + script - both handled
+await window.beam.addToCart({ id: 42 }, '#cart-badge')
+```
+
+### Utility Methods
+
+```javascript
+window.beam.showToast(message, type?)  // Show toast notification
+window.beam.closeModal()                // Close current modal
+window.beam.closeDrawer()               // Close current drawer
+window.beam.clearCache()                // Clear action cache
+window.beam.isOnline()                  // Check connection status
+window.beam.getSession()                // Get current session ID
+window.beam.clearScrollState()          // Clear saved scroll state
+```
+
+---
+
+## Server Redirects
+
+Actions can trigger client-side redirects using `ctx.redirect()`:
+
+```typescript
+// app/actions/auth.tsx
+export function logout(ctx: BeamContext<Env>) {
+  // Clear session, etc.
+  return ctx.redirect('/login')
+}
+
+export function requireAuth(ctx: BeamContext<Env>) {
+  const user = ctx.session.get('user')
+  if (!user) {
+    return ctx.redirect('/login?next=' + encodeURIComponent(ctx.req.url))
+  }
+  // Continue with action...
+}
+```
+
+The redirect is handled automatically on the client side, whether triggered via:
+- Button/link click (`beam-action`)
+- Form submission
+- Programmatic call (`window.beam.actionName()`)
+
+---
+
+## State Preservation
+
+### Pagination URL State
+
+For pagination, users expect the back button to return them to the same page. Use `beam-replace` to update the URL without a full page reload:
+
+```html
+<button
+  beam-action="getProducts"
+  beam-params='{"page": 2}'
+  beam-target="#product-list"
+  beam-replace="?page=2"
+>
+  Page 2
+</button>
+```
+
+When the user navigates away and clicks back, the browser loads the URL with `?page=2`, and your page can read this to show the correct page.
+
+```tsx
+// In your route handler
+const page = parseInt(c.req.query('page') || '1')
+const products = await getProducts(page)
+```
+
+### Infinite Scroll & Load More State
+
+For infinite scroll and load more, Beam automatically preserves:
+- **Loaded content**: All items that were loaded
+- **Scroll position**: Where the user was on the page
+
+This happens automatically when using `beam-infinite` or `beam-load-more`. The state is stored in the browser's `sessionStorage` with a 30-minute TTL.
+
+#### Infinite Scroll (auto-trigger on visibility)
+
+```html
+<div id="product-list" class="product-grid">
+  {products.map(p => <ProductCard product={p} />)}
+  {hasMore && (
+    <div
+      class="load-more-sentinel"
+      beam-infinite
+      beam-action="loadMoreInfinite"
+      beam-params='{"page": 2}'
+      beam-target="#product-list"
+    />
+  )}
+</div>
+```
+
+#### Load More Button (click to trigger)
+
+```html
+<div id="product-list" class="product-grid">
+  {products.map(p => <ProductCard product={p} />)}
+  {hasMore && (
+    <button
+      class="load-more-btn"
+      beam-load-more
+      beam-action="loadMoreProducts"
+      beam-params='{"page": 2}'
+      beam-target="#product-list"
+    >
+      Load More
+    </button>
+  )}
+</div>
+```
+
+Both patterns work the same way:
+1. User loads more content (scroll or click)
+2. User navigates away (clicks a product)
+3. User clicks the back button
+4. Content and scroll position are restored
+5. Fresh server data is morphed over cached items (using `beam-item-id`)
+
+#### Keeping Items Fresh with `beam-item-id`
+
+When restoring from cache, the server still renders fresh Page 1 data. To sync fresh data with cached items, add `beam-item-id` to your list items:
+
+```html
+<!-- Any list item with a unique identifier -->
+<div class="product-card" beam-item-id={product.id}>...</div>
+<div class="comment" beam-item-id={comment.id}>...</div>
+<article beam-item-id={post.slug}>...</article>
+```
+
+On back navigation:
+1. Cache is restored (all loaded items + scroll position)
+2. Fresh server items are morphed over matching cached items
+3. Server data takes precedence for items in both
+
+This ensures Page 1 items always have fresh data (prices, stock, etc.) while preserving the full scroll state.
+
+The action should return the new items plus the next trigger (sentinel or button):
+
+```tsx
+// app/actions/loadMore.tsx
+export async function loadMoreProducts(ctx, { page }) {
+  const items = await getItems(page)
+  const hasMore = await hasMoreItems(page)
+
+  return (
+    <>
+      {items.map(item => <ProductCard product={item} />)}
+      {hasMore ? (
+        <button
+          beam-load-more
+          beam-action="loadMoreProducts"
+          beam-params={JSON.stringify({ page: page + 1 })}
+          beam-target="#product-list"
+        >
+          Load More
+        </button>
+      ) : (
+        <p>No more items</p>
+      )}
+    </>
+  )
+}
+```
+
+#### Clearing Scroll State
+
+To manually clear the saved scroll state:
+
+```javascript
+window.beam.clearScrollState()
+```
+
+This is useful when you want to force a fresh load, such as after a filter change or form submission.
 
 ---
 

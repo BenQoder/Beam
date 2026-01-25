@@ -485,7 +485,7 @@ document.addEventListener('mousedown', async (e) => {
     const target = e.target;
     if (!target?.closest)
         return;
-    const btn = target.closest('[beam-action][beam-instant]:not(form)');
+    const btn = target.closest('[beam-action][beam-instant]:not(form):not([beam-load-more]):not([beam-infinite])');
     if (!btn || btn.tagName === 'FORM')
         return;
     // Skip if submit button inside a beam form
@@ -510,7 +510,7 @@ document.addEventListener('click', async (e) => {
     const target = e.target;
     if (!target?.closest)
         return;
-    const btn = target.closest('[beam-action]:not(form):not([beam-instant])');
+    const btn = target.closest('[beam-action]:not(form):not([beam-instant]):not([beam-load-more]):not([beam-infinite])');
     if (!btn || btn.tagName === 'FORM')
         return;
     // Skip if submit button inside a beam form
@@ -924,8 +924,129 @@ document.addEventListener('click', async (e) => {
         link.classList.remove('beam-active');
     }
 });
-// ============ INFINITE SCROLL ============
-// Usage: <div beam-infinite beam-action="loadMore" beam-params='{"page":2}' beam-target="#list"></div>
+const SCROLL_STATE_KEY_PREFIX = 'beam_scroll_';
+const SCROLL_STATE_TTL = 5 * 60 * 1000; // 5 minutes
+function getScrollStateKey(action) {
+    return SCROLL_STATE_KEY_PREFIX + location.pathname + location.search + '_' + action;
+}
+function saveScrollState(targetSelector, action) {
+    const target = $(targetSelector);
+    if (!target)
+        return;
+    const state = {
+        html: target.innerHTML,
+        scrollY: window.scrollY,
+        timestamp: Date.now(),
+    };
+    try {
+        sessionStorage.setItem(getScrollStateKey(action), JSON.stringify(state));
+    }
+    catch (e) {
+        // sessionStorage might be full or disabled
+        console.warn('[beam] Could not save scroll state:', e);
+    }
+}
+function restoreScrollState() {
+    // Find infinite scroll or load more container
+    const sentinel = document.querySelector('[beam-infinite], [beam-load-more]');
+    if (!sentinel)
+        return false;
+    const action = sentinel.getAttribute('beam-action');
+    const targetSelector = sentinel.getAttribute('beam-target');
+    if (!action || !targetSelector)
+        return false;
+    const key = getScrollStateKey(action);
+    const stored = sessionStorage.getItem(key);
+    if (!stored)
+        return false;
+    try {
+        const state = JSON.parse(stored);
+        // Check if state is expired
+        if (Date.now() - state.timestamp > SCROLL_STATE_TTL) {
+            sessionStorage.removeItem(key);
+            return false;
+        }
+        const target = $(targetSelector);
+        if (!target)
+            return false;
+        // Disable browser's automatic scroll restoration
+        if ('scrollRestoration' in history) {
+            history.scrollRestoration = 'manual';
+        }
+        // Capture fresh server-rendered content before replacing
+        const freshHtml = target.innerHTML;
+        const freshContainer = document.createElement('div');
+        freshContainer.innerHTML = freshHtml;
+        // Hide content before restoring to prevent jump
+        target.style.opacity = '0';
+        target.style.transition = 'opacity 0.15s ease-out';
+        // Restore cached content (has all pages)
+        target.innerHTML = state.html;
+        // Morph fresh server data over cached data (server takes precedence)
+        // Match elements by beam-item-id attribute
+        freshContainer.querySelectorAll('[beam-item-id]').forEach((freshEl) => {
+            const itemId = freshEl.getAttribute('beam-item-id');
+            const cachedEl = target.querySelector(`[beam-item-id="${itemId}"]`);
+            if (cachedEl) {
+                morph(cachedEl, freshEl.outerHTML);
+            }
+        });
+        // Also match by id attribute as fallback
+        freshContainer.querySelectorAll('[id]').forEach((freshEl) => {
+            const cachedEl = target.querySelector(`#${freshEl.id}`);
+            if (cachedEl && !freshEl.hasAttribute('beam-item-id')) {
+                morph(cachedEl, freshEl.outerHTML);
+            }
+        });
+        // Restore scroll position and fade in
+        requestAnimationFrame(() => {
+            window.scrollTo(0, state.scrollY);
+            requestAnimationFrame(() => {
+                target.style.opacity = '1';
+            });
+        });
+        // Re-observe any new sentinels in restored content
+        target.querySelectorAll('[beam-infinite]:not([beam-observed])').forEach((el) => {
+            el.setAttribute('beam-observed', '');
+            infiniteObserver.observe(el);
+        });
+        // Don't clear state here - it persists until refresh or new content is loaded
+        // State is cleared in tryRestoreScrollState() when navType is not 'back_forward'
+        return true;
+    }
+    catch (e) {
+        console.warn('[beam] Could not restore scroll state:', e);
+        sessionStorage.removeItem(key);
+        return false;
+    }
+}
+// Save scroll position when navigating away (for back button restoration)
+window.addEventListener('pagehide', () => {
+    // Find any infinite scroll or load more element to get the target and action
+    const sentinel = document.querySelector('[beam-infinite], [beam-load-more]');
+    if (!sentinel)
+        return;
+    const action = sentinel.getAttribute('beam-action');
+    const targetSelector = sentinel.getAttribute('beam-target');
+    if (!action || !targetSelector)
+        return;
+    // Update the saved state with current scroll position
+    const key = getScrollStateKey(action);
+    const stored = sessionStorage.getItem(key);
+    if (!stored)
+        return;
+    try {
+        const state = JSON.parse(stored);
+        state.scrollY = window.scrollY;
+        state.timestamp = Date.now();
+        sessionStorage.setItem(key, JSON.stringify(state));
+    }
+    catch (e) {
+        // Ignore errors
+    }
+});
+// Track the target selector for saving state
+let infiniteScrollTarget = null;
 const infiniteObserver = new IntersectionObserver(async (entries) => {
     for (const entry of entries) {
         if (!entry.isIntersecting)
@@ -938,6 +1059,8 @@ const infiniteObserver = new IntersectionObserver(async (entries) => {
         const swapMode = sentinel.getAttribute('beam-swap') || 'append';
         if (!action || !targetSelector)
             continue;
+        // Track target for state saving
+        infiniteScrollTarget = targetSelector;
         // Check confirmation
         if (!checkConfirm(sentinel))
             continue;
@@ -950,6 +1073,10 @@ const infiniteObserver = new IntersectionObserver(async (entries) => {
             const target = $(targetSelector);
             if (target && response.html) {
                 swap(target, response.html, swapMode, sentinel);
+                // Save scroll state after content is loaded
+                requestAnimationFrame(() => {
+                    saveScrollState(targetSelector, action);
+                });
             }
             // Execute script if present
             if (response.script) {
@@ -978,6 +1105,85 @@ document.querySelectorAll('[beam-infinite]').forEach((el) => {
     el.setAttribute('beam-observed', '');
     infiniteObserver.observe(el);
 });
+// ============ LOAD MORE (Click-based) ============
+// Usage: <button beam-load-more beam-action="loadMore" beam-params='{"page":2}' beam-target="#list">Load More</button>
+document.addEventListener('click', async (e) => {
+    const target = e.target;
+    if (!target?.closest)
+        return;
+    const trigger = target.closest('[beam-load-more]');
+    if (!trigger)
+        return;
+    e.preventDefault();
+    if (trigger.hasAttribute('beam-loading'))
+        return;
+    const action = trigger.getAttribute('beam-action');
+    const targetSelector = trigger.getAttribute('beam-target');
+    const swapMode = trigger.getAttribute('beam-swap') || 'append';
+    if (!action || !targetSelector)
+        return;
+    // Check confirmation
+    if (!checkConfirm(trigger))
+        return;
+    const params = getParams(trigger);
+    trigger.setAttribute('beam-loading', '');
+    trigger.classList.add('loading');
+    setLoading(trigger, true, action, params);
+    try {
+        const response = await api.call(action, params);
+        const targetEl = $(targetSelector);
+        if (targetEl && response.html) {
+            swap(targetEl, response.html, swapMode, trigger);
+            // Save scroll state after content is loaded
+            requestAnimationFrame(() => {
+                saveScrollState(targetSelector, action);
+            });
+        }
+        // Execute script if present
+        if (response.script) {
+            executeScript(response.script);
+        }
+        // Handle history
+        handleHistory(trigger);
+    }
+    catch (err) {
+        console.error('Load more error:', err);
+        trigger.removeAttribute('beam-loading');
+        trigger.classList.remove('loading');
+        trigger.classList.add('error');
+        showToast('Failed to load more. Please try again.', 'error');
+    }
+    finally {
+        setLoading(trigger, false, action, params);
+    }
+});
+// Restore scroll state on page load (for back navigation only, not refresh)
+function tryRestoreScrollState() {
+    // Only restore on back/forward navigation, not on refresh or direct navigation
+    const navEntry = performance.getEntriesByType('navigation')[0];
+    const navType = navEntry?.type;
+    // 'back_forward' = back/forward button, 'reload' = refresh, 'navigate' = direct navigation
+    if (navType !== 'back_forward') {
+        // Clear scroll state on refresh or direct navigation
+        clearScrollState();
+        // Disable browser's automatic scroll restoration and scroll to top
+        if ('scrollRestoration' in history) {
+            history.scrollRestoration = 'manual';
+        }
+        window.scrollTo(0, 0);
+        return;
+    }
+    if (document.querySelector('[beam-infinite], [beam-load-more]')) {
+        restoreScrollState();
+    }
+}
+// Restore scroll state when DOM is ready
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', tryRestoreScrollState);
+}
+else {
+    tryRestoreScrollState();
+}
 const cache = new Map();
 const preloading = new Set();
 function getCacheKey(action, params) {
@@ -1522,12 +1728,46 @@ document.addEventListener('click', (e) => {
         }
     }
 });
+// Clear scroll state for current page or all pages
+// Usage: clearScrollState() - clear all for current URL
+//        clearScrollState('loadMore') - clear specific action
+//        clearScrollState(true) - clear all scroll states
+function clearScrollState(actionOrAll) {
+    if (actionOrAll === true) {
+        // Clear all scroll states
+        const keysToRemove = [];
+        for (let i = 0; i < sessionStorage.length; i++) {
+            const key = sessionStorage.key(i);
+            if (key?.startsWith(SCROLL_STATE_KEY_PREFIX)) {
+                keysToRemove.push(key);
+            }
+        }
+        keysToRemove.forEach((key) => sessionStorage.removeItem(key));
+    }
+    else if (typeof actionOrAll === 'string') {
+        // Clear specific action's scroll state
+        sessionStorage.removeItem(getScrollStateKey(actionOrAll));
+    }
+    else {
+        // Clear all scroll states for current URL (any action)
+        const prefix = SCROLL_STATE_KEY_PREFIX + location.pathname + location.search;
+        const keysToRemove = [];
+        for (let i = 0; i < sessionStorage.length; i++) {
+            const key = sessionStorage.key(i);
+            if (key?.startsWith(prefix)) {
+                keysToRemove.push(key);
+            }
+        }
+        keysToRemove.forEach((key) => sessionStorage.removeItem(key));
+    }
+}
 // Base utilities that are always available on window.beam
 const beamUtils = {
     showToast,
     closeModal,
     closeDrawer,
     clearCache,
+    clearScrollState,
     isOnline: () => isOnline,
     getSession: api.getSession,
 };
