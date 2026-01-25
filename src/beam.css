@@ -120,8 +120,8 @@
 #modal-content {
   background: white;
   border-radius: 0.5rem;
-  max-width: 32rem;
   width: 100%;
+  max-width: 32rem;
   max-height: calc(100vh - 2rem);
   overflow: auto;
   transform: scale(0.95);
@@ -132,6 +132,28 @@
 #modal-backdrop.open #modal-content {
   transform: scale(1);
   opacity: 1;
+}
+
+/* Modal sizes */
+#modal-content[data-size="small"] {
+  max-width: 24rem;
+}
+
+#modal-content[data-size="medium"] {
+  max-width: 32rem;
+}
+
+#modal-content[data-size="large"] {
+  max-width: 42rem;
+}
+
+#modal-content[data-size="xl"] {
+  max-width: 56rem;
+}
+
+#modal-content[data-size="full"] {
+  max-width: calc(100% - 2rem);
+  max-height: calc(100vh - 2rem);
 }
 
 /* Drawer backdrop */
@@ -188,40 +210,83 @@
   transform: translateX(0) translateY(0);
 }
 
-/* Drawer sizes */
+/* Drawer sizes - mobile first with max-width constraint */
+#drawer-content[data-position="left"],
+#drawer-content[data-position="right"] {
+  width: 100%;
+  max-width: 100%;
+}
+
 #drawer-content[data-size="small"] {
-  width: 20rem;
+  max-width: 20rem;
 }
 
 #drawer-content[data-size="medium"] {
-  width: 28rem;
+  max-width: 28rem;
 }
 
 #drawer-content[data-size="large"] {
-  width: 36rem;
+  max-width: 36rem;
+}
+
+#drawer-content[data-size="xl"] {
+  max-width: 48rem;
 }
 
 #drawer-content[data-size="full"] {
-  width: 100%;
+  max-width: 100%;
+}
+
+/* Responsive: on larger screens, use the defined max-width as width */
+@media (min-width: 640px) {
+  #drawer-content[data-size="small"] {
+    width: 20rem;
+  }
+
+  #drawer-content[data-size="medium"] {
+    width: 28rem;
+  }
+
+  #drawer-content[data-size="large"] {
+    width: 36rem;
+  }
+
+  #drawer-content[data-size="xl"] {
+    width: 48rem;
+  }
 }
 
 /* Vertical drawers (top/bottom) use height instead */
+#drawer-content[data-position="top"],
+#drawer-content[data-position="bottom"] {
+  width: 100%;
+  max-width: 100%;
+  max-height: 90vh;
+}
+
 #drawer-content[data-position="top"][data-size="small"],
 #drawer-content[data-position="bottom"][data-size="small"] {
-  width: 100%;
   height: 25vh;
 }
 
 #drawer-content[data-position="top"][data-size="medium"],
 #drawer-content[data-position="bottom"][data-size="medium"] {
-  width: 100%;
   height: 50vh;
 }
 
 #drawer-content[data-position="top"][data-size="large"],
 #drawer-content[data-position="bottom"][data-size="large"] {
-  width: 100%;
   height: 75vh;
+}
+
+#drawer-content[data-position="top"][data-size="xl"],
+#drawer-content[data-position="bottom"][data-size="xl"] {
+  height: 85vh;
+}
+
+#drawer-content[data-position="top"][data-size="full"],
+#drawer-content[data-position="bottom"][data-size="full"] {
+  height: 100vh;
 }
 
 /* Prevent body scroll when modal/drawer open */

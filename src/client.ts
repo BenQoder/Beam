@@ -672,9 +672,10 @@ document.addEventListener('click', (e) => {
     if (!checkConfirm(trigger)) return
 
     const modalId = trigger.getAttribute('beam-modal')
+    const size = trigger.getAttribute('beam-size') || 'medium'
     const params = getParams(trigger)
     if (modalId) {
-      openModal(modalId, params)
+      openModal(modalId, params, { size })
     }
   }
 
@@ -731,7 +732,11 @@ document.addEventListener('keydown', (e) => {
   }
 })
 
-async function openModal(id: string, params: Record<string, unknown> = {}): Promise<void> {
+interface ModalOptions {
+  size: string
+}
+
+async function openModal(id: string, params: Record<string, unknown> = {}, options: ModalOptions = { size: 'medium' }): Promise<void> {
   try {
     const html = await api.modal(id, params)
 
@@ -742,8 +747,9 @@ async function openModal(id: string, params: Record<string, unknown> = {}): Prom
       document.body.appendChild(backdrop)
     }
 
+    const { size } = options
     backdrop.innerHTML = `
-      <div id="modal-content" role="dialog" aria-modal="true">
+      <div id="modal-content" role="dialog" aria-modal="true" data-size="${size}">
         ${html}
       </div>
     `
@@ -768,7 +774,7 @@ function closeModal(): void {
   if (backdrop) {
     backdrop.classList.remove('open')
     setTimeout(() => {
-      backdrop.innerHTML = ''
+      backdrop.remove()
     }, 200)
   }
   document.body.classList.remove('modal-open')
@@ -821,7 +827,7 @@ function closeDrawer(): void {
   if (backdrop) {
     backdrop.classList.remove('open')
     setTimeout(() => {
-      backdrop.innerHTML = ''
+      backdrop.remove()
     }, 200)
   }
   document.body.classList.remove('drawer-open')
