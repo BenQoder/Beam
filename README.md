@@ -1310,6 +1310,135 @@ ctx.session.set('cart')  → adapter.set()
 
 ---
 
+## Security: WebSocket Authentication
+
+Beam uses **in-band authentication** to prevent Cross-Site WebSocket Hijacking (CSWSH) attacks. This is the pattern recommended by [capnweb](https://github.com/nickelsworth/capnweb).
+
+### The Problem
+
+WebSocket connections in browsers:
+- **Always permit cross-site connections** (no CORS for WebSocket)
+- **Automatically send cookies** with the upgrade request
+- **Cannot use custom headers** for authentication
+
+This means a malicious site could open a WebSocket to your server, and the browser would send your cookies, authenticating the attacker.
+
+### The Solution: In-Band Authentication
+
+Instead of relying on cookies, Beam requires clients to authenticate explicitly:
+
+1. **Server generates a short-lived token** (embedded in same-origin page)
+2. **WebSocket connects unauthenticated** (gets `PublicApi`)
+3. **Client calls `authenticate(token)`** to get the full API
+4. **Malicious sites can't get the token** (CORS blocks page requests)
+
+### Setup
+
+#### 1. Enable Sessions (Required)
+
+The auth token is tied to sessions:
+
+```typescript
+// vite.config.ts
+beamPlugin({
+  actions: '/app/actions/*.tsx',
+  modals: '/app/modals/*.tsx',
+  session: true, // Uses env.SESSION_SECRET
+})
+```
+
+#### 2. Use authMiddleware
+
+```typescript
+// app/server.ts
+import { createApp } from 'honox/server'
+import { beam } from 'virtual:beam'
+
+const app = createApp({
+  init(app) {
+    app.use('*', beam.authMiddleware()) // Generates token
+    beam.init(app)
+  }
+})
+
+export default app
+```
+
+#### 3. Inject Token in Layout
+
+```tsx
+// app/routes/_renderer.tsx
+import { jsxRenderer } from 'hono/jsx-renderer'
+
+export default jsxRenderer((c, { children }) => {
+  const token = c.get('beamAuthToken')
+
+  return (
+    <html>
+      <head>
+        <meta name="beam-token" content={token} />
+        <script type="module" src="/app/client.ts"></script>
+      </head>
+      <body>{children}</body>
+    </html>
+  )
+})
+```
+
+Or use the helper:
+
+```tsx
+import { beamTokenMeta } from '@benqoder/beam'
+import { Raw } from 'hono/html'
+
+<head>
+  <Raw html={beamTokenMeta(c.get('beamAuthToken'))} />
+</head>
+```
+
+#### 4. Set Environment Variable
+
+```bash
+# .dev.vars (local) or Cloudflare dashboard (production)
+SESSION_SECRET=your-secret-key-at-least-32-chars
+```
+
+### How It Works
+
+| Step | What Happens |
+|------|--------------|
+| 1. Page Load | Server generates 5-minute token, embeds in HTML |
+| 2. Client Connects | WebSocket opens, gets `PublicApi` (unauthenticated) |
+| 3. Client Authenticates | Calls `publicApi.authenticate(token)` |
+| 4. Server Validates | Verifies signature, expiration, session match |
+| 5. Server Returns | Full `BeamServer` API (authenticated) |
+
+### Security Properties
+
+| Attack | Result |
+|--------|--------|
+| Cross-site WebSocket | Can connect, but `authenticate()` fails (no token) |
+| Stolen token | Expires in 5 minutes, tied to session ID |
+| Replay attack | Token is single-use per session |
+| Token tampering | HMAC-SHA256 signature verification fails |
+
+### Token Details
+
+- **Algorithm**: HMAC-SHA256
+- **Lifetime**: 5 minutes (configurable)
+- **Payload**: `{ sid: sessionId, uid: userId, exp: timestamp }`
+- **Format**: `base64(payload).base64(signature)`
+
+### Generating Tokens Manually
+
+If you need to generate tokens outside the middleware:
+
+```typescript
+const token = await beam.generateAuthToken(ctx)
+```
+
+---
+
 ## Programmatic API
 
 Call actions directly from JavaScript using `window.beam`:
