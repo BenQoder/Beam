@@ -161,9 +161,19 @@ function createBeamContext<TEnv>(base: {
     script: (code: string): ActionResponse => ({ script: code }),
     render: (html: string | Promise<string>, options?: RenderOptions): ActionResponse | Promise<ActionResponse> => {
       if (html instanceof Promise) {
-        return html.then((resolved) => ({ html: resolved, script: options?.script }))
+        return html.then((resolved) => ({
+          html: resolved,
+          script: options?.script,
+          target: options?.target,
+          swap: options?.swap,
+        }))
       }
-      return { html, script: options?.script }
+      return {
+        html,
+        script: options?.script,
+        target: options?.target,
+        swap: options?.swap,
+      }
     },
     redirect: (url: string): ActionResponse => ({ redirect: url }),
   }

@@ -3,6 +3,8 @@ interface ActionResponse {
     html?: string;
     script?: string;
     redirect?: string;
+    target?: string;
+    swap?: string;
 }
 interface BeamServer {
     call(action: string, data?: Record<string, unknown>): Promise<ActionResponse>;

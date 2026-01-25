@@ -27,6 +27,10 @@ export interface BeamSession {
 export interface RenderOptions {
   /** JavaScript to execute on client after rendering */
   script?: string
+  /** CSS selector for target element (overrides frontend target) */
+  target?: string
+  /** Swap mode: 'morph' | 'replace' | 'append' | 'prepend' | 'delete' */
+  swap?: string
 }
 
 /**
@@ -76,6 +80,10 @@ export interface ActionResponse {
   script?: string
   /** URL to redirect to (optional) */
   redirect?: string
+  /** CSS selector for target element (optional - overrides frontend target) */
+  target?: string
+  /** Swap mode: 'morph' | 'replace' | 'append' | 'prepend' | 'delete' (optional) */
+  swap?: string
 }
 
 /**

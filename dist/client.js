@@ -452,8 +452,8 @@ function parseOobSwaps(html) {
 }
 // ============ RPC WRAPPER ============
 async function rpc(action, data, el) {
-    const targetSelector = el.getAttribute('beam-target');
-    const swapMode = el.getAttribute('beam-swap') || 'morph';
+    const frontendTarget = el.getAttribute('beam-target');
+    const frontendSwap = el.getAttribute('beam-swap') || 'morph';
     const opt = optimistic(el);
     const placeholder = showPlaceholder(el);
     setLoading(el, true, action, data);
@@ -464,6 +464,9 @@ async function rpc(action, data, el) {
             location.href = response.redirect;
             return;
         }
+        // Server target/swap override frontend values
+        const targetSelector = response.target || frontendTarget;
+        const swapMode = response.swap || frontendSwap;
         // Handle HTML (if present)
         if (response.html && targetSelector) {
             const target = $(targetSelector);
@@ -1826,11 +1829,14 @@ window.beam = new Proxy(beamUtils, {
             const opts = typeof options === 'string'
                 ? { target: options }
                 : (options || {});
+            // Server target/swap override frontend options
+            const targetSelector = response.target || opts.target;
+            const swapMode = response.swap || opts.swap || 'morph';
             // Handle HTML swap if target provided
-            if (response.html && opts.target) {
-                const targetEl = document.querySelector(opts.target);
+            if (response.html && targetSelector) {
+                const targetEl = document.querySelector(targetSelector);
                 if (targetEl) {
-                    swap(targetEl, response.html, opts.swap || 'morph');
+                    swap(targetEl, response.html, swapMode);
                 }
             }
             // Execute script if present
