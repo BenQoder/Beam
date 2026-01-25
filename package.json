@@ -42,7 +42,7 @@
     "capnweb": "^0.4.0",
     "hono": "^4.0.0",
     "honox": "^0.1.0",
-    "idiomorph": "^0.3.0",
+    "idiomorph": "^0.7.0",
     "vite": "^5.0.0 || ^6.0.0"
   },
   "peerDependenciesMeta": {
@@ -55,7 +55,7 @@
     "capnweb": "^0.4.0",
     "hono": "^4.6.0",
     "honox": "^0.1.0",
-    "idiomorph": "^0.3.0",
+    "idiomorph": "^0.7.4",
     "typescript": "^5.0.0",
     "vite": "^6.0.0"
   }
