@@ -6,16 +6,6 @@ export interface BeamPluginOptions {
      */
     actions?: string;
     /**
-     * Glob pattern for modal handlers (must start with '/' for virtual modules)
-     * @default '/app/modals/*.tsx'
-     */
-    modals?: string;
-    /**
-     * Glob pattern for drawer handlers (must start with '/' for virtual modules)
-     * @default '/app/drawers/*.tsx'
-     */
-    drawers?: string;
-    /**
      * Path to auth resolver module (must export default AuthResolver function)
      * @example '/app/auth.ts'
      */
@@ -55,8 +45,6 @@ export interface BeamPluginOptions {
  *   plugins: [
  *     beamPlugin({
  *       actions: '/app/actions/*.tsx',
- *       modals: '/app/modals/*.tsx',
- *       drawers: '/app/drawers/*.tsx',
  *     })
  *   ]
  * })

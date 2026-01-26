@@ -18,15 +18,15 @@ export function ProductCard({ product }: Props) {
 
       <div class="card-actions">
         <button
-          beam-modal="addToCart"
-          beam-params={JSON.stringify({ productId: product.id })}
+          beam-action="addToCartModal"
+          beam-params={JSON.stringify({ productId: product.id, productName: product.name })}
           class="btn-primary btn-sm"
         >
           Add to Cart
         </button>
 
         <button
-          beam-modal="editProduct"
+          beam-action="editProductModal"
           beam-params={JSON.stringify({ id: product.id })}
           class="btn-sm"
         >
@@ -34,7 +34,7 @@ export function ProductCard({ product }: Props) {
         </button>
 
         <button
-          beam-modal="confirmDelete"
+          beam-action="confirmDeleteModal"
           beam-params={JSON.stringify({ id: product.id, name: product.name })}
           class="btn-danger btn-sm"
         >

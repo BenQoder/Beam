@@ -1,1 +1,0 @@
-{"version":3,"file":"DrawerFrame.d.ts","sourceRoot":"","sources":["../src/DrawerFrame.tsx"],"names":[],"mappings":"AAAA,OAAO,KAAK,EAAE,KAAK,EAAE,MAAM,UAAU,CAAA;AAErC,KAAK,KAAK,GAAG;IACX,KAAK,EAAE,MAAM,CAAA;IACb,QAAQ,EAAE,KAAK,CAAA;CAChB,CAAA;AAED;;;;;;;GAOG;AACH,wBAAgB,WAAW,CAAC,EAAE,KAAK,EAAE,QAAQ,EAAE,EAAE,KAAK,kDAcrD"}

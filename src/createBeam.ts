@@ -5,15 +5,12 @@ import { RpcTarget, newWorkersRpcResponse } from 'capnweb'
 import type {
   ActionHandler,
   ActionResponse,
-  ModalHandler,
-  DrawerHandler,
   BeamConfig,
   BeamInstance,
   BeamContext,
   BeamVariables,
   BeamSession,
   SessionConfig,
-  SessionStorageFactory,
   RenderOptions,
   AuthTokenPayload,
 } from './types'
@@ -203,7 +200,37 @@ function parseSessionDataFromRequest(request: Request): Record<string, unknown> 
 }
 
 /**
- * Create a BeamContext with script() and render() helpers
+ * Helper to convert JSX/Promise/string to HTML string.
+ * Handles HonoX HtmlEscapedString, Promises, and plain strings.
+ *
+ * HonoX async components have `.toString()` that returns a Promise<string>.
+ * We need to await that result as well.
+ */
+async function toHtml(content: unknown): Promise<string> {
+  // First, await if content itself is a Promise
+  const resolved = await content
+
+  // Plain string - return as-is
+  if (typeof resolved === 'string') return resolved
+
+  // Null/undefined - return empty string
+  if (resolved == null) return ''
+
+  // HtmlEscapedString or JSX element - call toString()
+  // For async components, toString() returns a Promise<string>
+  const maybeStringable = resolved as { toString?: () => string | Promise<string> }
+  if (typeof maybeStringable.toString === 'function') {
+    const str = await maybeStringable.toString()
+    // Ensure it's a plain string
+    return '' + str
+  }
+
+  // Fallback
+  return '' + resolved
+}
+
+/**
+ * Create a BeamContext with script(), render(), modal(), drawer() helpers
  */
 function createBeamContext<TEnv>(base: {
   env: TEnv
@@ -214,23 +241,45 @@ function createBeamContext<TEnv>(base: {
   return {
     ...base,
     script: (code: string): ActionResponse => ({ script: code }),
-    render: (html: string | Promise<string>, options?: RenderOptions): ActionResponse | Promise<ActionResponse> => {
-      if (html instanceof Promise) {
-        return html.then((resolved) => ({
-          html: resolved,
-          script: options?.script,
-          target: options?.target,
-          swap: options?.swap,
-        }))
+    render: (
+      content: string | Promise<string> | (string | Promise<string>)[],
+      options?: RenderOptions
+    ): ActionResponse | Promise<ActionResponse> => {
+      // Helper to build response without undefined values
+      const buildResponse = (html: string | string[]): ActionResponse => {
+        const response: ActionResponse = { html }
+        if (options?.script) response.script = options.script
+        if (options?.target) response.target = options.target
+        if (options?.swap) response.swap = options.swap
+        return response
       }
-      return {
-        html,
-        script: options?.script,
-        target: options?.target,
-        swap: options?.swap,
+
+      // Handle array of JSX/strings for multi-target rendering
+      if (Array.isArray(content)) {
+        return Promise.all(content.map(toHtml)).then(buildResponse)
       }
+
+      // Single content - always convert via toHtml to handle HtmlEscapedString
+      return toHtml(content).then(buildResponse)
     },
     redirect: (url: string): ActionResponse => ({ redirect: url }),
+    modal: (html: string | Promise<string>, options?: { size?: string; spacing?: number }): ActionResponse | Promise<ActionResponse> => {
+      return toHtml(html).then((resolved) => {
+        const modalObj: { html: string; size?: string; spacing?: number } = { html: resolved }
+        if (options?.size) modalObj.size = options.size
+        if (options?.spacing !== undefined) modalObj.spacing = options.spacing
+        return { modal: modalObj }
+      })
+    },
+    drawer: (html: string | Promise<string>, options?: { position?: string; size?: string; spacing?: number }): ActionResponse | Promise<ActionResponse> => {
+      return toHtml(html).then((resolved) => {
+        const drawerObj: { html: string; position?: string; size?: string; spacing?: number } = { html: resolved }
+        if (options?.position) drawerObj.position = options.position
+        if (options?.size) drawerObj.size = options.size
+        if (options?.spacing !== undefined) drawerObj.spacing = options.spacing
+        return { drawer: drawerObj }
+      })
+    },
   }
 }
 
@@ -246,20 +295,14 @@ function createBeamContext<TEnv>(base: {
 class BeamServer<TEnv extends object> extends RpcTarget {
   private ctx: BeamContext<TEnv>
   private actions: Record<string, ActionHandler<TEnv>>
-  private modals: Record<string, ModalHandler<TEnv>>
-  private drawers: Record<string, DrawerHandler<TEnv>>
 
   constructor(
     ctx: BeamContext<TEnv>,
-    actions: Record<string, ActionHandler<TEnv>>,
-    modals: Record<string, ModalHandler<TEnv>>,
-    drawers: Record<string, DrawerHandler<TEnv>>
+    actions: Record<string, ActionHandler<TEnv>>
   ) {
     super()
     this.ctx = ctx
     this.actions = actions
-    this.modals = modals
-    this.drawers = drawers
   }
 
   /**
@@ -276,28 +319,6 @@ class BeamServer<TEnv extends object> extends RpcTarget {
       return { html: result }
     }
     return result
-  }
-
-  /**
-   * Open a modal
-   */
-  async modal(modalId: string, data: Record<string, unknown> = {}): Promise<string> {
-    const handler = this.modals[modalId]
-    if (!handler) {
-      throw new Error(`Unknown modal: ${modalId}`)
-    }
-    return await handler(this.ctx, data)
-  }
-
-  /**
-   * Open a drawer
-   */
-  async drawer(drawerId: string, data: Record<string, unknown> = {}): Promise<string> {
-    const handler = this.drawers[drawerId]
-    if (!handler) {
-      throw new Error(`Unknown drawer: ${drawerId}`)
-    }
-    return await handler(this.ctx, data)
   }
 
   /**
@@ -321,7 +342,7 @@ class BeamServer<TEnv extends object> extends RpcTarget {
 }
 
 /**
- * Creates a Beam instance configured with actions, modals, and drawers.
+ * Creates a Beam instance configured with actions.
  * Uses capnweb for RPC, enabling promise pipelining and bidirectional calls.
  *
  * @example
@@ -331,9 +352,7 @@ class BeamServer<TEnv extends object> extends RpcTarget {
  * import type { Env } from './types'
  *
  * export const beam = createBeam<Env>({
- *   actions: { createProduct, deleteProduct },
- *   modals: { confirmDelete },
- *   drawers: { productDetails }
+ *   actions: { createProduct, deleteProduct, confirmDelete }
  * })
  *
  * // app/server.ts
@@ -347,7 +366,7 @@ class BeamServer<TEnv extends object> extends RpcTarget {
 export function createBeam<TEnv extends object = object>(
   config: BeamConfig<TEnv>
 ): BeamInstance<TEnv> {
-  const { actions, modals, drawers = {}, auth, session: sessionConfig } = config
+  const { actions, auth, session: sessionConfig } = config
 
   // Session defaults
   const cookieName = sessionConfig?.cookieName ?? 'beam_sid'
@@ -355,8 +374,6 @@ export function createBeam<TEnv extends object = object>(
 
   return {
     actions,
-    modals,
-    drawers,
     auth,
 
     /**
@@ -566,8 +583,6 @@ export function createBeam<TEnv extends object = object>(
           c.env,
           c.req.raw,
           actions as Record<string, ActionHandler<TEnv>>,
-          modals as Record<string, ModalHandler<TEnv>>,
-          drawers as Record<string, DrawerHandler<TEnv>>,
           auth
         )
 
@@ -592,8 +607,6 @@ class PublicBeamServer<TEnv extends object> extends RpcTarget {
   private env: TEnv
   private request: Request
   private actions: Record<string, ActionHandler<TEnv>>
-  private modals: Record<string, ModalHandler<TEnv>>
-  private drawers: Record<string, DrawerHandler<TEnv>>
   private auth: ((request: Request, env: TEnv) => Promise<import('./types').BeamUser | null>) | undefined
 
   constructor(
@@ -602,8 +615,6 @@ class PublicBeamServer<TEnv extends object> extends RpcTarget {
     env: TEnv,
     request: Request,
     actions: Record<string, ActionHandler<TEnv>>,
-    modals: Record<string, ModalHandler<TEnv>>,
-    drawers: Record<string, DrawerHandler<TEnv>>,
     auth: ((request: Request, env: TEnv) => Promise<import('./types').BeamUser | null>) | undefined
   ) {
     super()
@@ -612,8 +623,6 @@ class PublicBeamServer<TEnv extends object> extends RpcTarget {
     this.env = env
     this.request = request
     this.actions = actions
-    this.modals = modals
-    this.drawers = drawers
     this.auth = auth
   }
 
@@ -663,7 +672,7 @@ class PublicBeamServer<TEnv extends object> extends RpcTarget {
     })
 
     // Return the authenticated BeamServer
-    return new BeamServer(ctx, this.actions, this.modals, this.drawers)
+    return new BeamServer(ctx, this.actions)
   }
 }
 

@@ -105,16 +105,6 @@ const api = {
         // @ts-ignore - capnweb stub methods are dynamically typed
         return session.call(action, data);
     },
-    async modal(modalId, params = {}) {
-        const session = await ensureConnected();
-        // @ts-ignore - capnweb stub methods are dynamically typed
-        return session.modal(modalId, params);
-    },
-    async drawer(drawerId, params = {}) {
-        const session = await ensureConnected();
-        // @ts-ignore - capnweb stub methods are dynamically typed
-        return session.drawer(drawerId, params);
-    },
     // Direct access to RPC session for advanced usage (promise pipelining, etc.)
     async getSession() {
         return ensureConnected();
@@ -456,6 +446,72 @@ function swap(target, html, mode, trigger) {
     // Process hungry elements - auto-update elements that match IDs in response
     processHungryElements(html);
 }
+/**
+ * Handle HTML response - supports both single string and array of HTML strings.
+ * Target resolution order (server wins, frontend is fallback):
+ * 1. Server target from comma-separated list (by index)
+ *    - Use "!selector" to exclude that selector (blocks frontend fallback too)
+ * 2. Frontend target (beam-target) as fallback for remaining items
+ * 3. ID from HTML fragment's root element
+ * 4. Skip if none found
+ */
+function handleHtmlResponse(response, frontendTarget, frontendSwap, trigger) {
+    if (!response.html)
+        return;
+    const htmlArray = Array.isArray(response.html) ? response.html : [response.html];
+    // Server targets take priority, collect exclusions
+    const serverTargets = response.target ? response.target.split(',').map(s => s.trim()) : [];
+    const excluded = new Set(serverTargets.filter(t => t.startsWith('!')).map(t => t.slice(1)));
+    const swapMode = response.swap || frontendSwap;
+    htmlArray.forEach((htmlItem, index) => {
+        const serverTarget = serverTargets[index];
+        // Skip if this is an exclusion marker
+        if (serverTarget?.startsWith('!')) {
+            return;
+        }
+        // Priority 1: Server target (by index)
+        let explicitTarget = serverTarget;
+        // Priority 2: Frontend target as fallback (only if no server target and not excluded)
+        if (!explicitTarget && frontendTarget && !excluded.has(frontendTarget)) {
+            explicitTarget = frontendTarget;
+        }
+        if (explicitTarget) {
+            // Explicit target provided - use normal swap
+            const target = $(explicitTarget);
+            if (target) {
+                swap(target, htmlItem, swapMode, trigger);
+            }
+            else {
+                console.warn(`[beam] Target "${explicitTarget}" not found on page, skipping`);
+            }
+        }
+        else {
+            // Priority 3: id, beam-id, or beam-item-id on root element
+            const temp = document.createElement('div');
+            temp.innerHTML = htmlItem.trim();
+            const rootEl = temp.firstElementChild;
+            // Check id first, then beam-id, then beam-item-id
+            const id = rootEl?.id;
+            const beamId = rootEl?.getAttribute('beam-id');
+            const beamItemId = rootEl?.getAttribute('beam-item-id');
+            const selector = id ? `#${id}`
+                : beamId ? `[beam-id="${beamId}"]`
+                    : beamItemId ? `[beam-item-id="${beamItemId}"]`
+                        : null;
+            if (selector && !excluded.has(selector)) {
+                const target = $(selector);
+                if (target) {
+                    // Replace entire element using outerHTML (preserves styles/classes)
+                    target.outerHTML = htmlItem.trim();
+                }
+                else {
+                    console.warn(`[beam] Target "${selector}" (from HTML) not found on page, skipping`);
+                }
+            }
+            // If no id/beam-id/beam-item-id found or excluded, skip silently
+        }
+    });
+}
 function parseOobSwaps(html) {
     const temp = document.createElement('div');
     temp.innerHTML = html;
@@ -484,16 +540,20 @@ async function rpc(action, data, el) {
             location.href = response.redirect;
             return;
         }
-        // Server target/swap override frontend values
-        const targetSelector = response.target || frontendTarget;
-        const swapMode = response.swap || frontendSwap;
-        // Handle HTML (if present)
-        if (response.html && targetSelector) {
-            const target = $(targetSelector);
-            if (target) {
-                swap(target, response.html, swapMode, el);
-            }
+        // Handle modal (if present)
+        if (response.modal) {
+            const modalData = typeof response.modal === 'string'
+                ? { html: response.modal } : response.modal;
+            openModal(modalData.html, modalData.size || 'medium', modalData.spacing);
         }
+        // Handle drawer (if present)
+        if (response.drawer) {
+            const drawerData = typeof response.drawer === 'string'
+                ? { html: response.drawer } : response.drawer;
+            openDrawer(drawerData.html, drawerData.position || 'right', drawerData.size || 'medium', drawerData.spacing);
+        }
+        // Handle HTML (if present) - supports single string or array
+        handleHtmlResponse(response, frontendTarget, frontendSwap, el);
         // Execute script (if present)
         if (response.script) {
             executeScript(response.script);
@@ -583,8 +643,9 @@ document.addEventListener('click', async (e) => {
         closeDrawer();
     }
 });
-// ============ MODALS ============
-document.addEventListener('click', (e) => {
+// ============ MODALS & DRAWERS ============
+// beam-modal trigger - calls action and opens result in modal
+document.addEventListener('click', async (e) => {
     const target = e.target;
     if (!target?.closest)
         return;
@@ -594,16 +655,109 @@ document.addEventListener('click', (e) => {
         // Check confirmation
         if (!checkConfirm(trigger))
             return;
-        const modalId = trigger.getAttribute('beam-modal');
+        const action = trigger.getAttribute('beam-modal');
+        if (!action)
+            return;
         const size = trigger.getAttribute('beam-size') || 'medium';
         const params = getParams(trigger);
-        if (modalId) {
-            openModal(modalId, params, { size });
+        const placeholder = trigger.getAttribute('beam-placeholder');
+        // Show placeholder modal while loading
+        if (placeholder) {
+            openModal(placeholder, size);
+        }
+        setLoading(trigger, true, action, params);
+        try {
+            const response = await api.call(action, params);
+            // Handle the response - if it returns modal, use that, otherwise use html
+            if (response.modal) {
+                const modalData = typeof response.modal === 'string'
+                    ? { html: response.modal } : response.modal;
+                openModal(modalData.html, modalData.size || size, modalData.spacing);
+            }
+            else if (response.html) {
+                // For modals, use first item if array, otherwise use as-is
+                const htmlStr = Array.isArray(response.html) ? response.html[0] : response.html;
+                if (htmlStr)
+                    openModal(htmlStr, size);
+            }
+            // Execute script if present
+            if (response.script) {
+                executeScript(response.script);
+            }
+        }
+        catch (err) {
+            closeModal();
+            showToast('Failed to open modal.', 'error');
+            console.error('Modal error:', err);
+        }
+        finally {
+            setLoading(trigger, false, action, params);
         }
     }
+});
+// beam-drawer trigger - calls action and opens result in drawer
+document.addEventListener('click', async (e) => {
+    const target = e.target;
+    if (!target?.closest)
+        return;
+    const trigger = target.closest('[beam-drawer]');
+    if (trigger) {
+        e.preventDefault();
+        // Check confirmation
+        if (!checkConfirm(trigger))
+            return;
+        const action = trigger.getAttribute('beam-drawer');
+        if (!action)
+            return;
+        const position = trigger.getAttribute('beam-position') || 'right';
+        const size = trigger.getAttribute('beam-size') || 'medium';
+        const params = getParams(trigger);
+        const placeholder = trigger.getAttribute('beam-placeholder');
+        // Show placeholder drawer while loading
+        if (placeholder) {
+            openDrawer(placeholder, position, size);
+        }
+        setLoading(trigger, true, action, params);
+        try {
+            const response = await api.call(action, params);
+            // Handle the response - if it returns drawer, use that, otherwise use html
+            if (response.drawer) {
+                const drawerData = typeof response.drawer === 'string'
+                    ? { html: response.drawer } : response.drawer;
+                openDrawer(drawerData.html, drawerData.position || position, drawerData.size || size, drawerData.spacing);
+            }
+            else if (response.html) {
+                // For drawers, use first item if array, otherwise use as-is
+                const htmlStr = Array.isArray(response.html) ? response.html[0] : response.html;
+                if (htmlStr)
+                    openDrawer(htmlStr, position, size);
+            }
+            // Execute script if present
+            if (response.script) {
+                executeScript(response.script);
+            }
+        }
+        catch (err) {
+            closeDrawer();
+            showToast('Failed to open drawer.', 'error');
+            console.error('Drawer error:', err);
+        }
+        finally {
+            setLoading(trigger, false, action, params);
+        }
+    }
+});
+// Close handlers
+document.addEventListener('click', (e) => {
+    const target = e.target;
+    if (!target?.closest)
+        return;
     // Close on backdrop click
     if (target.matches?.('#modal-backdrop')) {
         closeModal();
+    }
+    if (target.matches?.('#drawer-backdrop')) {
+        closeDrawer();
     }
     // Close button (handles both modal and drawer)
     const closeBtn = target.closest('[beam-close]');
@@ -616,30 +770,6 @@ document.addEventListener('click', (e) => {
         }
     }
 });
-// Drawer triggers
-document.addEventListener('click', (e) => {
-    const target = e.target;
-    if (!target?.closest)
-        return;
-    const trigger = target.closest('[beam-drawer]');
-    if (trigger) {
-        e.preventDefault();
-        // Check confirmation
-        if (!checkConfirm(trigger))
-            return;
-        const drawerId = trigger.getAttribute('beam-drawer');
-        const position = trigger.getAttribute('beam-position') || 'right';
-        const size = trigger.getAttribute('beam-size') || 'medium';
-        const params = getParams(trigger);
-        if (drawerId) {
-            openDrawer(drawerId, params, { position, size });
-        }
-    }
-    // Close on backdrop click
-    if (target.matches?.('#drawer-backdrop')) {
-        closeDrawer();
-    }
-});
 document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
         if (activeDrawer) {
@@ -650,33 +780,30 @@ document.addEventListener('keydown', (e) => {
         }
     }
 });
-async function openModal(id, params = {}, options = { size: 'medium' }) {
-    try {
-        const html = await api.modal(id, params);
-        let backdrop = $('#modal-backdrop');
-        if (!backdrop) {
-            backdrop = document.createElement('div');
-            backdrop.id = 'modal-backdrop';
-            document.body.appendChild(backdrop);
-        }
-        const { size } = options;
-        backdrop.innerHTML = `
-      <div id="modal-content" role="dialog" aria-modal="true" data-size="${size}">
-        ${html}
-      </div>
-    `;
-        backdrop.offsetHeight;
-        backdrop.classList.add('open');
-        document.body.classList.add('modal-open');
-        activeModal = $('#modal-content');
-        const autoFocus = activeModal?.querySelector('[autofocus]');
-        const firstInput = activeModal?.querySelector('input, button, textarea, select');
-        (autoFocus || firstInput)?.focus();
+function openModal(html, size = 'medium', spacing) {
+    // Close any existing drawer first (modal takes priority)
+    if (activeDrawer) {
+        closeDrawer();
     }
-    catch (err) {
-        showToast('Failed to open modal.', 'error');
-        console.error('Modal error:', err);
+    let backdrop = $('#modal-backdrop');
+    if (!backdrop) {
+        backdrop = document.createElement('div');
+        backdrop.id = 'modal-backdrop';
+        document.body.appendChild(backdrop);
     }
+    const style = spacing !== undefined ? `padding: ${spacing}px;` : '';
+    backdrop.innerHTML = `
+    <div id="modal-content" role="dialog" aria-modal="true" data-size="${size}" style="${style}">
+      ${html}
+    </div>
+  `;
+    backdrop.offsetHeight;
+    backdrop.classList.add('open');
+    document.body.classList.add('modal-open');
+    activeModal = $('#modal-content');
+    const autoFocus = activeModal?.querySelector('[autofocus]');
+    const firstInput = activeModal?.querySelector('input, button, textarea, select');
+    (autoFocus || firstInput)?.focus();
 }
 function closeModal() {
     const backdrop = $('#modal-backdrop');
@@ -689,34 +816,31 @@ function closeModal() {
     document.body.classList.remove('modal-open');
     activeModal = null;
 }
-async function openDrawer(id, params = {}, options) {
-    try {
-        const html = await api.drawer(id, params);
-        let backdrop = $('#drawer-backdrop');
-        if (!backdrop) {
-            backdrop = document.createElement('div');
-            backdrop.id = 'drawer-backdrop';
-            document.body.appendChild(backdrop);
-        }
-        // Set position and size as data attributes for CSS styling
-        const { position, size } = options;
-        backdrop.innerHTML = `
-      <div id="drawer-content" role="dialog" aria-modal="true" data-position="${position}" data-size="${size}">
-        ${html}
-      </div>
-    `;
-        backdrop.offsetHeight; // Force reflow
-        backdrop.classList.add('open');
-        document.body.classList.add('drawer-open');
-        activeDrawer = $('#drawer-content');
-        const autoFocus = activeDrawer?.querySelector('[autofocus]');
-        const firstInput = activeDrawer?.querySelector('input, button, textarea, select');
-        (autoFocus || firstInput)?.focus();
+// ============ DRAWERS ============
+function openDrawer(html, position = 'right', size = 'medium', spacing) {
+    // Close any existing modal first (drawer takes priority)
+    if (activeModal) {
+        closeModal();
     }
-    catch (err) {
-        showToast('Failed to open drawer.', 'error');
-        console.error('Drawer error:', err);
+    let backdrop = $('#drawer-backdrop');
+    if (!backdrop) {
+        backdrop = document.createElement('div');
+        backdrop.id = 'drawer-backdrop';
+        document.body.appendChild(backdrop);
     }
+    const style = spacing !== undefined ? `padding: ${spacing}px;` : '';
+    backdrop.innerHTML = `
+    <div id="drawer-content" role="dialog" aria-modal="true" data-position="${position}" data-size="${size}" style="${style}">
+      ${html}
+    </div>
+  `;
+    backdrop.offsetHeight; // Force reflow
+    backdrop.classList.add('open');
+    document.body.classList.add('drawer-open');
+    activeDrawer = $('#drawer-content');
+    const autoFocus = activeDrawer?.querySelector('[autofocus]');
+    const firstInput = activeDrawer?.querySelector('input, button, textarea, select');
+    (autoFocus || firstInput)?.focus();
 }
 function closeDrawer() {
     const backdrop = $('#drawer-backdrop');
@@ -1125,9 +1249,14 @@ const infiniteObserver = new IntersectionObserver(async (entries) => {
         setLoading(sentinel, true, action, params);
         try {
             const response = await api.call(action, params);
-            const target = $(targetSelector);
-            if (target && response.html) {
-                swap(target, response.html, swapMode, sentinel);
+            if (response.html) {
+                // For infinite scroll, always use the specified target (not auto-detect from HTML)
+                const target = $(targetSelector);
+                if (target) {
+                    // Handle single html string for infinite scroll (array not typically used here)
+                    const htmlStr = Array.isArray(response.html) ? response.html.join('') : response.html;
+                    swap(target, htmlStr, swapMode, sentinel);
+                }
                 // Save scroll state after content is loaded
                 requestAnimationFrame(() => {
                     saveScrollState(targetSelector, action);
@@ -1186,9 +1315,14 @@ document.addEventListener('click', async (e) => {
     setLoading(trigger, true, action, params);
     try {
         const response = await api.call(action, params);
-        const targetEl = $(targetSelector);
-        if (targetEl && response.html) {
-            swap(targetEl, response.html, swapMode, trigger);
+        if (response.html) {
+            // For load more, always use the specified target (not auto-detect from HTML)
+            const targetEl = $(targetSelector);
+            if (targetEl) {
+                // Handle single html string for load more (array not typically used here)
+                const htmlStr = Array.isArray(response.html) ? response.html.join('') : response.html;
+                swap(targetEl, htmlStr, swapMode, trigger);
+            }
             // Save scroll state after content is loaded
             requestAnimationFrame(() => {
                 saveScrollState(targetSelector, action);
@@ -1372,13 +1506,8 @@ document.addEventListener('click', async (e) => {
             location.href = response.redirect;
             return;
         }
-        // Handle HTML (if present)
-        if (response.html && targetSelector) {
-            const target = $(targetSelector);
-            if (target) {
-                swap(target, response.html, swapMode, link);
-            }
-        }
+        // Handle HTML (if present) - supports single string or array
+        handleHtmlResponse(response, targetSelector, swapMode, link);
         // Execute script (if present)
         if (response.script) {
             executeScript(response.script);
@@ -1428,13 +1557,20 @@ document.addEventListener('submit', async (e) => {
             location.href = response.redirect;
             return;
         }
-        // Handle HTML (if present)
-        if (response.html && targetSelector) {
-            const target = $(targetSelector);
-            if (target) {
-                swap(target, response.html, swapMode);
-            }
+        // Handle modal (if present)
+        if (response.modal) {
+            const modalData = typeof response.modal === 'string'
+                ? { html: response.modal } : response.modal;
+            openModal(modalData.html, modalData.size || 'medium', modalData.spacing);
         }
+        // Handle drawer (if present)
+        if (response.drawer) {
+            const drawerData = typeof response.drawer === 'string'
+                ? { html: response.drawer } : response.drawer;
+            openDrawer(drawerData.html, drawerData.position || 'right', drawerData.size || 'medium', drawerData.spacing);
+        }
+        // Handle HTML (if present) - supports single string or array
+        handleHtmlResponse(response, targetSelector, swapMode);
         // Execute script (if present)
         if (response.script) {
             executeScript(response.script);
@@ -1483,7 +1619,10 @@ function setupValidation(el) {
                 if (response.html) {
                     const target = $(targetSelector);
                     if (target) {
-                        morph(target, response.html);
+                        // For validation, use first item if array, otherwise use as-is
+                        const htmlStr = Array.isArray(response.html) ? response.html[0] : response.html;
+                        if (htmlStr)
+                            morph(target, htmlStr);
                     }
                 }
                 // Execute script (if present)
@@ -1533,7 +1672,10 @@ const deferObserver = new IntersectionObserver(async (entries) => {
             if (response.html) {
                 const target = targetSelector ? $(targetSelector) : el;
                 if (target) {
-                    swap(target, response.html, swapMode);
+                    // For deferred loading, use first item if array, otherwise use as-is
+                    const htmlStr = Array.isArray(response.html) ? response.html[0] : response.html;
+                    if (htmlStr)
+                        swap(target, htmlStr, swapMode);
                 }
             }
             // Execute script (if present)
@@ -1589,7 +1731,10 @@ function startPolling(el) {
             if (response.html) {
                 const target = targetSelector ? $(targetSelector) : el;
                 if (target) {
-                    swap(target, response.html, swapMode);
+                    // For polling, use first item if array, otherwise use as-is
+                    const htmlStr = Array.isArray(response.html) ? response.html[0] : response.html;
+                    if (htmlStr)
+                        swap(target, htmlStr, swapMode);
                 }
             }
             // Execute script (if present)
@@ -1845,20 +1990,27 @@ window.beam = new Proxy(beamUtils, {
                 location.href = response.redirect;
                 return response;
             }
+            // Handle modal (if present)
+            if (response.modal) {
+                const modalData = typeof response.modal === 'string'
+                    ? { html: response.modal } : response.modal;
+                openModal(modalData.html, modalData.size || 'medium', modalData.spacing);
+            }
+            // Handle drawer (if present)
+            if (response.drawer) {
+                const drawerData = typeof response.drawer === 'string'
+                    ? { html: response.drawer } : response.drawer;
+                openDrawer(drawerData.html, drawerData.position || 'right', drawerData.size || 'medium', drawerData.spacing);
+            }
             // Normalize options: string is shorthand for { target: string }
             const opts = typeof options === 'string'
                 ? { target: options }
                 : (options || {});
             // Server target/swap override frontend options
-            const targetSelector = response.target || opts.target;
+            const targetSelector = response.target || opts.target || null;
             const swapMode = response.swap || opts.swap || 'morph';
-            // Handle HTML swap if target provided
-            if (response.html && targetSelector) {
-                const targetEl = document.querySelector(targetSelector);
-                if (targetEl) {
-                    swap(targetEl, response.html, swapMode);
-                }
-            }
+            // Handle HTML swap - supports single string or array
+            handleHtmlResponse(response, targetSelector, swapMode);
             // Execute script if present
             if (response.script) {
                 executeScript(response.script);

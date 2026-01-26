@@ -127,6 +127,7 @@
   transform: scale(0.95);
   opacity: 0;
   transition: transform 200ms ease-out, opacity 200ms ease-out;
+  padding: 15px;
 }
 
 #modal-backdrop.open #modal-content {
@@ -175,6 +176,7 @@
   max-height: 100vh;
   overflow: auto;
   transition: transform 200ms ease-out;
+  padding: 15px;
 }
 
 /* Drawer positions */

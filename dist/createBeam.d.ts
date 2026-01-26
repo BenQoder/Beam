@@ -1,5 +1,5 @@
 import { RpcTarget } from 'capnweb';
-import type { ActionHandler, ActionResponse, ModalHandler, DrawerHandler, BeamConfig, BeamInstance, BeamContext, BeamSession, SessionConfig } from './types';
+import type { ActionHandler, ActionResponse, BeamConfig, BeamInstance, BeamContext, BeamSession, SessionConfig } from './types';
 /**
  * Session implementation using KV storage.
  * Exported for users who need custom storage adapter.
@@ -50,21 +50,11 @@ export declare class CookieSession implements BeamSession {
 declare class BeamServer<TEnv extends object> extends RpcTarget {
     private ctx;
     private actions;
-    private modals;
-    private drawers;
-    constructor(ctx: BeamContext<TEnv>, actions: Record<string, ActionHandler<TEnv>>, modals: Record<string, ModalHandler<TEnv>>, drawers: Record<string, DrawerHandler<TEnv>>);
+    constructor(ctx: BeamContext<TEnv>, actions: Record<string, ActionHandler<TEnv>>);
     /**
      * Call an action handler
      */
     call(action: string, data?: Record<string, unknown>): Promise<ActionResponse>;
-    /**
-     * Open a modal
-     */
-    modal(modalId: string, data?: Record<string, unknown>): Promise<string>;
-    /**
-     * Open a drawer
-     */
-    drawer(drawerId: string, data?: Record<string, unknown>): Promise<string>;
     /**
      * Register a client callback for server-initiated updates
      * This enables bidirectional communication - server can push to client
@@ -76,7 +66,7 @@ declare class BeamServer<TEnv extends object> extends RpcTarget {
     notify(event: string, data: unknown): Promise<void>;
 }
 /**
- * Creates a Beam instance configured with actions, modals, and drawers.
+ * Creates a Beam instance configured with actions.
  * Uses capnweb for RPC, enabling promise pipelining and bidirectional calls.
  *
  * @example
@@ -86,9 +76,7 @@ declare class BeamServer<TEnv extends object> extends RpcTarget {
  * import type { Env } from './types'
  *
  * export const beam = createBeam<Env>({
- *   actions: { createProduct, deleteProduct },
- *   modals: { confirmDelete },
- *   drawers: { productDetails }
+ *   actions: { createProduct, deleteProduct, confirmDelete }
  * })
  *
  * // app/server.ts
@@ -114,10 +102,8 @@ declare class PublicBeamServer<TEnv extends object> extends RpcTarget {
     private env;
     private request;
     private actions;
-    private modals;
-    private drawers;
     private auth;
-    constructor(secret: string, sessionConfig: SessionConfig<TEnv> | undefined, env: TEnv, request: Request, actions: Record<string, ActionHandler<TEnv>>, modals: Record<string, ModalHandler<TEnv>>, drawers: Record<string, DrawerHandler<TEnv>>, auth: ((request: Request, env: TEnv) => Promise<import('./types').BeamUser | null>) | undefined);
+    constructor(secret: string, sessionConfig: SessionConfig<TEnv> | undefined, env: TEnv, request: Request, actions: Record<string, ActionHandler<TEnv>>, auth: ((request: Request, env: TEnv) => Promise<import('./types').BeamUser | null>) | undefined);
     /**
      * Authenticate with a token and return the authenticated API
      * This is the only method available on the public API

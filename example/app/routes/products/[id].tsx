@@ -35,14 +35,14 @@ export default createRoute(async (c) => {
 
         <div class="actions">
           <button
-            beam-modal="addToCart"
-            beam-params={JSON.stringify({ productId: product.id })}
+            beam-action="addToCartModal"
+            beam-params={JSON.stringify({ productId: product.id, productName: product.name })}
             class="btn-primary"
           >
             Add to Cart
           </button>
           <button
-            beam-modal="editProduct"
+            beam-action="editProductModal"
             beam-params={JSON.stringify({ id: product.id })}
           >
             Edit

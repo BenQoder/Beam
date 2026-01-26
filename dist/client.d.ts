@@ -1,15 +1,24 @@
 import { type RpcStub } from 'capnweb';
 interface ActionResponse {
-    html?: string;
+    html?: string | string[];
     script?: string;
     redirect?: string;
     target?: string;
     swap?: string;
+    modal?: string | {
+        html: string;
+        size?: string;
+        spacing?: number;
+    };
+    drawer?: string | {
+        html: string;
+        position?: string;
+        size?: string;
+        spacing?: number;
+    };
 }
 interface BeamServer {
     call(action: string, data?: Record<string, unknown>): Promise<ActionResponse>;
-    modal(modalId: string, data?: Record<string, unknown>): Promise<string>;
-    drawer(drawerId: string, data?: Record<string, unknown>): Promise<string>;
     registerCallback(callback: (event: string, data: unknown) => void): Promise<void>;
 }
 type BeamServerStub = RpcStub<BeamServer>;

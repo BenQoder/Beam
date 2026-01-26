@@ -15,7 +15,7 @@ export function ProductList({ products }: Props) {
     return (
       <div class="empty-state">
         <p>No products yet.</p>
-        <button beam-modal="createProduct" class="btn-primary">
+        <button beam-action="createProductModal" class="btn-primary">
           Add your first product
         </button>
       </div>

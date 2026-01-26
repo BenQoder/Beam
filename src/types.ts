@@ -49,10 +49,16 @@ export interface BeamContext<TEnv = object> {
   script(code: string): ActionResponse
 
   /**
-   * Return HTML with optional script to execute
+   * Return HTML with optional script to execute.
+   * Accepts JSX directly (converts to string), single string, or array for multi-target rendering.
    * @example ctx.render(<ProductList />, { script: 'playSound("ding")' })
+   * @example ctx.render([<StatsWidget />, <NotificationList />], { target: '#stats, #notifications' })
+   * @example ctx.render([<div id="stats">...</div>, <div id="notifications">...</div>]) // auto-detects targets by ID
    */
-  render(html: string | Promise<string>, options?: RenderOptions): ActionResponse | Promise<ActionResponse>
+  render(
+    content: string | Promise<string> | (string | Promise<string>)[],
+    options?: RenderOptions
+  ): ActionResponse | Promise<ActionResponse>
 
   /**
    * Redirect the client to a new URL
@@ -60,6 +66,20 @@ export interface BeamContext<TEnv = object> {
    * @example ctx.redirect('https://example.com')
    */
   redirect(url: string): ActionResponse
+
+  /**
+   * Open a modal with HTML content
+   * @example ctx.modal(render(<MyModal />))
+   * @example ctx.modal(render(<MyModal />), { size: 'large', spacing: 20 })
+   */
+  modal(html: string | Promise<string>, options?: { size?: string; spacing?: number }): ActionResponse | Promise<ActionResponse>
+
+  /**
+   * Open a drawer with HTML content
+   * @example ctx.drawer(render(<MyDrawer />))
+   * @example ctx.drawer(render(<MyDrawer />), { position: 'left', size: 'large', spacing: 20 })
+   */
+  drawer(html: string | Promise<string>, options?: { position?: string; size?: string; spacing?: number }): ActionResponse | Promise<ActionResponse>
 }
 
 /**
@@ -92,19 +112,42 @@ export interface AuthTokenConfig {
 }
 
 /**
+ * Modal options for ActionResponse
+ */
+export interface ModalOptions {
+  html: string
+  size?: string
+  spacing?: number
+}
+
+/**
+ * Drawer options for ActionResponse
+ */
+export interface DrawerOptions {
+  html: string
+  position?: string
+  size?: string
+  spacing?: number
+}
+
+/**
  * Response type for actions - can include HTML and/or script to execute
  */
 export interface ActionResponse {
-  /** HTML to render (optional) */
-  html?: string
+  /** HTML to render (optional) - single string or array of HTML strings for multi-target rendering */
+  html?: string | string[]
   /** JavaScript to execute on client (optional) */
   script?: string
   /** URL to redirect to (optional) */
   redirect?: string
-  /** CSS selector for target element (optional - overrides frontend target) */
+  /** CSS selector for target element (optional - overrides frontend target). Can be comma-separated for array html: "#a, #b, #c" */
   target?: string
   /** Swap mode: 'morph' | 'replace' | 'append' | 'prepend' | 'delete' (optional) */
   swap?: string
+  /** Open a modal with HTML content */
+  modal?: string | ModalOptions
+  /** Open a drawer with HTML content */
+  drawer?: string | DrawerOptions
 }
 
 /**
@@ -114,22 +157,6 @@ export type ActionHandler<TEnv = object> = (
   ctx: BeamContext<TEnv>,
   data: Record<string, unknown>
 ) => Promise<ActionResponse> | ActionResponse
-
-/**
- * Type for modal handlers - receives context and params, returns HTML string
- */
-export type ModalHandler<TEnv = object> = (
-  ctx: BeamContext<TEnv>,
-  params: Record<string, unknown>
-) => Promise<string>
-
-/**
- * Type for drawer handlers - receives context and params, returns HTML string
- */
-export type DrawerHandler<TEnv = object> = (
-  ctx: BeamContext<TEnv>,
-  params: Record<string, unknown>
-) => Promise<string>
 
 /**
  * Factory function to create a session storage adapter.
@@ -168,8 +195,6 @@ export interface SessionConfig<TEnv = object> {
  */
 export interface BeamConfig<TEnv = object> {
   actions: Record<string, ActionHandler<TEnv>>
-  modals: Record<string, ModalHandler<TEnv>>
-  drawers?: Record<string, DrawerHandler<TEnv>>
   auth?: AuthResolver<TEnv> // Optional - defaults to null user
   /** Session config - default uses cookie storage, or provide storageFactory for custom storage */
   session?: SessionConfig<TEnv>
@@ -198,8 +223,6 @@ export interface BeamVariables<TEnv = object> {
  */
 export interface BeamInstance<TEnv extends object = object> {
   actions: Record<string, ActionHandler<TEnv>>
-  modals: Record<string, ModalHandler<TEnv>>
-  drawers: Record<string, DrawerHandler<TEnv>>
   /** Auth resolver (if provided) */
   auth: AuthResolver<TEnv> | undefined
   /** Init function for HonoX createApp({ init(app) { beam.init(app, options) } }) */

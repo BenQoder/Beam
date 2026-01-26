@@ -12,8 +12,6 @@ const RESOLVED_VIRTUAL_MODULE_ID = '\0' + VIRTUAL_MODULE_ID;
  *   plugins: [
  *     beamPlugin({
  *       actions: '/app/actions/*.tsx',
- *       modals: '/app/modals/*.tsx',
- *       drawers: '/app/drawers/*.tsx',
  *     })
  *   ]
  * })
@@ -25,7 +23,7 @@ const RESOLVED_VIRTUAL_MODULE_ID = '\0' + VIRTUAL_MODULE_ID;
  * ```
  */
 export function beamPlugin(options = {}) {
-    const { actions = '/app/actions/*.tsx', modals = '/app/modals/*.tsx', drawers = '/app/drawers/*.tsx', auth, session, } = options;
+    const { actions = '/app/actions/*.tsx', auth, session, } = options;
     return {
         name: 'beam-plugin',
         resolveId(id) {
@@ -60,17 +58,13 @@ export function beamPlugin(options = {}) {
                 }
                 // Generate plain JavaScript - TypeScript types are handled via virtual-beam.d.ts
                 return `
-import { createBeam, collectHandlers } from '@benqoder/beam'
+import { createBeam, collectActions } from '@benqoder/beam'
 ${authImport}
 ${storageImport}
 
-const { actions, modals, drawers } = collectHandlers({
-  actions: import.meta.glob('${actions}', { eager: true }),
-  modals: import.meta.glob('${modals}', { eager: true }),
-  drawers: import.meta.glob('${drawers}', { eager: true }),
-})
+const actions = collectActions(import.meta.glob('${actions}', { eager: true }))
 
-export const beam = createBeam({ actions, modals, drawers${authConfig}${sessionConfig} })
+export const beam = createBeam({ actions${authConfig}${sessionConfig} })
 `;
             }
         },

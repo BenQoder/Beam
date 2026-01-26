@@ -42,7 +42,7 @@ export default createRoute(async (c) => {
     <Layout title="Products" cartCount={cartCount}>
       <div class="page-header">
         <h1>Products</h1>
-        <button beam-modal="createProduct" class="btn-primary">
+        <button beam-action="createProductModal" class="btn-primary">
           + Add Product
         </button>
       </div>

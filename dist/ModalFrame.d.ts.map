@@ -1,1 +1,0 @@
-{"version":3,"file":"ModalFrame.d.ts","sourceRoot":"","sources":["../src/ModalFrame.tsx"],"names":[],"mappings":"AAAA,OAAO,KAAK,EAAE,KAAK,EAAE,MAAM,UAAU,CAAA;AAErC,KAAK,KAAK,GAAG;IACX,KAAK,EAAE,MAAM,CAAA;IACb,QAAQ,EAAE,KAAK,CAAA;CAChB,CAAA;AAED;;;GAGG;AACH,wBAAgB,UAAU,CAAC,EAAE,KAAK,EAAE,QAAQ,EAAE,EAAE,KAAK,kDAcpD"}

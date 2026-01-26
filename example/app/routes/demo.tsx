@@ -123,11 +123,18 @@ export default createRoute(async (c) => {
       {/* Modals */}
       <div class="demo-section">
         <h2>7. Modals</h2>
+        <p class="text-muted">Two ways: beam-modal (explicit, supports placeholder) or beam-action (action returns modal).</p>
         <div class="demo-actions">
-          <button beam-modal="demoModal">Open Simple Modal</button>
-          <button beam-modal="demoFormModal" beam-data-title="Edit Item" beam-data-value="Hello World">
-            Open Form Modal
+          {/* beam-modal attribute - explicitly opens result in modal, supports placeholder */}
+          <button beam-modal="demoModal" beam-placeholder="<div style='padding: 2rem; text-align: center;'>Loading modal...</div>">
+            beam-modal (with placeholder)
           </button>
+          <button beam-modal="demoModalLarge" beam-size="large">
+            beam-modal (large)
+          </button>
+          {/* beam-action returning modal - action decides to return modal */}
+          <button beam-action="demoModal">beam-action (returns modal)</button>
+          <button beam-action="simpleModal">Simple String Modal</button>
         </div>
       </div>
 
@@ -168,21 +175,19 @@ export default createRoute(async (c) => {
 
       {/* Drawers */}
       <div class="demo-section">
-        <h2>10. Drawers (beam-drawer)</h2>
-        <p class="text-muted">Slide-in panels from left or right, in different sizes.</p>
+        <h2>10. Drawers</h2>
+        <p class="text-muted">Two ways: beam-drawer (explicit, supports placeholder) or beam-action (action returns drawer).</p>
         <div class="demo-actions">
-          <button beam-drawer="productDrawer" beam-data-id="42" beam-data-name="Widget Pro">
-            Product Drawer (Right)
+          {/* beam-drawer attribute - explicitly opens result in drawer */}
+          <button beam-drawer="demoDrawer" beam-placeholder="<div style='padding: 2rem;'>Loading drawer...</div>">
+            beam-drawer (with placeholder)
           </button>
-          <button beam-drawer="settingsDrawer" beam-position="left">
-            Settings (Left)
+          <button beam-drawer="demoDrawerLeft" beam-position="left" beam-size="large">
+            beam-drawer (left, large)
           </button>
-          <button beam-drawer="productDrawer" beam-data-id="99" beam-data-name="Large Drawer" beam-size="large">
-            Large Drawer
-          </button>
-          <button beam-drawer="productDrawer" beam-data-id="1" beam-data-name="Small Drawer" beam-size="small">
-            Small Drawer
-          </button>
+          {/* beam-action returning drawer */}
+          <button beam-action="demoDrawer">beam-action (returns drawer)</button>
+          <button beam-action="demoDrawerLeft">beam-action (left drawer)</button>
         </div>
         <div id="settings-result" class="demo-box">Settings result will appear here</div>
       </div>
@@ -720,6 +725,41 @@ export default createRoute(async (c) => {
           text-align: center;
           font-weight: 500;
         }
+
+        /* Multi-render array API */
+        .multi-render-grid {
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 1rem;
+          margin: 1rem 0;
+        }
+        .dashboard-grid {
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 1rem;
+          margin: 1rem 0;
+        }
+        .stat-card {
+          background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+          color: white;
+          padding: 1.5rem;
+          border-radius: 8px;
+          text-align: center;
+          transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .stat-card:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+        }
+        .stat-value {
+          font-size: 2rem;
+          font-weight: 700;
+          margin-bottom: 0.25rem;
+        }
+        .stat-label {
+          font-size: 0.875rem;
+          opacity: 0.9;
+        }
       `}</style>
 
       {/* ============ SCRIPT EXECUTION ============ */}
@@ -769,6 +809,163 @@ export default createRoute(async (c) => {
         </div>
         <p class="text-muted" style="margin-top: 1rem;">
           <strong>Note:</strong> These buttons have no <code>beam-target</code> attribute - the server response specifies where to render.
+        </p>
+      </div>
+
+      {/* Multi-Render Array API */}
+      <div class="demo-section">
+        <h2>22. Multi-Render Array API (ctx.render with arrays)</h2>
+        <p class="text-muted">Render multiple components to different targets in a single action response.</p>
+
+        <h4>Example 1: Explicit Targets (comma-separated)</h4>
+        <div class="multi-render-grid">
+          <div id="multi-stats" class="demo-box">Stats</div>
+          <div id="multi-notifications" class="demo-box">Notifications</div>
+          <div id="multi-last-updated" class="demo-box">Last Updated</div>
+        </div>
+        <button beam-action="multiRenderExplicit">
+          Update All (explicit targets)
+        </button>
+        <p class="text-muted" style="margin-top: 0.5rem;">
+          <code>ctx.render([html1, html2, html3], {'{'} target: '#a, #b, #c' {'}'})</code>
+        </p>
+
+        <h4 style="margin-top: 1.5rem;">Example 2: Auto-detect by ID (no targets needed)</h4>
+        <div class="multi-render-grid">
+          <div id="auto-panel-a" class="demo-box">Panel A</div>
+          <div id="auto-panel-b" class="demo-box">Panel B</div>
+          <div id="auto-panel-c" class="demo-box">Panel C</div>
+        </div>
+        <button beam-action="multiRenderAutoId">
+          Update All (auto-detect IDs)
+        </button>
+        <p class="text-muted" style="margin-top: 0.5rem;">
+          <code>ctx.render([&lt;div id="panel-a"&gt;...&lt;/div&gt;, ...])</code> - targets found by ID
+        </p>
+
+        <h4 style="margin-top: 1.5rem;">Example 3: Mixed (some explicit, some by ID)</h4>
+        <div class="multi-render-grid">
+          <div id="mixed-header" class="demo-box">Header (explicit)</div>
+          <div id="mixed-content" class="demo-box">Content (by ID)</div>
+          <div class="demo-box">Ignored (no target/ID)</div>
+        </div>
+        <button beam-action="multiRenderMixed">
+          Update Mixed
+        </button>
+        <p class="text-muted" style="margin-top: 0.5rem;">
+          First item → explicit target, second → by ID, third → skipped (no match)
+        </p>
+
+        <h4 style="margin-top: 1.5rem;">Example 4: Real-world Dashboard Refresh</h4>
+        <div class="dashboard-grid">
+          <div id="dashboard-visits" class="stat-card">
+            <div class="stat-value">0</div>
+            <div class="stat-label">Total Visits</div>
+          </div>
+          <div id="dashboard-users" class="stat-card">
+            <div class="stat-value">0</div>
+            <div class="stat-label">Active Users</div>
+          </div>
+          <div id="dashboard-revenue" class="stat-card">
+            <div class="stat-value">$0</div>
+            <div class="stat-label">Revenue</div>
+          </div>
+        </div>
+        <button beam-action="refreshDashboard">
+          Refresh Dashboard Stats
+        </button>
+      </div>
+
+      {/* Example 5: Exclusion */}
+      <div class="demo-section">
+        <h4 style="margin-top: 1.5rem;">Example 5: Exclusion (!selector)</h4>
+        <p class="text-muted">Use <code>!#selector</code> to exclude targets. Frontend has <code>beam-target="#exclude-fallback"</code>.</p>
+        <div class="multi-render-grid">
+          <div id="exclude-a" class="demo-box">Box A (explicit)</div>
+          <div id="exclude-b" class="demo-box">Box B (excluded)</div>
+          <div id="exclude-fallback" class="demo-box">Fallback (blocked by !)</div>
+        </div>
+        <button beam-action="multiRenderExclusion" beam-target="#exclude-fallback">
+          Test Exclusion
+        </button>
+        <p class="text-muted" style="margin-top: 0.5rem;">
+          <code>target: '#exclude-a, !#exclude-fallback'</code> — Box A updates, others blocked
+        </p>
+      </div>
+
+      {/* Example 6: Frontend Fallback */}
+      <div class="demo-section">
+        <h4 style="margin-top: 1.5rem;">Example 6: Frontend Fallback</h4>
+        <p class="text-muted">Server provides partial targets, frontend <code>beam-target</code> fills in the rest.</p>
+        <div class="multi-render-grid" style="grid-template-columns: repeat(2, 1fr);">
+          <div id="fallback-first" class="demo-box">First (server target)</div>
+          <div id="fallback-target" class="demo-box">Second (frontend fallback)</div>
+        </div>
+        <button beam-action="multiRenderFallback" beam-target="#fallback-target">
+          Test Fallback
+        </button>
+        <p class="text-muted" style="margin-top: 0.5rem;">
+          <code>target: '#fallback-first'</code> + <code>beam-target="#fallback-target"</code> — Both update!
+        </p>
+      </div>
+
+      {/* Example 7: Auto-detect by id, beam-id, beam-item-id */}
+      <div class="demo-section">
+        <h4 style="margin-top: 1.5rem;">Example 7: Auto-detect (id, beam-id, beam-item-id)</h4>
+        <p class="text-muted">No explicit targets needed — finds elements by <code>id</code>, <code>beam-id</code>, or <code>beam-item-id</code> on root element.</p>
+        <div class="multi-render-grid">
+          <div id="auto-by-id" class="demo-box">By id</div>
+          <div beam-id="auto-by-beam-id" class="demo-box">By beam-id</div>
+          <div beam-item-id="auto-by-item-id" class="demo-box">By beam-item-id</div>
+        </div>
+        <button beam-action="multiRenderAutoDetect">
+          Test Auto-detect
+        </button>
+        <p class="text-muted" style="margin-top: 0.5rem;">
+          Priority: <code>id</code> → <code>beam-id</code> → <code>beam-item-id</code>
+        </p>
+      </div>
+
+      {/* ============ ASYNC COMPONENT TESTS ============ */}
+
+      {/* Example 8: Async single render */}
+      <div class="demo-section">
+        <h2>23. Async Components (HonoX Feature)</h2>
+        <p class="text-muted">Verify async components work with <code>ctx.render()</code>.</p>
+
+        <h4>Example 8: Async component (single render)</h4>
+        <div id="async-single-result" class="demo-box">
+          Click to load async user card...
+        </div>
+        <button beam-action="testAsyncSingle">
+          Load Async User
+        </button>
+        <p class="text-muted" style="margin-top: 0.5rem;">
+          <code>ctx.render(&lt;AsyncUserCard userId="42" /&gt;)</code> - component fetches data
+        </p>
+
+        <h4 style="margin-top: 1.5rem;">Example 9: Async components (array render)</h4>
+        <div class="multi-render-grid" style="grid-template-columns: repeat(2, 1fr);">
+          <div id="async-array-1" class="demo-box">User 1 placeholder</div>
+          <div id="async-array-2" class="demo-box">User 2 placeholder</div>
+        </div>
+        <button beam-action="testAsyncArray">
+          Load Multiple Async Users
+        </button>
+        <p class="text-muted" style="margin-top: 0.5rem;">
+          <code>ctx.render([&lt;AsyncUserCard /&gt;, &lt;AsyncUserCard /&gt;])</code>
+        </p>
+
+        <h4 style="margin-top: 1.5rem;">Example 10: Mixed sync and async (array)</h4>
+        <div class="multi-render-grid" style="grid-template-columns: repeat(2, 1fr);">
+          <div id="async-mixed-1" class="demo-box">Sync placeholder</div>
+          <div id="async-mixed-2" class="demo-box">Async placeholder</div>
+        </div>
+        <button beam-action="testAsyncMixed">
+          Load Mixed Content
+        </button>
+        <p class="text-muted" style="margin-top: 0.5rem;">
+          First item is sync JSX, second is async component — both render correctly
         </p>
       </div>
 

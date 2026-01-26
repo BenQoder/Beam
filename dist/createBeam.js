@@ -152,29 +152,81 @@ function parseSessionDataFromRequest(request) {
     }
 }
 /**
- * Create a BeamContext with script() and render() helpers
+ * Helper to convert JSX/Promise/string to HTML string.
+ * Handles HonoX HtmlEscapedString, Promises, and plain strings.
+ *
+ * HonoX async components have `.toString()` that returns a Promise<string>.
+ * We need to await that result as well.
+ */
+async function toHtml(content) {
+    // First, await if content itself is a Promise
+    const resolved = await content;
+    // Plain string - return as-is
+    if (typeof resolved === 'string')
+        return resolved;
+    // Null/undefined - return empty string
+    if (resolved == null)
+        return '';
+    // HtmlEscapedString or JSX element - call toString()
+    // For async components, toString() returns a Promise<string>
+    const maybeStringable = resolved;
+    if (typeof maybeStringable.toString === 'function') {
+        const str = await maybeStringable.toString();
+        // Ensure it's a plain string
+        return '' + str;
+    }
+    // Fallback
+    return '' + resolved;
+}
+/**
+ * Create a BeamContext with script(), render(), modal(), drawer() helpers
  */
 function createBeamContext(base) {
     return {
         ...base,
         script: (code) => ({ script: code }),
-        render: (html, options) => {
-            if (html instanceof Promise) {
-                return html.then((resolved) => ({
-                    html: resolved,
-                    script: options?.script,
-                    target: options?.target,
-                    swap: options?.swap,
-                }));
-            }
-            return {
-                html,
-                script: options?.script,
-                target: options?.target,
-                swap: options?.swap,
+        render: (content, options) => {
+            // Helper to build response without undefined values
+            const buildResponse = (html) => {
+                const response = { html };
+                if (options?.script)
+                    response.script = options.script;
+                if (options?.target)
+                    response.target = options.target;
+                if (options?.swap)
+                    response.swap = options.swap;
+                return response;
             };
+            // Handle array of JSX/strings for multi-target rendering
+            if (Array.isArray(content)) {
+                return Promise.all(content.map(toHtml)).then(buildResponse);
+            }
+            // Single content - always convert via toHtml to handle HtmlEscapedString
+            return toHtml(content).then(buildResponse);
         },
         redirect: (url) => ({ redirect: url }),
+        modal: (html, options) => {
+            return toHtml(html).then((resolved) => {
+                const modalObj = { html: resolved };
+                if (options?.size)
+                    modalObj.size = options.size;
+                if (options?.spacing !== undefined)
+                    modalObj.spacing = options.spacing;
+                return { modal: modalObj };
+            });
+        },
+        drawer: (html, options) => {
+            return toHtml(html).then((resolved) => {
+                const drawerObj = { html: resolved };
+                if (options?.position)
+                    drawerObj.position = options.position;
+                if (options?.size)
+                    drawerObj.size = options.size;
+                if (options?.spacing !== undefined)
+                    drawerObj.spacing = options.spacing;
+                return { drawer: drawerObj };
+            });
+        },
     };
 }
 /**
@@ -189,14 +241,10 @@ function createBeamContext(base) {
 class BeamServer extends RpcTarget {
     ctx;
     actions;
-    modals;
-    drawers;
-    constructor(ctx, actions, modals, drawers) {
+    constructor(ctx, actions) {
         super();
         this.ctx = ctx;
         this.actions = actions;
-        this.modals = modals;
-        this.drawers = drawers;
     }
     /**
      * Call an action handler
@@ -212,26 +260,6 @@ class BeamServer extends RpcTarget {
             return { html: result };
         }
         return result;
-    }
-    /**
-     * Open a modal
-     */
-    async modal(modalId, data = {}) {
-        const handler = this.modals[modalId];
-        if (!handler) {
-            throw new Error(`Unknown modal: ${modalId}`);
-        }
-        return await handler(this.ctx, data);
-    }
-    /**
-     * Open a drawer
-     */
-    async drawer(drawerId, data = {}) {
-        const handler = this.drawers[drawerId];
-        if (!handler) {
-            throw new Error(`Unknown drawer: ${drawerId}`);
-        }
-        return await handler(this.ctx, data);
     }
     /**
      * Register a client callback for server-initiated updates
@@ -253,7 +281,7 @@ class BeamServer extends RpcTarget {
     }
 }
 /**
- * Creates a Beam instance configured with actions, modals, and drawers.
+ * Creates a Beam instance configured with actions.
  * Uses capnweb for RPC, enabling promise pipelining and bidirectional calls.
  *
  * @example
@@ -263,9 +291,7 @@ class BeamServer extends RpcTarget {
  * import type { Env } from './types'
  *
  * export const beam = createBeam<Env>({
- *   actions: { createProduct, deleteProduct },
- *   modals: { confirmDelete },
- *   drawers: { productDetails }
+ *   actions: { createProduct, deleteProduct, confirmDelete }
  * })
  *
  * // app/server.ts
@@ -277,14 +303,12 @@ class BeamServer extends RpcTarget {
  * ```
  */
 export function createBeam(config) {
-    const { actions, modals, drawers = {}, auth, session: sessionConfig } = config;
+    const { actions, auth, session: sessionConfig } = config;
     // Session defaults
     const cookieName = sessionConfig?.cookieName ?? 'beam_sid';
     const maxAge = sessionConfig?.maxAge ?? 365 * 24 * 60 * 60; // 1 year
     return {
         actions,
-        modals,
-        drawers,
         auth,
         /**
          * Middleware that resolves auth, session, and sets beam context in Hono.
@@ -468,7 +492,7 @@ export function createBeam(config) {
                     return c.text('Session secret is required for secure WebSocket connections', 500);
                 }
                 // Create PublicBeamServer - client must authenticate to get full API
-                const server = new PublicBeamServer(secret, sessionConfig, c.env, c.req.raw, actions, modals, drawers, auth);
+                const server = new PublicBeamServer(secret, sessionConfig, c.env, c.req.raw, actions, auth);
                 // Use capnweb to handle the RPC connection
                 return newWorkersRpcResponse(c.req.raw, server);
             });
@@ -489,18 +513,14 @@ class PublicBeamServer extends RpcTarget {
     env;
     request;
     actions;
-    modals;
-    drawers;
     auth;
-    constructor(secret, sessionConfig, env, request, actions, modals, drawers, auth) {
+    constructor(secret, sessionConfig, env, request, actions, auth) {
         super();
         this.secret = secret;
         this.sessionConfig = sessionConfig;
         this.env = env;
         this.request = request;
         this.actions = actions;
-        this.modals = modals;
-        this.drawers = drawers;
         this.auth = auth;
     }
     /**
@@ -546,7 +566,7 @@ class PublicBeamServer extends RpcTarget {
             session,
         });
         // Return the authenticated BeamServer
-        return new BeamServer(ctx, this.actions, this.modals, this.drawers);
+        return new BeamServer(ctx, this.actions);
     }
 }
 /**

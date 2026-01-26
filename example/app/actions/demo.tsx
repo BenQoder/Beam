@@ -360,3 +360,274 @@ export async function serverTargetAppend(ctx: BeamContext<Env>, _params: Record<
   )
   return ctx.render(html, { target: '#server-target-a', swap: 'append' })
 }
+
+// ============ MODAL & DRAWER DEMOS ============
+
+// Modal with default settings
+export async function demoModal(ctx: BeamContext<Env>, _params: Record<string, unknown>) {
+  return ctx.modal(render(
+    <div>
+      <header class="modal-header">
+        <h2>Demo Modal</h2>
+        <button type="button" beam-close aria-label="Close" class="modal-close">
+          &times;
+        </button>
+      </header>
+      <div class="modal-body">
+        <p>This modal was returned directly from an action using <code>ctx.modal()</code>.</p>
+        <p>It uses the default 15px padding and 'medium' size.</p>
+      </div>
+      <div class="modal-actions">
+        <button type="button" beam-close>Close</button>
+      </div>
+    </div>
+  ))
+}
+
+// Modal with custom size and spacing
+export async function demoModalLarge(ctx: BeamContext<Env>, _params: Record<string, unknown>) {
+  return ctx.modal(render(
+    <div>
+      <header class="modal-header">
+        <h2>Large Modal with Custom Spacing</h2>
+        <button type="button" beam-close aria-label="Close" class="modal-close">
+          &times;
+        </button>
+      </header>
+      <div class="modal-body">
+        <p>This modal uses <code>size: 'large'</code> and <code>spacing: 30</code>.</p>
+        <p>The padding is 30px instead of the default 15px.</p>
+      </div>
+      <div class="modal-actions">
+        <button type="button" beam-close>Close</button>
+      </div>
+    </div>
+  ), { size: 'large', spacing: 30 })
+}
+
+// Confirm delete modal (replaces old modal handler)
+export async function confirmDeleteModal(ctx: BeamContext<Env>, { id, name, target = '#product-list' }: Record<string, unknown>) {
+  return ctx.modal(render(
+    <div>
+      <header class="modal-header">
+        <h2>Confirm Delete</h2>
+        <button type="button" beam-close aria-label="Close" class="modal-close">
+          &times;
+        </button>
+      </header>
+      <div class="modal-body">
+        <p>Are you sure you want to delete <strong>"{name}"</strong>?</p>
+        <p class="text-muted">This action cannot be undone.</p>
+      </div>
+      <div class="modal-actions">
+        <button type="button" beam-close>Cancel</button>
+        <button
+          beam-action="deleteProduct"
+          beam-params={JSON.stringify({ id })}
+          beam-target={target as string}
+          beam-close
+          class="btn-danger"
+        >
+          Delete
+        </button>
+      </div>
+    </div>
+  ), { size: 'small' })
+}
+
+// Drawer with default settings
+export async function demoDrawer(ctx: BeamContext<Env>, _params: Record<string, unknown>) {
+  return ctx.drawer(render(
+    <div>
+      <header class="drawer-header">
+        <h2>Demo Drawer</h2>
+        <button type="button" beam-close aria-label="Close" class="drawer-close">
+          &times;
+        </button>
+      </header>
+      <div class="drawer-body">
+        <p>This drawer was returned directly from an action using <code>ctx.drawer()</code>.</p>
+        <p>It uses the default 'right' position, 'medium' size, and 15px padding.</p>
+      </div>
+      <div class="drawer-actions">
+        <button type="button" beam-close>Close</button>
+      </div>
+    </div>
+  ))
+}
+
+// Drawer with custom position and size
+export async function demoDrawerLeft(ctx: BeamContext<Env>, _params: Record<string, unknown>) {
+  return ctx.drawer(render(
+    <div>
+      <header class="drawer-header">
+        <h2>Left Drawer</h2>
+        <button type="button" beam-close aria-label="Close" class="drawer-close">
+          &times;
+        </button>
+      </header>
+      <div class="drawer-body">
+        <p>This drawer opens from the left using <code>position: 'left'</code>.</p>
+        <p>It also has <code>size: 'large'</code> and <code>spacing: 20</code>.</p>
+      </div>
+      <div class="drawer-actions">
+        <button type="button" beam-close>Close</button>
+      </div>
+    </div>
+  ), { position: 'left', size: 'large', spacing: 20 })
+}
+
+// Simple modal with just a string (shorthand)
+export function simpleModal(_ctx: BeamContext<Env>, _params: Record<string, unknown>) {
+  return { modal: '<div><h2>Quick Message</h2><p>This modal was returned as a simple string.</p><button beam-close>OK</button></div>' }
+}
+
+// ============ MULTI-RENDER ARRAY API ============
+
+// Example 1: Multi-render with explicit targets (comma-separated)
+export function multiRenderExplicit(ctx: BeamContext<Env>, _params: Record<string, unknown>) {
+  const time = new Date().toLocaleTimeString()
+  return ctx.render(
+    [
+      <div class="demo-box" style="background: #dcfce7;">Stats updated at {time}</div>,
+      <div class="demo-box" style="background: #dbeafe;">Notifications updated at {time}</div>,
+      <div class="demo-box" style="background: #fef08a;">Last updated at {time}</div>,
+    ],
+    { target: '#multi-stats, #multi-notifications, #multi-last-updated' }
+  )
+}
+
+// Example 2: Multi-render without targets - uses IDs from HTML fragments
+export function multiRenderAutoId(ctx: BeamContext<Env>, _params: Record<string, unknown>) {
+  const time = new Date().toLocaleTimeString()
+  return ctx.render([
+    <div id="auto-panel-a" class="demo-box" style="background: #e9d5ff;">Panel A: {time}</div>,
+    <div id="auto-panel-b" class="demo-box" style="background: #fbcfe8;">Panel B: {time}</div>,
+    <div id="auto-panel-c" class="demo-box" style="background: #fecaca;">Panel C: {time}</div>,
+  ])
+  // No target needed! Client finds #auto-panel-a, #auto-panel-b, #auto-panel-c on page
+}
+
+// Example 3: Mixed approach - some explicit targets, some by ID
+export function multiRenderMixed(ctx: BeamContext<Env>, _params: Record<string, unknown>) {
+  const time = new Date().toLocaleTimeString()
+  return ctx.render(
+    [
+      <div class="demo-box" style="background: #bfdbfe;">Header: {time}</div>,
+      <div id="mixed-content" class="demo-box" style="background: #bbf7d0;">Content: {time}</div>,
+      // Third item has no explicit target and no ID - will be skipped gracefully
+      <div class="demo-box">This won't render (no target)</div>,
+    ],
+    { target: '#mixed-header', script: 'console.log("Mixed multi-render executed!")' }
+  )
+  // First goes to #mixed-header (explicit), second finds #mixed-content (by ID), third is skipped
+}
+
+// Example 4: Dashboard refresh - common real-world use case
+let dashboardVisits = 0
+let dashboardUsers = 0
+let dashboardRevenue = 0
+export function refreshDashboard(ctx: BeamContext<Env>, _params: Record<string, unknown>) {
+  // Simulate data updates
+  dashboardVisits += Math.floor(Math.random() * 100)
+  dashboardUsers += Math.floor(Math.random() * 10)
+  dashboardRevenue += Math.floor(Math.random() * 1000)
+
+  return ctx.render([
+    <div id="dashboard-visits" class="stat-card">
+      <div class="stat-value">{dashboardVisits.toLocaleString()}</div>
+      <div class="stat-label">Total Visits</div>
+    </div>,
+    <div id="dashboard-users" class="stat-card">
+      <div class="stat-value">{dashboardUsers.toLocaleString()}</div>
+      <div class="stat-label">Active Users</div>
+    </div>,
+    <div id="dashboard-revenue" class="stat-card">
+      <div class="stat-value">${dashboardRevenue.toLocaleString()}</div>
+      <div class="stat-label">Revenue</div>
+    </div>,
+  ])
+}
+
+// Example 5: Exclusion - use !selector to block frontend fallback
+export function multiRenderExclusion(ctx: BeamContext<Env>, _params: Record<string, unknown>) {
+  const time = new Date().toLocaleTimeString()
+  // Frontend has beam-target="#exclude-fallback"
+  // We return 3 items: first gets explicit target, second is excluded, third uses frontend fallback
+  return ctx.render(
+    [
+      <div class="demo-box" style="background: #dcfce7;">Box 1: {time} (explicit #exclude-a)</div>,
+      <div class="demo-box" style="background: #fee2e2;">Box 2: {time} (excluded, won't render)</div>,
+      <div class="demo-box" style="background: #dbeafe;">Box 3: {time} (frontend fallback)</div>,
+    ],
+    { target: '#exclude-a, !#exclude-fallback' }
+    // Item 0 → #exclude-a (explicit)
+    // Item 1 → skipped (!#exclude-fallback excludes it)
+    // Item 2 → #exclude-fallback (frontend fallback, but it's excluded so won't render)
+  )
+}
+
+// Example 6: Frontend fallback demo - server provides partial targets
+export function multiRenderFallback(ctx: BeamContext<Env>, _params: Record<string, unknown>) {
+  const time = new Date().toLocaleTimeString()
+  // Frontend has beam-target="#fallback-target"
+  // Server only provides 1 target, remaining items use frontend fallback
+  return ctx.render(
+    [
+      <div class="demo-box" style="background: #fef08a;">First: {time} (server target)</div>,
+      <div class="demo-box" style="background: #e9d5ff;">Second: {time} (frontend fallback)</div>,
+    ],
+    { target: '#fallback-first' }
+    // Item 0 → #fallback-first (server)
+    // Item 1 → #fallback-target (frontend fallback)
+  )
+}
+
+// Example 7: Auto-detect by id, beam-id, and beam-item-id
+export function multiRenderAutoDetect(ctx: BeamContext<Env>, _params: Record<string, unknown>) {
+  const time = new Date().toLocaleTimeString()
+  // No explicit targets - auto-detects by id, beam-id, beam-item-id on root elements
+  return ctx.render([
+    <div id="auto-by-id" class="demo-box" style="background: #dcfce7;">By id: {time}</div>,
+    <div beam-id="auto-by-beam-id" class="demo-box" style="background: #dbeafe;">By beam-id: {time}</div>,
+    <div beam-item-id="auto-by-item-id" class="demo-box" style="background: #fef08a;">By beam-item-id: {time}</div>,
+  ])
+}
+
+// ============ ASYNC COMPONENT TEST ============
+
+// Async component - simulates fetching data
+async function AsyncUserCard({ userId }: { userId: string }) {
+  // Simulate async data fetch
+  await delay(500)
+  const user = { id: userId, name: `User ${userId}`, role: 'Admin' }
+  return (
+    <div class="demo-box" style="background: #dcfce7;">
+      <strong>{user.name}</strong>
+      <div style="font-size: 0.875rem; color: #666;">Role: {user.role}</div>
+    </div>
+  )
+}
+
+// Example 8: Async component in single render
+// ctx.render() handles async components internally via Promise.resolve().then()
+export function testAsyncSingle(ctx: BeamContext<Env>, _params: Record<string, unknown>) {
+  return ctx.render(<AsyncUserCard userId="42" />, { target: '#async-single-result' })
+}
+
+// Example 9: Async components in array render
+export function testAsyncArray(ctx: BeamContext<Env>, _params: Record<string, unknown>) {
+  return ctx.render([
+    <AsyncUserCard userId="1" />,
+    <AsyncUserCard userId="2" />,
+  ], { target: '#async-array-1, #async-array-2' })
+}
+
+// Example 10: Mixed sync and async in array
+export function testAsyncMixed(ctx: BeamContext<Env>, _params: Record<string, unknown>) {
+  const time = new Date().toLocaleTimeString()
+  return ctx.render([
+    <div class="demo-box" style="background: #fef08a;">Sync: {time}</div>,
+    <AsyncUserCard userId="99" />,
+  ], { target: '#async-mixed-1, #async-mixed-2' })
+}

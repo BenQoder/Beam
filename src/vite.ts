@@ -7,16 +7,6 @@ export interface BeamPluginOptions {
    */
   actions?: string
   /**
-   * Glob pattern for modal handlers (must start with '/' for virtual modules)
-   * @default '/app/modals/*.tsx'
-   */
-  modals?: string
-  /**
-   * Glob pattern for drawer handlers (must start with '/' for virtual modules)
-   * @default '/app/drawers/*.tsx'
-   */
-  drawers?: string
-  /**
    * Path to auth resolver module (must export default AuthResolver function)
    * @example '/app/auth.ts'
    */
@@ -60,8 +50,6 @@ const RESOLVED_VIRTUAL_MODULE_ID = '\0' + VIRTUAL_MODULE_ID
  *   plugins: [
  *     beamPlugin({
  *       actions: '/app/actions/*.tsx',
- *       modals: '/app/modals/*.tsx',
- *       drawers: '/app/drawers/*.tsx',
  *     })
  *   ]
  * })
@@ -75,8 +63,6 @@ const RESOLVED_VIRTUAL_MODULE_ID = '\0' + VIRTUAL_MODULE_ID
 export function beamPlugin(options: BeamPluginOptions = {}): Plugin {
   const {
     actions = '/app/actions/*.tsx',
-    modals = '/app/modals/*.tsx',
-    drawers = '/app/drawers/*.tsx',
     auth,
     session,
   } = options
@@ -121,17 +107,13 @@ export function beamPlugin(options: BeamPluginOptions = {}): Plugin {
 
         // Generate plain JavaScript - TypeScript types are handled via virtual-beam.d.ts
         return `
-import { createBeam, collectHandlers } from '@benqoder/beam'
+import { createBeam, collectActions } from '@benqoder/beam'
 ${authImport}
 ${storageImport}
 
-const { actions, modals, drawers } = collectHandlers({
-  actions: import.meta.glob('${actions}', { eager: true }),
-  modals: import.meta.glob('${modals}', { eager: true }),
-  drawers: import.meta.glob('${drawers}', { eager: true }),
-})
+const actions = collectActions(import.meta.glob('${actions}', { eager: true }))
 
-export const beam = createBeam({ actions, modals, drawers${authConfig}${sessionConfig} })
+export const beam = createBeam({ actions${authConfig}${sessionConfig} })
 `
       }
     },

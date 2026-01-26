@@ -28,6 +28,8 @@ A lightweight, declarative UI framework for building interactive web application
 - **Dropdowns** - Click-outside closing, Escape key support (no server)
 - **Collapse** - Expand/collapse with text swap (no server)
 - **Class Toggle** - Toggle CSS classes on elements (no server)
+- **Multi-Render** - Update multiple targets in a single action response
+- **Async Components** - Full support for HonoX async components in `ctx.render()`
 
 ## Installation
 
@@ -47,8 +49,6 @@ export default defineConfig({
   plugins: [
     beamPlugin({
       actions: './actions/*.tsx',
-      modals: './modals/*.tsx',
-      drawers: './drawers/*.tsx',
     }),
   ],
 })
@@ -123,56 +123,175 @@ export function greet(c) {
 
 ### Modals
 
-Modals are overlay dialogs rendered from server components.
+Two ways to open modals:
 
-```tsx
-// app/modals/confirm.tsx
-import { ModalFrame } from '@benqoder/beam'
-
-export function confirmDelete(c) {
-  const id = c.req.query('id')
-  return (
-    <ModalFrame title="Confirm Delete">
-      <p>Are you sure you want to delete item {id}?</p>
-      <button beam-action="deleteItem" beam-data-id={id} beam-close>
-        Delete
-      </button>
-      <button beam-close>Cancel</button>
-    </ModalFrame>
-  )
-}
-```
+**1. `beam-modal` attribute** - Explicitly opens the action result in a modal, with optional placeholder:
 
 ```html
-<button beam-modal="confirmDelete" beam-data-id="123">
+<!-- Shows placeholder while loading, then replaces with action result -->
+<button beam-modal="confirmDelete" beam-data-id="123" beam-size="small"
+        beam-placeholder="<div>Loading...</div>">
   Delete Item
 </button>
 ```
 
-### Drawers
-
-Drawers are slide-in panels from the left or right edge.
+**2. `beam-action` with `ctx.modal()`** - Action decides to return a modal:
 
 ```tsx
-// app/drawers/cart.tsx
-import { DrawerFrame } from '@benqoder/beam'
+// app/actions/confirm.tsx
+export function confirmDelete(ctx: BeamContext<Env>, { id }: Record<string, unknown>) {
+  return ctx.modal(
+    <div>
+      <h2>Confirm Delete</h2>
+      <p>Are you sure you want to delete item {id}?</p>
+      <button beam-action="deleteItem" beam-data-id={id} beam-close>Delete</button>
+      <button beam-close>Cancel</button>
+    </div>
+  , { size: 'small' })
+}
+```
 
-export function shoppingCart(c) {
-  return (
-    <DrawerFrame title="Shopping Cart">
-      <div class="cart-items">
-        {/* Cart contents */}
-      </div>
-    </DrawerFrame>
+`ctx.modal()` accepts JSX directly - no wrapper function needed. Options: `size` ('small' | 'medium' | 'large'), `spacing` (padding in pixels).
+
+```html
+<button beam-action="confirmDelete" beam-data-id="123">Delete Item</button>
+```
+
+### Drawers
+
+Two ways to open drawers:
+
+**1. `beam-drawer` attribute** - Explicitly opens in a drawer:
+
+```html
+<button beam-drawer="openCart" beam-position="right" beam-size="medium"
+        beam-placeholder="<div>Loading cart...</div>">
+  Open Cart
+</button>
+```
+
+**2. `beam-action` with `ctx.drawer()`** - Action returns a drawer:
+
+```tsx
+// app/actions/cart.tsx
+export function openCart(ctx: BeamContext<Env>) {
+  return ctx.drawer(
+    <div>
+      <h2>Shopping Cart</h2>
+      <div class="cart-items">{/* Cart contents */}</div>
+      <button beam-close>Close</button>
+    </div>
+  , { position: 'right', size: 'medium' })
+}
+```
+
+`ctx.drawer()` accepts JSX directly. Options: `position` ('left' | 'right'), `size` ('small' | 'medium' | 'large'), `spacing` (padding in pixels).
+
+```html
+<button beam-action="openCart">Open Cart</button>
+```
+
+### Multi-Render Array API
+
+Update multiple targets in a single action response using `ctx.render()` with arrays:
+
+**1. Explicit targets (comma-separated)**
+
+```tsx
+export function refreshDashboard(ctx: BeamContext<Env>) {
+  return ctx.render(
+    [
+      <div class="stat-card">Visits: {visits}</div>,
+      <div class="stat-card">Users: {users}</div>,
+      <div class="stat-card">Revenue: ${revenue}</div>,
+    ],
+    { target: '#stats, #users, #revenue' }
   )
 }
 ```
 
-```html
-<button beam-drawer="shoppingCart" beam-position="right" beam-size="medium">
-  Open Cart
-</button>
+**2. Auto-detect by ID (no targets needed)**
+
+```tsx
+export function refreshDashboard(ctx: BeamContext<Env>) {
+  // Client automatically finds elements by id, beam-id, or beam-item-id
+  return ctx.render([
+    <div id="stats">Visits: {visits}</div>,
+    <div id="users">Users: {users}</div>,
+    <div id="revenue">Revenue: ${revenue}</div>,
+  ])
+}
 ```
+
+**3. Mixed approach**
+
+```tsx
+export function updateDashboard(ctx: BeamContext<Env>) {
+  return ctx.render(
+    [
+      <div>Header content</div>,           // Uses explicit target
+      <div id="content">Main content</div>, // Auto-detected by ID
+    ],
+    { target: '#header' }  // Only first item gets explicit target
+  )
+}
+```
+
+**Target Resolution Order:**
+1. Explicit target from comma-separated list (by index)
+2. ID from the HTML fragment's root element (`id`, `beam-id`, or `beam-item-id`)
+3. Frontend fallback (`beam-target` on the triggering element)
+4. Skip if no target found
+
+**Exclusion:** Use `!selector` to explicitly skip an item:
+```tsx
+ctx.render(
+  [<Box1 />, <Box2 />, <Box3 />],
+  { target: '#a, !#skip, #c' }  // Box2 is skipped
+)
+```
+
+### Async Components
+
+`ctx.render()` fully supports HonoX async components:
+
+```tsx
+// Async component that fetches data
+async function UserCard({ userId }: { userId: string }) {
+  const user = await db.getUser(userId)  // Async data fetch
+  return (
+    <div class="user-card">
+      <h3>{user.name}</h3>
+      <p>{user.email}</p>
+    </div>
+  )
+}
+
+// Use directly in ctx.render() - no wrapper needed
+export function loadUser(ctx: BeamContext<Env>, { id }: Record<string, unknown>) {
+  return ctx.render(<UserCard userId={id as string} />, { target: '#user' })
+}
+
+// Works with arrays too
+export function loadUsers(ctx: BeamContext<Env>) {
+  return ctx.render([
+    <UserCard userId="1" />,
+    <UserCard userId="2" />,
+    <UserCard userId="3" />,
+  ], { target: '#user1, #user2, #user3' })
+}
+
+// Mixed sync and async
+export function loadDashboard(ctx: BeamContext<Env>) {
+  return ctx.render([
+    <div>Static header</div>,      // Sync
+    <UserCard userId="current" />,  // Async
+    <StatsWidget />,                // Async
+  ])
+}
+```
+
+Async components are awaited automatically - no manual `Promise.resolve()` or helper functions needed.
 
 ---
 
@@ -194,21 +313,26 @@ export function shoppingCart(c) {
 | `beam-push` | Push URL to browser history after action | `beam-push="/new-url"` |
 | `beam-replace` | Replace current URL in history | `beam-replace="?page=2"` |
 
-### Modals
+### Modals & Drawers
 
 | Attribute | Description | Example |
 |-----------|-------------|---------|
-| `beam-modal` | Modal handler name to open | `beam-modal="editUser"` |
-| `beam-close` | Close the current modal when clicked | `beam-close` |
+| `beam-modal` | Action to call and display result in modal | `beam-modal="editUser"` |
+| `beam-drawer` | Action to call and display result in drawer | `beam-drawer="openCart"` |
+| `beam-size` | Size for modal/drawer: `small`, `medium`, `large` | `beam-size="large"` |
+| `beam-position` | Drawer position: `left`, `right` | `beam-position="left"` |
+| `beam-placeholder` | HTML to show while loading | `beam-placeholder="<p>Loading...</p>"` |
+| `beam-close` | Close the current modal/drawer when clicked | `beam-close` |
 
-### Drawers
+Modals and drawers can also be returned from `beam-action` using context helpers:
 
-| Attribute | Description | Example |
-|-----------|-------------|---------|
-| `beam-drawer` | Drawer handler name to open | `beam-drawer="settings"` |
-| `beam-position` | Side to open from: `left`, `right` | `beam-position="left"` |
-| `beam-size` | Drawer width: `small`, `medium`, `large` | `beam-size="large"` |
-| `beam-close` | Close the current drawer when clicked | `beam-close` |
+```tsx
+// Modal with options
+return ctx.modal(render(<MyModal />), { size: 'large', spacing: 20 })
+
+// Drawer with options
+return ctx.drawer(render(<MyDrawer />), { position: 'left', size: 'medium' })
+```
 
 ### Forms
 
@@ -969,42 +1093,8 @@ Creates a Beam instance with handlers:
 import { createBeam } from '@benqoder/beam'
 
 const beam = createBeam<Env>({
-  actions: { increment, decrement },
-  modals: { editUser, confirmDelete },
-  drawers: { settings, cart },
+  actions: { increment, decrement, openModal, openCart },
 })
-```
-
-### ModalFrame
-
-Wrapper component for modals:
-
-```tsx
-import { ModalFrame } from '@benqoder/beam'
-
-export function myModal(c) {
-  return (
-    <ModalFrame title="Modal Title">
-      <p>Modal content</p>
-    </ModalFrame>
-  )
-}
-```
-
-### DrawerFrame
-
-Wrapper component for drawers:
-
-```tsx
-import { DrawerFrame } from '@benqoder/beam'
-
-export function myDrawer(c) {
-  return (
-    <DrawerFrame title="Drawer Title">
-      <p>Drawer content</p>
-    </DrawerFrame>
-  )
-}
 ```
 
 ### render
@@ -1023,10 +1113,8 @@ const html = render(<div>Hello</div>)
 
 ```typescript
 beamPlugin({
-  // Glob patterns for handler files (must start with '/' for virtual modules)
+  // Glob pattern for action handler files (must start with '/' for virtual modules)
   actions: '/app/actions/*.tsx',   // default
-  modals: '/app/modals/*.tsx',     // default
-  drawers: '/app/drawers/*.tsx',   // default
 })
 ```
 
@@ -1037,18 +1125,22 @@ beamPlugin({
 ### Handler Types
 
 ```typescript
-import type { ActionHandler, ModalHandler, DrawerHandler } from '@benqoder/beam'
+import type { ActionHandler, ActionResponse, BeamContext } from '@benqoder/beam'
+import { render } from '@benqoder/beam'
 
-const myAction: ActionHandler<Env> = (c) => {
-  return <div>Hello</div>
+// Action that returns HTML string
+const myAction: ActionHandler<Env> = async (ctx, params) => {
+  return '<div>Hello</div>'
 }
 
-const myModal: ModalHandler<Env> = (c) => {
-  return <ModalFrame title="Hi"><p>Content</p></ModalFrame>
+// Action that returns ActionResponse with modal
+const openModal: ActionHandler<Env> = async (ctx, params) => {
+  return ctx.modal(render(<div>Modal content</div>), { size: 'medium' })
 }
 
-const myDrawer: DrawerHandler<Env> = (c) => {
-  return <DrawerFrame title="Hi"><p>Content</p></DrawerFrame>
+// Action that returns ActionResponse with drawer
+const openDrawer: ActionHandler<Env> = async (ctx, params) => {
+  return ctx.drawer(render(<div>Drawer content</div>), { position: 'right' })
 }
 ```
 
@@ -1179,7 +1271,6 @@ Beam provides automatic session management with a simple `ctx.session` API. No b
 ```typescript
 beamPlugin({
   actions: '/app/actions/*.tsx',
-  modals: '/app/modals/*.tsx',
   session: true, // Enable with defaults (cookie storage)
 })
 ```
@@ -1342,7 +1433,6 @@ The auth token is tied to sessions:
 // vite.config.ts
 beamPlugin({
   actions: '/app/actions/*.tsx',
-  modals: '/app/modals/*.tsx',
   session: true, // Uses env.SESSION_SECRET
 })
 ```
@@ -1470,7 +1560,7 @@ window.beam.actionName(data?, options?) → Promise<ActionResponse>
 //   - string shorthand: treated as target selector
 //   - object: full options with target and swap mode
 
-// ActionResponse: { html?: string, script?: string, redirect?: string }
+// ActionResponse: { html?: string | string[], script?: string, redirect?: string, target?: string }
 ```
 
 ### Response Handling
