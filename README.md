@@ -11,6 +11,10 @@ A lightweight, declarative UI framework for building interactive web application
 - **Smart Loading** - Per-action loading indicators with parameter matching
 - **DOM Morphing** - Smooth updates via Idiomorph
 - **Real-time Validation** - Validate forms as users type
+- **Input Watchers** - Trigger actions on input/change events with debounce/throttle
+- **Conditional Triggers** - Only trigger when conditions are met (`beam-watch-if`)
+- **Dirty Form Tracking** - Track unsaved changes with indicators and warnings
+- **Conditional Fields** - Enable/disable/show/hide fields based on other values
 - **Deferred Loading** - Load content when scrolled into view
 - **Polling** - Auto-refresh content at intervals
 - **Hungry Elements** - Auto-update elements across actions
@@ -359,6 +363,40 @@ return ctx.drawer(render(<MyDrawer />), { position: 'left', size: 'medium' })
 | `beam-watch` | Event to trigger validation: `input`, `change` | `beam-watch="input"` |
 | `beam-debounce` | Debounce delay in milliseconds | `beam-debounce="300"` |
 
+### Input Watchers
+
+| Attribute | Description | Example |
+|-----------|-------------|---------|
+| `beam-watch` | Event to trigger action: `input`, `change` | `beam-watch="input"` |
+| `beam-debounce` | Debounce delay in milliseconds | `beam-debounce="300"` |
+| `beam-throttle` | Throttle interval in milliseconds (alternative to debounce) | `beam-throttle="100"` |
+| `beam-watch-if` | Condition that must be true to trigger | `beam-watch-if="value.length >= 3"` |
+| `beam-cast` | Cast input value: `number`, `integer`, `boolean`, `trim` | `beam-cast="number"` |
+| `beam-loading-class` | Add class to input while request is in progress | `beam-loading-class="loading"` |
+| `beam-keep` | Preserve input focus and cursor position after morph | `beam-keep` |
+
+### Dirty Form Tracking
+
+| Attribute | Description | Example |
+|-----------|-------------|---------|
+| `beam-dirty-track` | Enable dirty tracking on a form | `<form beam-dirty-track>` |
+| `beam-dirty-indicator` | Show element when form is dirty | `beam-dirty-indicator="#my-form"` |
+| `beam-dirty-class` | Toggle class instead of visibility | `beam-dirty-class="has-changes"` |
+| `beam-warn-unsaved` | Warn before leaving page with unsaved changes | `<form beam-warn-unsaved>` |
+| `beam-revert` | Button to revert form to original values | `beam-revert="#my-form"` |
+| `beam-show-if-dirty` | Show element when form is dirty | `beam-show-if-dirty="#my-form"` |
+| `beam-hide-if-dirty` | Hide element when form is dirty | `beam-hide-if-dirty="#my-form"` |
+
+### Conditional Form Fields
+
+| Attribute | Description | Example |
+|-----------|-------------|---------|
+| `beam-enable-if` | Enable field when condition is true | `beam-enable-if="#subscribe:checked"` |
+| `beam-disable-if` | Disable field when condition is true | `beam-disable-if="#country[value='']"` |
+| `beam-visible-if` | Show field when condition is true | `beam-visible-if="#source[value='other']"` |
+| `beam-hidden-if` | Hide field when condition is true | `beam-hidden-if="#premium:checked"` |
+| `beam-required-if` | Make field required when condition is true | `beam-required-if="#business:checked"` |
+
 ### Deferred Loading
 
 | Attribute | Description | Example |
@@ -598,6 +636,308 @@ export function submitForm(c) {
   // Full form submission
   return <div>Form submitted!</div>
 }
+```
+
+---
+
+## Input Watchers
+
+Trigger actions on input events without forms. Great for live search, auto-save, and real-time updates.
+
+### Basic Usage
+
+```html
+<!-- Live search with debounce -->
+<input
+  name="q"
+  placeholder="Search..."
+  beam-action="search"
+  beam-target="#results"
+  beam-watch="input"
+  beam-debounce="300"
+/>
+<div id="results"></div>
+```
+
+### Throttle vs Debounce
+
+Use `beam-throttle` for real-time updates (like range sliders) where you want periodic updates:
+
+```html
+<!-- Range slider with throttle - updates every 100ms while dragging -->
+<input
+  type="range"
+  name="price"
+  beam-action="updatePrice"
+  beam-target="#price-display"
+  beam-watch="input"
+  beam-throttle="100"
+/>
+
+<!-- Search with debounce - waits 300ms after user stops typing -->
+<input
+  name="q"
+  beam-action="search"
+  beam-target="#results"
+  beam-watch="input"
+  beam-debounce="300"
+/>
+```
+
+### Conditional Triggers
+
+Only trigger action when a condition is met:
+
+```html
+<!-- Only search when 3+ characters are typed -->
+<input
+  name="q"
+  placeholder="Type 3+ chars to search..."
+  beam-action="search"
+  beam-target="#results"
+  beam-watch="input"
+  beam-watch-if="value.length >= 3"
+  beam-debounce="300"
+/>
+```
+
+The condition has access to `value` (current input value) and `this` (the element).
+
+### Type Casting
+
+Cast input values before sending to the server:
+
+```html
+<!-- Send as number instead of string -->
+<input
+  type="range"
+  name="quantity"
+  beam-action="updateQuantity"
+  beam-cast="number"
+  beam-watch="input"
+/>
+```
+
+Cast types:
+- `number` - Parse as float
+- `integer` - Parse as integer
+- `boolean` - Convert "true"/"1"/"yes" to true
+- `trim` - Trim whitespace
+
+### Loading Feedback
+
+Add a class to the input while the request is in progress:
+
+```html
+<input
+  name="q"
+  placeholder="Search..."
+  beam-action="search"
+  beam-target="#results"
+  beam-watch="input"
+  beam-loading-class="input-loading"
+/>
+
+<style>
+  .input-loading {
+    border-color: blue;
+    animation: pulse 1s infinite;
+  }
+</style>
+```
+
+### Preserving Focus
+
+Use `beam-keep` to preserve focus and cursor position after the response morphs the DOM:
+
+```html
+<input
+  name="bio"
+  beam-action="validateBio"
+  beam-target="#bio-feedback"
+  beam-watch="input"
+  beam-keep
+/>
+```
+
+### Auto-Save on Blur
+
+Trigger action when the user leaves the field:
+
+```html
+<input
+  name="username"
+  beam-action="saveField"
+  beam-data-field="username"
+  beam-target="#save-status"
+  beam-watch="change"
+  beam-keep
+/>
+<div id="save-status">Not saved yet</div>
+```
+
+---
+
+## Dirty Form Tracking
+
+Track form changes and warn users before losing unsaved work.
+
+### Basic Usage
+
+```html
+<form id="profile-form" beam-dirty-track>
+  <input name="username" value="johndoe" />
+  <input name="email" value="john@example.com" />
+  <button type="submit">Save</button>
+</form>
+```
+
+The form gets a `beam-dirty` attribute when modified.
+
+### Dirty Indicator
+
+Show an indicator when the form has unsaved changes:
+
+```html
+<h2>
+  Profile Settings
+  <span beam-dirty-indicator="#profile-form" class="unsaved-badge">*</span>
+</h2>
+
+<form id="profile-form" beam-dirty-track>
+  <!-- form fields -->
+</form>
+
+<style>
+  [beam-dirty-indicator] { display: none; color: orange; }
+</style>
+```
+
+### Revert Changes
+
+Add a button to restore original values:
+
+```html
+<form id="profile-form" beam-dirty-track>
+  <input name="username" value="johndoe" />
+  <input name="email" value="john@example.com" />
+
+  <button type="button" beam-revert="#profile-form" beam-show-if-dirty="#profile-form">
+    Revert Changes
+  </button>
+  <button type="submit">Save</button>
+</form>
+```
+
+The revert button only shows when the form is dirty.
+
+### Unsaved Changes Warning
+
+Warn users before navigating away with unsaved changes:
+
+```html
+<form beam-dirty-track beam-warn-unsaved>
+  <input name="important-data" />
+  <button type="submit">Save</button>
+</form>
+```
+
+The browser will show a confirmation dialog if the user tries to close the tab or navigate away.
+
+### Conditional Visibility
+
+Show/hide elements based on dirty state:
+
+```html
+<form id="settings" beam-dirty-track>
+  <!-- Show when dirty -->
+  <div beam-show-if-dirty="#settings" class="warning">
+    You have unsaved changes
+  </div>
+
+  <!-- Hide when dirty -->
+  <div beam-hide-if-dirty="#settings">
+    All changes saved
+  </div>
+</form>
+```
+
+---
+
+## Conditional Form Fields
+
+Enable, disable, show, or hide fields based on other field values—all client-side, no server round-trip.
+
+### Enable/Disable Fields
+
+```html
+<label>
+  <input type="checkbox" id="subscribe" name="subscribe" />
+  Subscribe to newsletter
+</label>
+
+<!-- Enabled only when checkbox is checked -->
+<input
+  type="email"
+  name="email"
+  placeholder="Enter your email..."
+  beam-enable-if="#subscribe:checked"
+  disabled
+/>
+```
+
+### Show/Hide Fields
+
+```html
+<select name="source" id="source">
+  <option value="">-- Select --</option>
+  <option value="google">Google</option>
+  <option value="friend">Friend</option>
+  <option value="other">Other</option>
+</select>
+
+<!-- Only visible when "other" is selected -->
+<div beam-visible-if="#source[value='other']">
+  <label>Please specify</label>
+  <input type="text" name="source-other" />
+</div>
+```
+
+### Required Fields
+
+```html
+<label>
+  <input type="checkbox" id="business" name="is-business" />
+  This is a business account
+</label>
+
+<!-- Required only when checkbox is checked -->
+<input
+  type="text"
+  name="company"
+  placeholder="Company name"
+  beam-required-if="#business:checked"
+/>
+```
+
+### Condition Syntax
+
+Conditions support:
+- `:checked` - Checkbox/radio is checked
+- `:disabled` - Element is disabled
+- `:empty` - Input has no value
+- `[value='x']` - Input value equals 'x'
+- `[value!='x']` - Input value not equals 'x'
+- `[value>'5']` - Numeric comparison
+
+```html
+<!-- Enable when country is selected -->
+<select beam-disable-if="#country[value='']" name="state">
+
+<!-- Show when amount is over 100 -->
+<div beam-visible-if="#amount[value>'100']">
+  Large order discount applied!
+</div>
 ```
 
 ---

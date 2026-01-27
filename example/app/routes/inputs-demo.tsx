@@ -345,11 +345,11 @@ export default createRoute(async (c) => {
 
       {/* ============ RANGE SLIDER ============ */}
       <div class="demo-section">
-        <h2>11. Range Slider</h2>
+        <h2>11. Range Slider (beam-throttle)</h2>
         <p class="text-muted">
-          Range input updates display as you drag.
+          Range input updates display as you drag using <code>beam-throttle</code> instead of debounce.
           <br/>
-          <strong>Expected:</strong> Value and styled display update in real-time.
+          <strong>Expected:</strong> Value updates at regular intervals while dragging (not delayed).
         </p>
         <div class="range-group">
           <label>Price Range: <span id="price-display">$50</span></label>
@@ -362,12 +362,185 @@ export default createRoute(async (c) => {
             beam-action="updatePrice"
             beam-target="#price-display"
             beam-watch="input"
-            beam-debounce="50"
+            beam-throttle="100"
           />
         </div>
         <div id="price-products" class="results-box">
           Showing products up to $50
         </div>
+      </div>
+
+      {/* ============ CONDITIONAL TRIGGER ============ */}
+      <div class="demo-section">
+        <h2>12. Conditional Trigger (beam-watch-if)</h2>
+        <p class="text-muted">
+          Search only triggers when input is at least 3 characters.
+          <br/>
+          <strong>Expected:</strong> No request until you type 3+ characters.
+        </p>
+        <div class="input-group">
+          <input
+            type="text"
+            name="q"
+            placeholder="Type 3+ chars to search..."
+            beam-action="searchProducts"
+            beam-target="#conditional-results"
+            beam-watch="input"
+            beam-watch-if="value.length >= 3"
+            beam-debounce="300"
+          />
+        </div>
+        <div id="conditional-results" class="results-box">
+          Type at least 3 characters to search...
+        </div>
+      </div>
+
+      {/* ============ LOADING CLASS ============ */}
+      <div class="demo-section">
+        <h2>13. Loading Class (beam-loading-class)</h2>
+        <p class="text-muted">
+          Input gets a custom class while request is in progress.
+          <br/>
+          <strong>Expected:</strong> Input border turns blue and pulses while loading.
+        </p>
+        <div class="input-group">
+          <input
+            type="text"
+            name="q"
+            placeholder="Search (watch the border)..."
+            beam-action="searchProducts"
+            beam-target="#loading-class-results"
+            beam-watch="input"
+            beam-debounce="300"
+            beam-loading-class="input-loading"
+          />
+        </div>
+        <div id="loading-class-results" class="results-box">
+          Type to search...
+        </div>
+      </div>
+
+      {/* ============ DIRTY FORM TRACKING ============ */}
+      <div class="demo-section">
+        <h2>14. Dirty Form Tracking (beam-dirty-track)</h2>
+        <p class="text-muted">
+          Form tracks changes and shows dirty indicator.
+          <br/>
+          <strong>Expected:</strong> Asterisk appears after you modify any field. Revert button restores original values.
+        </p>
+        <form id="dirty-form" beam-dirty-track>
+          <div class="form-header">
+            <h4>
+              User Profile
+              <span beam-dirty-indicator="#dirty-form" class="dirty-indicator">*</span>
+            </h4>
+            <div class="form-actions">
+              <button type="button" beam-revert="#dirty-form" beam-show-if-dirty="#dirty-form" class="btn-secondary">
+                Revert Changes
+              </button>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Username</label>
+            <input type="text" name="username" value="johndoe" />
+          </div>
+          <div class="form-group">
+            <label>Email</label>
+            <input type="email" name="email" value="john@example.com" />
+          </div>
+          <div class="form-group">
+            <label>Bio</label>
+            <textarea name="bio" rows={2}>Software developer</textarea>
+          </div>
+          <button type="submit">Save (Demo Only)</button>
+        </form>
+      </div>
+
+      {/* ============ UNSAVED CHANGES WARNING ============ */}
+      <div class="demo-section">
+        <h2>15. Unsaved Changes Warning (beam-warn-unsaved)</h2>
+        <p class="text-muted">
+          Form warns before navigating away if there are unsaved changes.
+          <br/>
+          <strong>Expected:</strong> Modify a field, then try to close/refresh the page. Browser should warn you.
+        </p>
+        <form beam-dirty-track beam-warn-unsaved>
+          <div class="form-group">
+            <label>Important Data</label>
+            <input type="text" name="important" placeholder="Type something, then try to close the tab..." />
+          </div>
+        </form>
+      </div>
+
+      {/* ============ CONDITIONAL FIELDS ============ */}
+      <div class="demo-section">
+        <h2>16. Conditional Fields (beam-enable-if, beam-visible-if)</h2>
+        <p class="text-muted">
+          Fields enable/disable or show/hide based on other field values.
+          <br/>
+          <strong>Expected:</strong> Check "Subscribe" to enable email input. Select "Other" to show custom input.
+        </p>
+        <div class="form-group">
+          <label>
+            <input type="checkbox" id="subscribe-check" name="subscribe" />
+            Subscribe to newsletter
+          </label>
+        </div>
+        <div class="form-group">
+          <label>Email (enabled when subscribed)</label>
+          <input
+            type="email"
+            name="newsletter-email"
+            placeholder="Enter your email..."
+            beam-enable-if="#subscribe-check:checked"
+            disabled
+          />
+        </div>
+
+        <hr style="margin: 1.5rem 0" />
+
+        <div class="form-group">
+          <label>How did you hear about us?</label>
+          <select name="source" id="source-select">
+            <option value="">-- Select --</option>
+            <option value="google">Google Search</option>
+            <option value="friend">Friend Referral</option>
+            <option value="social">Social Media</option>
+            <option value="other">Other</option>
+          </select>
+        </div>
+        <div class="form-group" beam-visible-if="#source-select[value='other']">
+          <label>Please specify</label>
+          <input type="text" name="source-other" placeholder="Tell us more..." />
+        </div>
+      </div>
+
+      {/* ============ REQUIRED-IF ============ */}
+      <div class="demo-section">
+        <h2>17. Required-If (beam-required-if)</h2>
+        <p class="text-muted">
+          Field becomes required based on another field's state.
+          <br/>
+          <strong>Expected:</strong> Check "Business account" to make company name required (shows red border on submit).
+        </p>
+        <form onsubmit="event.preventDefault(); alert('Form submitted!')">
+          <div class="form-group">
+            <label>
+              <input type="checkbox" id="business-check" name="is-business" />
+              This is a business account
+            </label>
+          </div>
+          <div class="form-group">
+            <label>Company Name</label>
+            <input
+              type="text"
+              name="company"
+              placeholder="Required for business accounts..."
+              beam-required-if="#business-check:checked"
+            />
+          </div>
+          <button type="submit">Submit</button>
+        </form>
       </div>
 
       {/* ============ STYLES ============ */}
@@ -585,6 +758,65 @@ export default createRoute(async (c) => {
         .search-item-price {
           color: #16a34a;
           font-size: 0.9rem;
+        }
+
+        /* Loading class for inputs */
+        .input-loading {
+          border-color: #3b82f6 !important;
+          animation: pulse-border 1s ease-in-out infinite;
+        }
+        @keyframes pulse-border {
+          0%, 100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.4); }
+          50% { box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.2); }
+        }
+
+        /* Dirty form indicator */
+        .dirty-indicator {
+          color: #f59e0b;
+          font-weight: bold;
+          margin-left: 0.25rem;
+        }
+        .form-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 1rem;
+        }
+        .form-header h4 {
+          margin: 0;
+        }
+        .form-actions {
+          display: flex;
+          gap: 0.5rem;
+        }
+        .btn-secondary {
+          background: #f1f5f9;
+          color: #475569;
+          border: 1px solid #e2e8f0;
+          padding: 0.5rem 1rem;
+          border-radius: 6px;
+          font-size: 0.875rem;
+          cursor: pointer;
+        }
+        .btn-secondary:hover {
+          background: #e2e8f0;
+        }
+
+        /* Disabled fields */
+        input:disabled,
+        select:disabled,
+        textarea:disabled {
+          background: #f8fafc;
+          color: #94a3b8;
+          cursor: not-allowed;
+        }
+
+        /* Required field indicator */
+        input:required {
+          border-color: #f59e0b;
+        }
+        input:required:invalid {
+          border-color: #ef4444;
         }
       `}</style>
     </Layout>

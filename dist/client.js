@@ -1642,6 +1642,8 @@ document.querySelectorAll('[beam-validate]').forEach((el) => {
 });
 // ============ INPUT WATCHERS ============
 // Usage: <input name="q" beam-action="search" beam-target="#results" beam-watch="input" beam-debounce="300">
+// Usage: <input type="range" beam-action="update" beam-watch="input" beam-throttle="100">
+// Usage: <input beam-watch="input" beam-watch-if="value.length >= 3">
 // Handles standalone inputs with beam-action + beam-watch (not using beam-validate)
 function isInputElement(el) {
     return el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT';
@@ -1661,108 +1663,193 @@ function getInputValue(el) {
         return el.value;
     return '';
 }
+// Cast value based on beam-cast attribute
+function castValue(value, castType) {
+    if (!castType || typeof value !== 'string')
+        return value;
+    switch (castType) {
+        case 'number':
+            const num = parseFloat(value);
+            return isNaN(num) ? 0 : num;
+        case 'integer':
+            const int = parseInt(value, 10);
+            return isNaN(int) ? 0 : int;
+        case 'boolean':
+            return value === 'true' || value === '1' || value === 'yes';
+        case 'trim':
+            return value.trim();
+        default:
+            return value;
+    }
+}
+// Check if condition is met for beam-watch-if
+function checkWatchCondition(el, value) {
+    const condition = el.getAttribute('beam-watch-if');
+    if (!condition)
+        return true;
+    try {
+        // Create a function that evaluates the condition with 'value' and 'this' context
+        const fn = new Function('value', `with(this) { return ${condition} }`);
+        return Boolean(fn.call(el, value));
+    }
+    catch (e) {
+        console.warn('[beam] Invalid beam-watch-if condition:', condition, e);
+        return true;
+    }
+}
+// Create throttle function
+function createThrottle(fn, limit) {
+    let lastRun = 0;
+    let timeout = null;
+    return () => {
+        const now = Date.now();
+        const timeSinceLastRun = now - lastRun;
+        if (timeSinceLastRun >= limit) {
+            lastRun = now;
+            fn();
+        }
+        else if (!timeout) {
+            // Schedule to run after remaining time
+            timeout = setTimeout(() => {
+                lastRun = Date.now();
+                timeout = null;
+                fn();
+            }, limit - timeSinceLastRun);
+        }
+    };
+}
 function setupInputWatcher(el) {
     if (!isInputElement(el))
         return;
     const htmlEl = el;
     const event = htmlEl.getAttribute('beam-watch') || 'change';
-    const debounce = parseInt(htmlEl.getAttribute('beam-debounce') || '300', 10);
+    const debounceMs = htmlEl.getAttribute('beam-debounce');
+    const throttleMs = htmlEl.getAttribute('beam-throttle');
     const action = htmlEl.getAttribute('beam-action');
     const targetSelector = htmlEl.getAttribute('beam-target');
     const swapMode = htmlEl.getAttribute('beam-swap') || 'morph';
+    const castType = htmlEl.getAttribute('beam-cast');
+    const loadingClass = htmlEl.getAttribute('beam-loading-class');
     if (!action)
         return;
-    let timeout;
-    const handler = (e) => {
-        clearTimeout(timeout);
-        const eventType = e.type; // Capture which event triggered this
-        timeout = setTimeout(async () => {
-            const name = htmlEl.getAttribute('name');
-            const value = getInputValue(el);
-            const params = getParams(htmlEl);
-            // Add the input's value to params
-            if (name) {
-                params[name] = value;
-            }
-            // Handle checkboxes specially - they might be part of a group
-            if (el.tagName === 'INPUT' && el.type === 'checkbox') {
-                // For checkbox groups, collect all checked values
-                const form = el.closest('form');
-                if (form && name) {
-                    const checkboxes = form.querySelectorAll(`input[type="checkbox"][name="${name}"]`);
-                    if (checkboxes.length > 1) {
-                        const values = Array.from(checkboxes).filter(cb => cb.checked).map(cb => cb.value);
-                        params[name] = values;
-                    }
+    let debounceTimeout;
+    const executeAction = async (eventType) => {
+        const name = htmlEl.getAttribute('name');
+        let value = getInputValue(el);
+        // Apply type casting
+        value = castValue(value, castType);
+        // Check conditional trigger
+        if (!checkWatchCondition(htmlEl, value))
+            return;
+        const params = getParams(htmlEl);
+        // Add the input's value to params
+        if (name) {
+            params[name] = value;
+        }
+        // Handle checkboxes specially - they might be part of a group
+        if (el.tagName === 'INPUT' && el.type === 'checkbox') {
+            const form = el.closest('form');
+            if (form && name) {
+                const checkboxes = form.querySelectorAll(`input[type="checkbox"][name="${name}"]`);
+                if (checkboxes.length > 1) {
+                    const values = Array.from(checkboxes).filter(cb => cb.checked).map(cb => cb.value);
+                    params[name] = values;
                 }
             }
-            // Only restore focus for "input" events, not "change" (blur) events
-            const shouldRestoreFocus = htmlEl.hasAttribute('beam-keep') && eventType === 'input';
-            const activeElement = document.activeElement;
-            try {
-                const response = await api.call(action, params);
-                if (response.html && targetSelector) {
-                    const targets = $$(targetSelector);
-                    const htmlArray = Array.isArray(response.html) ? response.html : [response.html];
-                    targets.forEach((target, i) => {
-                        const html = htmlArray[i] || htmlArray[0];
-                        if (html) {
-                            if (swapMode === 'append') {
-                                target.insertAdjacentHTML('beforeend', html);
-                            }
-                            else if (swapMode === 'prepend') {
-                                target.insertAdjacentHTML('afterbegin', html);
-                            }
-                            else if (swapMode === 'replace') {
-                                target.outerHTML = html;
-                            }
-                            else {
-                                morph(target, html);
-                            }
+        }
+        // Only restore focus for "input" events, not "change" (blur) events
+        const shouldRestoreFocus = htmlEl.hasAttribute('beam-keep') && eventType === 'input';
+        const activeElement = document.activeElement;
+        // Add loading class if specified
+        if (loadingClass)
+            htmlEl.classList.add(loadingClass);
+        // Mark touched
+        htmlEl.setAttribute('beam-touched', '');
+        try {
+            const response = await api.call(action, params);
+            if (response.html && targetSelector) {
+                const targets = $$(targetSelector);
+                const htmlArray = Array.isArray(response.html) ? response.html : [response.html];
+                targets.forEach((target, i) => {
+                    const html = htmlArray[i] || htmlArray[0];
+                    if (html) {
+                        if (swapMode === 'append') {
+                            target.insertAdjacentHTML('beforeend', html);
                         }
-                    });
-                }
-                // Process OOB updates (beam-touch templates)
-                if (response.html) {
-                    const htmlStr = Array.isArray(response.html) ? response.html.join('') : response.html;
-                    const { oob } = parseOobSwaps(htmlStr);
-                    for (const { selector, content, swapMode: oobSwapMode } of oob) {
-                        const oobTarget = $(selector);
-                        if (oobTarget) {
-                            if (oobSwapMode === 'morph' || !oobSwapMode) {
-                                morph(oobTarget, content);
-                            }
-                            else {
-                                swap(oobTarget, content, oobSwapMode);
-                            }
+                        else if (swapMode === 'prepend') {
+                            target.insertAdjacentHTML('afterbegin', html);
+                        }
+                        else if (swapMode === 'replace') {
+                            target.outerHTML = html;
+                        }
+                        else {
+                            morph(target, html);
                         }
                     }
-                }
-                // Execute script if present
-                if (response.script) {
-                    executeScript(response.script);
-                }
-                // Restore focus if beam-keep is set and this was an input event (not change/blur)
-                if (shouldRestoreFocus && activeElement instanceof HTMLElement) {
-                    // Find the element again in case it was morphed
-                    const newEl = document.querySelector(`[name="${name}"]`);
-                    if (newEl && newEl !== activeElement) {
-                        newEl.focus();
-                        // Restore cursor position for text inputs
-                        if (newEl instanceof HTMLInputElement || newEl instanceof HTMLTextAreaElement) {
-                            const cursorPos = activeElement.selectionStart;
-                            if (cursorPos !== null) {
-                                newEl.setSelectionRange(cursorPos, cursorPos);
-                            }
+                });
+            }
+            // Process OOB updates (beam-touch templates)
+            if (response.html) {
+                const htmlStr = Array.isArray(response.html) ? response.html.join('') : response.html;
+                const { oob } = parseOobSwaps(htmlStr);
+                for (const { selector, content, swapMode: oobSwapMode } of oob) {
+                    const oobTarget = $(selector);
+                    if (oobTarget) {
+                        if (oobSwapMode === 'morph' || !oobSwapMode) {
+                            morph(oobTarget, content);
+                        }
+                        else {
+                            swap(oobTarget, content, oobSwapMode);
                         }
                     }
                 }
             }
-            catch (err) {
-                console.error('Input watcher error:', err);
+            // Execute script if present
+            if (response.script) {
+                executeScript(response.script);
             }
-        }, debounce);
+            // Restore focus if beam-keep is set and this was an input event (not change/blur)
+            if (shouldRestoreFocus && activeElement instanceof HTMLElement) {
+                const newEl = document.querySelector(`[name="${name}"]`);
+                if (newEl && newEl !== activeElement) {
+                    newEl.focus();
+                    if (newEl instanceof HTMLInputElement || newEl instanceof HTMLTextAreaElement) {
+                        const cursorPos = activeElement.selectionStart;
+                        if (cursorPos !== null) {
+                            newEl.setSelectionRange(cursorPos, cursorPos);
+                        }
+                    }
+                }
+            }
+        }
+        catch (err) {
+            console.error('Input watcher error:', err);
+        }
+        finally {
+            // Remove loading class
+            if (loadingClass)
+                htmlEl.classList.remove(loadingClass);
+        }
     };
+    // Create the appropriate handler based on throttle vs debounce
+    let handler;
+    if (throttleMs) {
+        // Use throttle mode
+        const throttle = parseInt(throttleMs, 10);
+        const throttledFn = createThrottle(() => executeAction('input'), throttle);
+        handler = (e) => {
+            throttledFn();
+        };
+    }
+    else {
+        // Use debounce mode (default)
+        const debounce = parseInt(debounceMs || '300', 10);
+        handler = (e) => {
+            clearTimeout(debounceTimeout);
+            const eventType = e.type;
+            debounceTimeout = setTimeout(() => executeAction(eventType), debounce);
+        };
+    }
     // Support multiple events (comma-separated)
     const events = event.split(',').map(e => e.trim());
     events.forEach(evt => {
@@ -2066,6 +2153,301 @@ document.addEventListener('click', (e) => {
         }
     }
 });
+// ============ DIRTY FORM TRACKING ============
+// Usage: <form beam-dirty-track>...</form>
+// Usage: <span beam-dirty-indicator="#my-form">*</span> (shows when form is dirty)
+// Usage: <form beam-warn-unsaved>...</form> (warns on page leave)
+// Store original form data for dirty checking
+const formOriginalData = new WeakMap();
+const dirtyForms = new Set();
+function getFormDataMap(form) {
+    const map = new Map();
+    const formData = new FormData(form);
+    for (const [key, value] of formData.entries()) {
+        const existing = map.get(key);
+        if (existing) {
+            // Handle multiple values (checkboxes, multi-select)
+            map.set(key, existing + ',' + String(value));
+        }
+        else {
+            map.set(key, String(value));
+        }
+    }
+    return map;
+}
+function isFormDirty(form) {
+    const original = formOriginalData.get(form);
+    if (!original)
+        return false;
+    const current = getFormDataMap(form);
+    // Check if any values changed
+    for (const [key, value] of current.entries()) {
+        if (original.get(key) !== value)
+            return true;
+    }
+    for (const [key, value] of original.entries()) {
+        if (current.get(key) !== value)
+            return true;
+    }
+    return false;
+}
+function updateDirtyState(form) {
+    const isDirty = isFormDirty(form);
+    if (isDirty) {
+        dirtyForms.add(form);
+        form.setAttribute('beam-dirty', '');
+    }
+    else {
+        dirtyForms.delete(form);
+        form.removeAttribute('beam-dirty');
+    }
+    // Update dirty indicators
+    updateDirtyIndicators();
+}
+function updateDirtyIndicators() {
+    document.querySelectorAll('[beam-dirty-indicator]').forEach((indicator) => {
+        const formSelector = indicator.getAttribute('beam-dirty-indicator');
+        if (!formSelector)
+            return;
+        const form = document.querySelector(formSelector);
+        const isDirty = form ? dirtyForms.has(form) : false;
+        if (indicator.hasAttribute('beam-dirty-class')) {
+            const className = indicator.getAttribute('beam-dirty-class');
+            indicator.classList.toggle(className, isDirty);
+        }
+        else {
+            indicator.style.display = isDirty ? '' : 'none';
+        }
+    });
+    // Update show-if-dirty elements
+    document.querySelectorAll('[beam-show-if-dirty]').forEach((el) => {
+        const formSelector = el.getAttribute('beam-show-if-dirty');
+        const form = formSelector
+            ? document.querySelector(formSelector)
+            : el.closest('form');
+        const isDirty = form ? dirtyForms.has(form) : false;
+        el.style.display = isDirty ? '' : 'none';
+    });
+    // Update hide-if-dirty elements
+    document.querySelectorAll('[beam-hide-if-dirty]').forEach((el) => {
+        const formSelector = el.getAttribute('beam-hide-if-dirty');
+        const form = formSelector
+            ? document.querySelector(formSelector)
+            : el.closest('form');
+        const isDirty = form ? dirtyForms.has(form) : false;
+        el.style.display = isDirty ? 'none' : '';
+    });
+}
+function setupDirtyTracking(form) {
+    // Store original data
+    formOriginalData.set(form, getFormDataMap(form));
+    // Listen to input events on all form fields
+    const checkDirty = () => updateDirtyState(form);
+    form.addEventListener('input', checkDirty);
+    form.addEventListener('change', checkDirty);
+    // Reset dirty state on form submit
+    form.addEventListener('submit', () => {
+        // After successful submit, update original data
+        setTimeout(() => {
+            formOriginalData.set(form, getFormDataMap(form));
+            updateDirtyState(form);
+        }, 100);
+    });
+    // Handle form reset
+    form.addEventListener('reset', () => {
+        setTimeout(() => updateDirtyState(form), 0);
+    });
+}
+// Observe dirty-tracked forms
+const dirtyFormObserver = new MutationObserver(() => {
+    document.querySelectorAll('form[beam-dirty-track]:not([beam-dirty-observed])').forEach((form) => {
+        form.setAttribute('beam-dirty-observed', '');
+        setupDirtyTracking(form);
+    });
+});
+dirtyFormObserver.observe(document.body, { childList: true, subtree: true });
+// Initialize existing dirty-tracked forms
+document.querySelectorAll('form[beam-dirty-track]').forEach((form) => {
+    form.setAttribute('beam-dirty-observed', '');
+    setupDirtyTracking(form);
+});
+// Initialize dirty indicators (hidden by default)
+document.querySelectorAll('[beam-dirty-indicator]:not([beam-dirty-class])').forEach((el) => {
+    el.style.display = 'none';
+});
+document.querySelectorAll('[beam-show-if-dirty]').forEach((el) => {
+    el.style.display = 'none';
+});
+// ============ UNSAVED CHANGES WARNING ============
+// Usage: <form beam-warn-unsaved>...</form>
+// Usage: <form beam-warn-unsaved="Are you sure? You have unsaved changes.">...</form>
+window.addEventListener('beforeunload', (e) => {
+    // Check if any form with beam-warn-unsaved is dirty
+    const formsWithWarning = document.querySelectorAll('form[beam-warn-unsaved]');
+    let hasDirtyForm = false;
+    formsWithWarning.forEach((form) => {
+        if (dirtyForms.has(form)) {
+            hasDirtyForm = true;
+        }
+    });
+    if (hasDirtyForm) {
+        e.preventDefault();
+        // Modern browsers ignore custom messages, but we need to return something
+        e.returnValue = '';
+        return '';
+    }
+});
+// ============ FORM REVERT ============
+// Usage: <button type="button" beam-revert="#my-form">Revert</button>
+// Usage: <button type="button" beam-revert>Revert</button> (inside form)
+document.addEventListener('click', (e) => {
+    const target = e.target;
+    if (!target?.closest)
+        return;
+    const trigger = target.closest('[beam-revert]');
+    if (trigger) {
+        e.preventDefault();
+        const formSelector = trigger.getAttribute('beam-revert');
+        const form = formSelector
+            ? document.querySelector(formSelector)
+            : trigger.closest('form');
+        if (form) {
+            const original = formOriginalData.get(form);
+            if (original) {
+                // Reset each field to its original value
+                original.forEach((value, name) => {
+                    const fields = form.querySelectorAll(`[name="${name}"]`);
+                    fields.forEach((el) => {
+                        const field = el;
+                        if (field instanceof HTMLInputElement && (field.type === 'checkbox' || field.type === 'radio')) {
+                            // For checkboxes/radios, check if their value was in the original
+                            const values = value.split(',');
+                            field.checked = values.includes(field.value);
+                        }
+                        else if ('value' in field) {
+                            field.value = value;
+                        }
+                    });
+                });
+                // Handle fields that weren't in original (new fields) - reset them
+                const currentFields = form.querySelectorAll('[name]');
+                currentFields.forEach((el) => {
+                    const field = el;
+                    const name = field.getAttribute('name');
+                    if (name && !original.has(name)) {
+                        if (field instanceof HTMLInputElement && (field.type === 'checkbox' || field.type === 'radio')) {
+                            field.checked = false;
+                        }
+                        else if ('value' in field) {
+                            field.value = '';
+                        }
+                    }
+                });
+                // Dispatch input event for any watchers
+                form.dispatchEvent(new Event('input', { bubbles: true }));
+                updateDirtyState(form);
+            }
+        }
+    }
+});
+// ============ CONDITIONAL FORM FIELDS ============
+// Usage: <input name="other" beam-enable-if="#has-other:checked">
+// Usage: <select beam-disable-if="#country[value='']">
+// Usage: <div beam-visible-if="#show-details:checked">Details here</div>
+function evaluateCondition(condition) {
+    // Parse condition: "#selector:pseudo" or "#selector[attr='value']"
+    const match = condition.match(/^([^:\[]+)(?::(\w+))?(?:\[([^\]]+)\])?$/);
+    if (!match)
+        return false;
+    const [, selector, pseudo, attrCondition] = match;
+    const el = document.querySelector(selector);
+    if (!el)
+        return false;
+    // Check pseudo-class
+    if (pseudo === 'checked') {
+        return el.checked;
+    }
+    if (pseudo === 'disabled') {
+        return el.disabled;
+    }
+    if (pseudo === 'empty') {
+        return !el.value;
+    }
+    // Check attribute condition
+    if (attrCondition) {
+        const attrMatch = attrCondition.match(/(\w+)([=!<>]+)'?([^']*)'?/);
+        if (attrMatch) {
+            const [, attr, op, expected] = attrMatch;
+            const actual = attr === 'value' ? el.value : el.getAttribute(attr);
+            switch (op) {
+                case '=':
+                case '==':
+                    return actual === expected;
+                case '!=':
+                    return actual !== expected;
+                case '>':
+                    return Number(actual) > Number(expected);
+                case '<':
+                    return Number(actual) < Number(expected);
+                case '>=':
+                    return Number(actual) >= Number(expected);
+                case '<=':
+                    return Number(actual) <= Number(expected);
+            }
+        }
+    }
+    // Default: check if element exists and has a truthy value
+    if (el instanceof HTMLInputElement) {
+        if (el.type === 'checkbox' || el.type === 'radio') {
+            return el.checked;
+        }
+        return Boolean(el.value);
+    }
+    if (el instanceof HTMLSelectElement || el instanceof HTMLTextAreaElement) {
+        return Boolean(el.value);
+    }
+    return true;
+}
+function updateConditionalFields() {
+    // Enable-if
+    document.querySelectorAll('[beam-enable-if]').forEach((el) => {
+        const condition = el.getAttribute('beam-enable-if');
+        const shouldEnable = evaluateCondition(condition);
+        el.disabled = !shouldEnable;
+    });
+    // Disable-if
+    document.querySelectorAll('[beam-disable-if]').forEach((el) => {
+        const condition = el.getAttribute('beam-disable-if');
+        const shouldDisable = evaluateCondition(condition);
+        el.disabled = shouldDisable;
+    });
+    // Visible-if (show when condition is true)
+    document.querySelectorAll('[beam-visible-if]').forEach((el) => {
+        const condition = el.getAttribute('beam-visible-if');
+        const shouldShow = evaluateCondition(condition);
+        el.style.display = shouldShow ? '' : 'none';
+    });
+    // Hidden-if (hide when condition is true)
+    document.querySelectorAll('[beam-hidden-if]').forEach((el) => {
+        const condition = el.getAttribute('beam-hidden-if');
+        const shouldHide = evaluateCondition(condition);
+        el.style.display = shouldHide ? 'none' : '';
+    });
+    // Required-if
+    document.querySelectorAll('[beam-required-if]').forEach((el) => {
+        const condition = el.getAttribute('beam-required-if');
+        const shouldRequire = evaluateCondition(condition);
+        el.required = shouldRequire;
+    });
+}
+// Listen for input/change events to update conditional fields
+document.addEventListener('input', updateConditionalFields);
+document.addEventListener('change', updateConditionalFields);
+// Initial update
+updateConditionalFields();
+// Observe for new conditional elements
+const conditionalObserver = new MutationObserver(updateConditionalFields);
+conditionalObserver.observe(document.body, { childList: true, subtree: true });
 // Clear scroll state for current page or all pages
 // Usage: clearScrollState() - clear all for current URL
 //        clearScrollState('loadMore') - clear specific action
