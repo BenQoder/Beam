@@ -167,52 +167,43 @@ function $$(selector: string): NodeListOf<Element> {
 }
 
 function morph(target: Element, html: string, options?: { keepElements?: string[] }): void {
-  // Handle beam-keep elements
   const keepSelectors = options?.keepElements || []
-  const keptElements = new Map<string, { el: Element; placeholder: Comment }>()
-
-  // Preserve elements marked with beam-keep
-  target.querySelectorAll('[beam-keep]').forEach((el) => {
-    const id = el.id || `beam-keep-${Math.random().toString(36).slice(2)}`
-    if (!el.id) el.id = id
-    const placeholder = document.createComment(`beam-keep:${id}`)
-    el.parentNode?.insertBefore(placeholder, el)
-    keptElements.set(id, { el, placeholder })
-    el.remove()
-  })
-
-  // Also handle explicitly specified keep selectors
-  keepSelectors.forEach((selector) => {
-    target.querySelectorAll(selector).forEach((el) => {
-      const id = el.id || `beam-keep-${Math.random().toString(36).slice(2)}`
-      if (!el.id) el.id = id
-      if (!keptElements.has(id)) {
-        const placeholder = document.createComment(`beam-keep:${id}`)
-        el.parentNode?.insertBefore(placeholder, el)
-        keptElements.set(id, { el, placeholder })
-        el.remove()
-      }
-    })
-  })
 
   // @ts-ignore - idiomorph types
-  Idiomorph.morph(target, html, { morphStyle: 'innerHTML' })
+  Idiomorph.morph(target, html, {
+    morphStyle: 'innerHTML',
+    callbacks: {
+      // Skip morphing elements marked with beam-keep
+      beforeNodeMorphed: (fromEl: Element, toEl: Element) => {
+        // Only handle Element nodes
+        if (!(fromEl instanceof Element)) return true
 
-  // Restore kept elements
-  keptElements.forEach(({ el, placeholder }, id) => {
-    // Find the placeholder or element with same ID in new content
-    const walker = document.createTreeWalker(target, NodeFilter.SHOW_COMMENT)
-    let node: Comment | null
-    while ((node = walker.nextNode() as Comment | null)) {
-      if (node.textContent === `beam-keep:${id}`) {
-        node.parentNode?.replaceChild(el, node)
-        return
+        // Check if element has beam-keep attribute
+        if (fromEl.hasAttribute('beam-keep')) {
+          // Don't morph this element - keep it as is
+          return false
+        }
+
+        // Check if element matches any keep selectors
+        for (const selector of keepSelectors) {
+          try {
+            if (fromEl.matches(selector)) {
+              return false
+            }
+          } catch {
+            // Invalid selector, ignore
+          }
+        }
+
+        return true
+      },
+      // Prevent removal of beam-keep elements
+      beforeNodeRemoved: (node: Node) => {
+        if (node instanceof Element && node.hasAttribute('beam-keep')) {
+          return false
+        }
+        return true
       }
-    }
-    // If no placeholder, look for element with same ID to replace
-    const newEl = target.querySelector(`#${id}`)
-    if (newEl) {
-      newEl.parentNode?.replaceChild(el, newEl)
     }
   })
 }
@@ -738,7 +729,7 @@ document.addEventListener('mousedown', async (e) => {
 document.addEventListener('click', async (e) => {
   const target = e.target as Element
   if (!target?.closest) return
-  const btn = target.closest('[beam-action]:not(form):not([beam-instant]):not([beam-load-more]):not([beam-infinite])') as HTMLElement | null
+  const btn = target.closest('[beam-action]:not(form):not([beam-instant]):not([beam-load-more]):not([beam-infinite]):not([beam-watch])') as HTMLElement | null
   if (!btn || btn.tagName === 'FORM') return
 
   // Skip if submit button inside a beam form
@@ -1931,6 +1922,161 @@ validationObserver.observe(document.body, { childList: true, subtree: true })
 document.querySelectorAll<HTMLElement>('[beam-validate]').forEach((el) => {
   el.setAttribute('beam-validation-observed', '')
   setupValidation(el)
+})
+
+// ============ INPUT WATCHERS ============
+// Usage: <input name="q" beam-action="search" beam-target="#results" beam-watch="input" beam-debounce="300">
+// Handles standalone inputs with beam-action + beam-watch (not using beam-validate)
+
+function isInputElement(el: Element): boolean {
+  return el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT'
+}
+
+function getInputValue(el: Element): string | boolean {
+  if (el.tagName === 'INPUT') {
+    const input = el as unknown as HTMLInputElement
+    if (input.type === 'checkbox') return input.checked
+    if (input.type === 'radio') return input.checked ? input.value : ''
+    return input.value
+  }
+  if (el.tagName === 'TEXTAREA') return (el as unknown as HTMLTextAreaElement).value
+  if (el.tagName === 'SELECT') return (el as unknown as HTMLSelectElement).value
+  return ''
+}
+
+function setupInputWatcher(el: Element): void {
+  if (!isInputElement(el)) return
+
+  const htmlEl = el as HTMLElement
+  const event = htmlEl.getAttribute('beam-watch') || 'change'
+  const debounce = parseInt(htmlEl.getAttribute('beam-debounce') || '300', 10)
+  const action = htmlEl.getAttribute('beam-action')
+  const targetSelector = htmlEl.getAttribute('beam-target')
+  const swapMode = htmlEl.getAttribute('beam-swap') || 'morph'
+
+  if (!action) return
+
+  let timeout: ReturnType<typeof setTimeout>
+
+  const handler = (e: Event) => {
+    clearTimeout(timeout)
+    const eventType = e.type // Capture which event triggered this
+    timeout = setTimeout(async () => {
+      const name = htmlEl.getAttribute('name')
+      const value = getInputValue(el)
+      const params = getParams(htmlEl)
+
+      // Add the input's value to params
+      if (name) {
+        params[name] = value
+      }
+
+      // Handle checkboxes specially - they might be part of a group
+      if (el.tagName === 'INPUT' && (el as HTMLInputElement).type === 'checkbox') {
+        // For checkbox groups, collect all checked values
+        const form = el.closest('form')
+        if (form && name) {
+          const checkboxes = form.querySelectorAll<HTMLInputElement>(`input[type="checkbox"][name="${name}"]`)
+          if (checkboxes.length > 1) {
+            const values = Array.from(checkboxes).filter(cb => cb.checked).map(cb => cb.value)
+            params[name] = values
+          }
+        }
+      }
+
+      // Only restore focus for "input" events, not "change" (blur) events
+      const shouldRestoreFocus = htmlEl.hasAttribute('beam-keep') && eventType === 'input'
+      const activeElement = document.activeElement
+
+      try {
+        const response = await api.call(action, params)
+
+        if (response.html && targetSelector) {
+          const targets = $$(targetSelector)
+          const htmlArray = Array.isArray(response.html) ? response.html : [response.html]
+
+          targets.forEach((target, i) => {
+            const html = htmlArray[i] || htmlArray[0]
+            if (html) {
+              if (swapMode === 'append') {
+                target.insertAdjacentHTML('beforeend', html)
+              } else if (swapMode === 'prepend') {
+                target.insertAdjacentHTML('afterbegin', html)
+              } else if (swapMode === 'replace') {
+                target.outerHTML = html
+              } else {
+                morph(target, html)
+              }
+            }
+          })
+        }
+
+        // Process OOB updates (beam-touch templates)
+        if (response.html) {
+          const htmlStr = Array.isArray(response.html) ? response.html.join('') : response.html
+          const { oob } = parseOobSwaps(htmlStr)
+          for (const { selector, content, swapMode: oobSwapMode } of oob) {
+            const oobTarget = $(selector)
+            if (oobTarget) {
+              if (oobSwapMode === 'morph' || !oobSwapMode) {
+                morph(oobTarget, content)
+              } else {
+                swap(oobTarget, content, oobSwapMode)
+              }
+            }
+          }
+        }
+
+        // Execute script if present
+        if (response.script) {
+          executeScript(response.script)
+        }
+
+        // Restore focus if beam-keep is set and this was an input event (not change/blur)
+        if (shouldRestoreFocus && activeElement instanceof HTMLElement) {
+          // Find the element again in case it was morphed
+          const newEl = document.querySelector(`[name="${name}"]`) as HTMLElement
+          if (newEl && newEl !== activeElement) {
+            newEl.focus()
+            // Restore cursor position for text inputs
+            if (newEl instanceof HTMLInputElement || newEl instanceof HTMLTextAreaElement) {
+              const cursorPos = (activeElement as HTMLInputElement | HTMLTextAreaElement).selectionStart
+              if (cursorPos !== null) {
+                newEl.setSelectionRange(cursorPos, cursorPos)
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.error('Input watcher error:', err)
+      }
+    }, debounce)
+  }
+
+  // Support multiple events (comma-separated)
+  const events = event.split(',').map(e => e.trim())
+  events.forEach(evt => {
+    htmlEl.addEventListener(evt, handler)
+  })
+}
+
+// Observe input watcher elements (current and future)
+const inputWatcherObserver = new MutationObserver(() => {
+  // Select inputs with beam-action + beam-watch but NOT beam-validate (which has its own handler)
+  document.querySelectorAll<HTMLElement>('[beam-action][beam-watch]:not([beam-validate]):not([beam-input-observed])').forEach((el) => {
+    if (!isInputElement(el)) return
+    el.setAttribute('beam-input-observed', '')
+    setupInputWatcher(el)
+  })
+})
+
+inputWatcherObserver.observe(document.body, { childList: true, subtree: true })
+
+// Initialize existing input watcher elements
+document.querySelectorAll<HTMLElement>('[beam-action][beam-watch]:not([beam-validate])').forEach((el) => {
+  if (!isInputElement(el)) return
+  el.setAttribute('beam-input-observed', '')
+  setupInputWatcher(el)
 })
 
 // ============ DEFERRED LOADING ============
