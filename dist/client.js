@@ -1840,9 +1840,6 @@ function setupInputWatcher(el) {
                 }
             }
         }
-        // Only restore focus for "input" events, not "change" (blur) events
-        const shouldRestoreFocus = htmlEl.hasAttribute('beam-keep') && eventType === 'input';
-        const activeElement = document.activeElement;
         // Add loading class if specified
         if (loadingClass)
             htmlEl.classList.add(loadingClass);
@@ -1890,19 +1887,6 @@ function setupInputWatcher(el) {
             // Execute script if present
             if (response.script) {
                 executeScript(response.script);
-            }
-            // Restore focus if beam-keep is set and this was an input event (not change/blur)
-            if (shouldRestoreFocus && activeElement instanceof HTMLElement) {
-                const newEl = document.querySelector(`[name="${name}"]`);
-                if (newEl && newEl !== activeElement) {
-                    newEl.focus();
-                    if (newEl instanceof HTMLInputElement || newEl instanceof HTMLTextAreaElement) {
-                        const cursorPos = activeElement.selectionStart;
-                        if (cursorPos !== null) {
-                            newEl.setSelectionRange(cursorPos, cursorPos);
-                        }
-                    }
-                }
             }
         }
         catch (err) {

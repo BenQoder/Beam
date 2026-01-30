@@ -410,7 +410,7 @@ return ctx.drawer(render(<MyDrawer />), { position: 'left', size: 'medium' })
 | `beam-watch-if` | Condition that must be true to trigger | `beam-watch-if="value.length >= 3"` |
 | `beam-cast` | Cast input value: `number`, `integer`, `boolean`, `trim` | `beam-cast="number"` |
 | `beam-loading-class` | Add class to input while request is in progress | `beam-loading-class="loading"` |
-| `beam-keep` | Preserve input focus and cursor position after morph | `beam-keep` |
+| `beam-keep` | Prevent element from being morphed during updates | `beam-keep` |
 
 ### Dirty Form Tracking
 
@@ -783,9 +783,9 @@ Add a class to the input while the request is in progress:
 </style>
 ```
 
-### Preserving Focus
+### Preventing Element Replacement
 
-Use `beam-keep` to preserve focus and cursor position after the response morphs the DOM:
+Use `beam-keep` to prevent an element from being morphed/replaced during updates. This keeps the element exactly as-is, preserving its state (focus, value, etc.):
 
 ```html
 <input
@@ -796,6 +796,8 @@ Use `beam-keep` to preserve focus and cursor position after the response morphs 
   beam-keep
 />
 ```
+
+Since the input isn't replaced, focus and cursor position are naturally preserved.
 
 ### Auto-Save on Blur
 
