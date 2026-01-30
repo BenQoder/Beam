@@ -125,6 +125,42 @@ export function greet(c) {
 <div id="greeting"></div>
 ```
 
+### Including Input Values
+
+Use `beam-include` to collect values from input elements and include them in action params. Elements are found by `beam-id`, `id`, or `name` (in that priority order):
+
+```html
+<!-- Define inputs with beam-id, id, or name -->
+<input beam-id="name" type="text" value="Ben"/>
+<input id="email" type="email" value="ben@example.com"/>
+<input name="age" type="number" value="30"/>
+<input beam-id="subscribe" type="checkbox" checked/>
+
+<!-- Button includes specific inputs -->
+<button
+  beam-action="saveUser"
+  beam-include="name,email,age,subscribe"
+  beam-data-source="form"
+  beam-target="#result"
+>Save</button>
+```
+
+The action receives merged params with proper type conversion:
+```json
+{
+  "source": "form",
+  "name": "Ben",
+  "email": "ben@example.com",
+  "age": 30,
+  "subscribe": true
+}
+```
+
+Type conversion:
+- `checkbox` → `boolean` (checked state)
+- `number`/`range` → `number`
+- All others → `string`
+
 ### Modals
 
 Two ways to open modals:
@@ -308,6 +344,7 @@ Async components are awaited automatically - no manual `Promise.resolve()` or he
 | `beam-action` | Action name to call | `beam-action="increment"` |
 | `beam-target` | CSS selector for where to render response | `beam-target="#counter"` |
 | `beam-data-*` | Pass data to the action | `beam-data-id="123"` |
+| `beam-include` | Include values from inputs by beam-id, id, or name | `beam-include="name,email,age"` |
 | `beam-swap` | How to swap content: `morph`, `append`, `prepend`, `replace` | `beam-swap="append"` |
 | `beam-confirm` | Show confirmation dialog before action | `beam-confirm="Delete this item?"` |
 | `beam-confirm-prompt` | Require typing text to confirm | `beam-confirm-prompt="Type DELETE\|DELETE"` |

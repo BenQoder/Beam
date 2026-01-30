@@ -49,6 +49,50 @@ export default createRoute(async (c) => {
         </div>
       </div>
 
+      {/* beam-include */}
+      <div class="demo-section">
+        <h2>2b. Include Inputs (beam-include)</h2>
+        <p class="text-muted">Collect input values by beam-id, id, or name and include in action params.</p>
+        <div class="form-group">
+          <label>Name (beam-id)</label>
+          <input beam-id="userName" type="text" value="Ben" />
+        </div>
+        <div class="form-group">
+          <label>Email (id)</label>
+          <input id="userEmail" type="email" value="ben@example.com" />
+        </div>
+        <div class="form-group">
+          <label>Age (name, number input)</label>
+          <input name="userAge" type="number" value="30" />
+        </div>
+        <div class="form-group">
+          <label>
+            <input beam-id="subscribe" type="checkbox" checked /> Subscribe to newsletter
+          </label>
+        </div>
+        <div id="include-result" class="demo-box">
+          Click a button to see the included params...
+        </div>
+        <div class="demo-actions">
+          <button
+            beam-action="testInclude"
+            beam-include="userName,userEmail,userAge,subscribe"
+            beam-data-source="form"
+            beam-target="#include-result"
+          >
+            Include All
+          </button>
+          <button
+            beam-action="testInclude"
+            beam-include="userName"
+            beam-data-action="single"
+            beam-target="#include-result"
+          >
+            Include Name Only
+          </button>
+        </div>
+      </div>
+
       {/* Per-Action Loading */}
       <div class="demo-section">
         <h2>3. Per-Action Loading Indicators</h2>

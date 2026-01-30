@@ -44,6 +44,22 @@ export async function greet(_ctx: BeamContext<Env>, { name, emoji }: Record<stri
   )
 }
 
+// ============ BEAM-INCLUDE TEST ============
+
+export async function testInclude(_ctx: BeamContext<Env>, params: Record<string, unknown>): Promise<string> {
+  return render(
+    <div class="demo-box success-box">
+      <strong>Received params:</strong>
+      <pre style="margin: 0.5rem 0; font-size: 0.875rem; overflow-x: auto;">
+        {JSON.stringify(params, null, 2)}
+      </pre>
+      <div style="font-size: 0.75rem; color: #666;">
+        Types: {Object.entries(params).map(([k, v]) => `${k}=${typeof v}`).join(', ')}
+      </div>
+    </div>
+  )
+}
+
 export async function slowAction(_ctx: BeamContext<Env>, { type }: Record<string, unknown>): Promise<string> {
   await delay(5000)
   return render(

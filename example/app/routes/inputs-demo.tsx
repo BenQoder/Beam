@@ -543,6 +543,106 @@ export default createRoute(async (c) => {
         </form>
       </div>
 
+      {/* ============ BEAM-INCLUDE ============ */}
+      <div class="demo-section">
+        <h2>18. Include Inputs (beam-include)</h2>
+        <p class="text-muted">
+          Collect values from inputs by <code>beam-id</code>, <code>id</code>, or <code>name</code> and include in action params.
+          <br/>
+          <strong>Expected:</strong> Button collects input values and sends them to the action. Types are auto-converted.
+        </p>
+        <div class="input-row">
+          <div class="input-group">
+            <label>Name (beam-id)</label>
+            <input beam-id="inc-name" type="text" value="Alice" />
+          </div>
+          <div class="input-group">
+            <label>Email (id)</label>
+            <input id="inc-email" type="email" value="alice@example.com" />
+          </div>
+        </div>
+        <div class="input-row">
+          <div class="input-group">
+            <label>Age (name, number)</label>
+            <input name="inc-age" type="number" value="28" />
+          </div>
+          <div class="input-group">
+            <label>Score (range)</label>
+            <input beam-id="inc-score" type="range" min="0" max="100" value="75" />
+          </div>
+        </div>
+        <div class="filter-group" style="margin: 1rem 0;">
+          <label>
+            <input beam-id="inc-newsletter" type="checkbox" checked />
+            Newsletter (checkbox)
+          </label>
+          <label>
+            <input beam-id="inc-premium" type="checkbox" />
+            Premium (checkbox)
+          </label>
+        </div>
+        <div id="include-result" class="results-box">
+          Click a button to see collected params...
+        </div>
+        <div style="display: flex; gap: 0.5rem; margin-top: 1rem;">
+          <button
+            beam-action="testInclude"
+            beam-include="inc-name,inc-email,inc-age,inc-score,inc-newsletter,inc-premium"
+            beam-data-action="all"
+            beam-target="#include-result"
+          >
+            Include All
+          </button>
+          <button
+            beam-action="testInclude"
+            beam-include="inc-name,inc-email"
+            beam-data-action="partial"
+            beam-target="#include-result"
+          >
+            Include Name + Email Only
+          </button>
+          <button
+            beam-action="testInclude"
+            beam-include="inc-score"
+            beam-data-min="0"
+            beam-data-max="100"
+            beam-target="#include-result"
+          >
+            Include Score (with data-*)
+          </button>
+        </div>
+      </div>
+
+      {/* ============ BEAM-KEEP TEST ============ */}
+      <div class="demo-section">
+        <h2>19. Beam-Keep Test (beam-keep)</h2>
+        <p class="text-muted">
+          Tests that <code>beam-keep</code> prevents an element from being morphed during updates.
+          <br/>
+          <strong>Expected:</strong> Only the element WITHOUT beam-keep should update. The beam-keep element stays unchanged.
+        </p>
+        <div
+          id="keep-test-container"
+          beam-poll
+          beam-interval="2000"
+          beam-action="testBeamKeep"
+        >
+          <div class="keep-test-grid">
+            <div class="keep-test-box">
+              <strong>With beam-keep (should NOT update):</strong>
+              <div id="keep-child" beam-keep class="keep-value">Initial value - should never change</div>
+            </div>
+            <div class="keep-test-box">
+              <strong>Without beam-keep (SHOULD update):</strong>
+              <div id="no-keep-child" class="keep-value">Initial value - will change on poll</div>
+            </div>
+          </div>
+        </div>
+        <p class="text-muted" style="margin-top: 1rem;">
+          Polling every 2 seconds. Watch the values above.
+        </p>
+      </div>
+
       {/* ============ STYLES ============ */}
       <style>{`
         .demo-section {
@@ -817,6 +917,33 @@ export default createRoute(async (c) => {
         }
         input:required:invalid {
           border-color: #ef4444;
+        }
+
+        /* Beam-keep test styles */
+        .keep-test-grid {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 1rem;
+          margin: 1rem 0;
+        }
+        .keep-test-box {
+          padding: 1rem;
+          background: #f8fafc;
+          border: 1px solid #e2e8f0;
+          border-radius: 6px;
+        }
+        .keep-test-box strong {
+          display: block;
+          margin-bottom: 0.5rem;
+          font-size: 0.875rem;
+        }
+        .keep-value {
+          padding: 0.75rem;
+          background: white;
+          border: 1px solid #d1d5db;
+          border-radius: 4px;
+          font-family: monospace;
+          font-size: 0.875rem;
         }
       `}</style>
     </Layout>

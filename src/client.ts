@@ -57,6 +57,10 @@ type PublicBeamServerStub = RpcStub<PublicBeamServer>
 let isOnline = navigator.onLine
 let rpcSession: BeamServerStub | null = null
 let connectingPromise: Promise<BeamServerStub> | null = null
+let wsConnected = false
+let reconnectAttempts = 0
+const MAX_RECONNECT_ATTEMPTS = 5
+const RECONNECT_DELAY_BASE = 1000
 
 // Client callback handler for server-initiated updates
 function handleServerEvent(event: string, data: unknown): void {
@@ -71,6 +75,47 @@ function handleServerEvent(event: string, data: unknown): void {
     const { selector } = data as { selector: string }
     // Could trigger a refresh of specific elements
     window.dispatchEvent(new CustomEvent('beam:refresh', { detail: { selector } }))
+  }
+}
+
+// Handle WebSocket disconnection
+function handleWsDisconnect(error: unknown): void {
+  console.warn('[beam] WebSocket disconnected:', error)
+  wsConnected = false
+  rpcSession = null
+  connectingPromise = null
+
+  // Dispatch event for app to handle
+  window.dispatchEvent(new CustomEvent('beam:disconnected', { detail: { error } }))
+  document.body.classList.add('beam-disconnected')
+
+  // Show any disconnect indicators
+  document.querySelectorAll<HTMLElement>('[beam-disconnected]').forEach((el) => {
+    el.style.display = ''
+  })
+
+  // Auto-reconnect with exponential backoff
+  if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+    const delay = RECONNECT_DELAY_BASE * Math.pow(2, reconnectAttempts)
+    reconnectAttempts++
+    console.log(`[beam] Reconnecting in ${delay}ms (${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`)
+
+    setTimeout(() => {
+      connect().then(() => {
+        console.log('[beam] Reconnected')
+        document.body.classList.remove('beam-disconnected')
+        document.querySelectorAll<HTMLElement>('[beam-disconnected]').forEach((el) => {
+          el.style.display = 'none'
+        })
+        window.dispatchEvent(new CustomEvent('beam:reconnected'))
+      }).catch((err) => {
+        console.error('[beam] Reconnect failed:', err)
+      })
+    }, delay)
+  } else {
+    console.error('[beam] Max reconnect attempts reached')
+    showToast('Connection lost. Please refresh the page.', 'error')
+    window.dispatchEvent(new CustomEvent('beam:reconnect-failed'))
   }
 }
 
@@ -109,8 +154,17 @@ function connect(): Promise<BeamServerStub> {
         // Server may not support callbacks, that's ok
       })
 
+      // Handle connection broken (WebSocket disconnect)
+      // @ts-ignore - onRpcBroken is available on capnweb stubs
+      if (typeof authenticatedSession.onRpcBroken === 'function') {
+        authenticatedSession.onRpcBroken(handleWsDisconnect)
+      }
+
       rpcSession = authenticatedSession
       connectingPromise = null
+      wsConnected = true
+      reconnectAttempts = 0
+      window.dispatchEvent(new CustomEvent('beam:connected'))
       return authenticatedSession
     } catch (err) {
       connectingPromise = null
@@ -225,7 +279,40 @@ function getParams(el: HTMLElement): Record<string, unknown> {
     }
   }
 
+  // Handle beam-include: collect values from referenced inputs
+  const includeAttr = el.getAttribute('beam-include')
+  if (includeAttr) {
+    const ids = includeAttr.split(',').map(id => id.trim())
+    for (const id of ids) {
+      // Find element by beam-id, id, or name (priority order)
+      const inputEl = document.querySelector(`[beam-id="${id}"]`) ||
+                      document.getElementById(id) ||
+                      document.querySelector(`[name="${id}"]`)
+
+      if (inputEl) {
+        params[id] = getIncludedInputValue(inputEl)
+      }
+    }
+  }
+
   return params
+}
+
+// Get value from an included input element with proper type conversion
+function getIncludedInputValue(el: Element): unknown {
+  if (el.tagName === 'INPUT') {
+    const input = el as unknown as HTMLInputElement
+    if (input.type === 'checkbox') return input.checked
+    if (input.type === 'radio') return input.checked ? input.value : ''
+    if (input.type === 'number' || input.type === 'range') {
+      const num = parseFloat(input.value)
+      return isNaN(num) ? 0 : num
+    }
+    return input.value
+  }
+  if (el.tagName === 'TEXTAREA') return (el as unknown as HTMLTextAreaElement).value
+  if (el.tagName === 'SELECT') return (el as unknown as HTMLSelectElement).value
+  return ''
 }
 
 // ============ CONFIRMATION DIALOGS ============
@@ -2854,6 +2941,15 @@ function clearScrollState(actionOrAll?: string | boolean): void {
 }
 
 // Base utilities that are always available on window.beam
+function checkWsConnected(): boolean {
+  return wsConnected
+}
+
+function manualReconnect(): Promise<BeamServerStub> {
+  reconnectAttempts = 0
+  return connect()
+}
+
 const beamUtils = {
   showToast,
   closeModal,
@@ -2861,6 +2957,8 @@ const beamUtils = {
   clearCache,
   clearScrollState,
   isOnline: () => isOnline,
+  isConnected: checkWsConnected,
+  reconnect: manualReconnect,
   getSession: api.getSession,
 }
 

@@ -31,6 +31,8 @@ interface CallOptions {
     swap?: string;
 }
 declare function clearScrollState(actionOrAll?: string | boolean): void;
+declare function checkWsConnected(): boolean;
+declare function manualReconnect(): Promise<BeamServerStub>;
 declare const beamUtils: {
     showToast: typeof showToast;
     closeModal: typeof closeModal;
@@ -38,6 +40,8 @@ declare const beamUtils: {
     clearCache: typeof clearCache;
     clearScrollState: typeof clearScrollState;
     isOnline: () => boolean;
+    isConnected: typeof checkWsConnected;
+    reconnect: typeof manualReconnect;
     getSession: () => Promise<BeamServerStub>;
 };
 type ActionCaller = (data?: Record<string, unknown>, options?: string | CallOptions) => Promise<ActionResponse>;

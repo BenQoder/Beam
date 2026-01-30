@@ -412,3 +412,43 @@ export async function updatePrice(_ctx: BeamContext<Env>, { price }: Record<stri
 
   return render(<span>${priceValue}</span>)
 }
+
+// ============ BEAM-INCLUDE TEST ============
+
+export async function testInclude(_ctx: BeamContext<Env>, params: Record<string, unknown>): Promise<string> {
+  return render(
+    <div class="results-box" style="background: #dcfce7;">
+      <strong>Received params:</strong>
+      <pre style="margin: 0.5rem 0; font-size: 0.875rem; overflow-x: auto; white-space: pre-wrap;">
+        {JSON.stringify(params, null, 2)}
+      </pre>
+      <div style="font-size: 0.75rem; color: #666; margin-top: 0.5rem;">
+        <strong>Types:</strong> {Object.entries(params).map(([k, v]) => `${k}=${typeof v}`).join(', ')}
+      </div>
+    </div>
+  )
+}
+
+// ============ BEAM-KEEP TEST ============
+
+let keepTestCount = 0
+export async function testBeamKeep(_ctx: BeamContext<Env>, _params: Record<string, unknown>): Promise<string> {
+  keepTestCount++
+  const time = new Date().toLocaleTimeString()
+  return render(
+    <div class="keep-test-grid">
+      <div class="keep-test-box">
+        <strong>With beam-keep (should NOT update):</strong>
+        <div id="keep-child" beam-keep class="keep-value">
+          Poll #{keepTestCount} at {time} - THIS SHOULD NOT APPEAR
+        </div>
+      </div>
+      <div class="keep-test-box">
+        <strong>Without beam-keep (SHOULD update):</strong>
+        <div id="no-keep-child" class="keep-value">
+          Poll #{keepTestCount} at {time} ✓
+        </div>
+      </div>
+    </div>
+  )
+}
