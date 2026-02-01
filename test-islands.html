@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Beam Islands Test</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 2rem;
+    }
+    .island-container {
+      border: 2px solid #e5e7eb;
+      border-radius: 8px;
+      padding: 1.5rem;
+      margin: 1rem 0;
+    }
+    button {
+      padding: 0.5rem 1rem;
+      border-radius: 4px;
+      border: none;
+      cursor: pointer;
+      font-size: 1rem;
+    }
+  </style>
+</head>
+<body>
+  <h1>Beam Islands Test</h1>
+  
+  <div class="island-container">
+    <h2>Counter Island (initial=0, step=1)</h2>
+    <div beam-island="Counter" data-initial="0" data-step="1" data-label="Count"></div>
+  </div>
+
+  <div class="island-container">
+    <h2>Counter Island (initial=10, step=5)</h2>
+    <div beam-island="Counter" data-initial="10" data-step="5" data-label="Custom"></div>
+  </div>
+
+  <div class="island-container">
+    <h2>Quantity Selector (min=1, max=99)</h2>
+    <div beam-island="QuantitySelector" data-min="1" data-max="99" data-initial="1"></div>
+  </div>
+
+  <div class="island-container">
+    <h2>Quantity Selector (limited stock, max=5)</h2>
+    <div beam-island="QuantitySelector" data-min="1" data-max="5" data-initial="1" data-product-id="test-123"></div>
+  </div>
+
+  <script type="module">
+    // This test file simulates what happens in the real app
+    // In production, islands are imported via glob pattern in client.ts
+    
+    import { defineIsland, hydrateIslands } from '../dist/islands.js'
+
+    // Define Counter island
+    defineIsland('Counter', ({ initial = 0, step = 1, label = 'Count' }) => {
+      const container = document.createElement('div')
+      container.className = 'inline-flex items-center gap-3 p-4 bg-white border rounded-lg shadow-sm'
+
+      if (label) {
+        const labelEl = document.createElement('span')
+        labelEl.className = 'text-sm font-medium text-gray-700'
+        labelEl.textContent = `${label}:`
+        container.appendChild(labelEl)
+      }
+
+      const minusBtn = document.createElement('button')
+      minusBtn.textContent = '-'
+      minusBtn.style.backgroundColor = '#ef4444'
+      minusBtn.style.color = 'white'
+
+      const countDisplay = document.createElement('span')
+      countDisplay.style.minWidth = '3rem'
+      countDisplay.style.textAlign = 'center'
+      countDisplay.style.fontWeight = 'bold'
+      countDisplay.textContent = String(initial)
+
+      const plusBtn = document.createElement('button')
+      plusBtn.textContent = '+'
+      plusBtn.style.backgroundColor = '#22c55e'
+      plusBtn.style.color = 'white'
+
+      let count = initial
+
+      minusBtn.onclick = () => {
+        count -= step
+        countDisplay.textContent = String(count)
+      }
+
+      plusBtn.onclick = () => {
+        count += step
+        countDisplay.textContent = String(count)
+      }
+
+      container.appendChild(minusBtn)
+      container.appendChild(countDisplay)
+      container.appendChild(plusBtn)
+
+      return container
+    })
+
+    // Define QuantitySelector island
+    defineIsland('QuantitySelector', ({ min = 1, max = 99, initial = 1, productId = '' }) => {
+      const container = document.createElement('div')
+      container.className = 'flex items-center gap-2'
+
+      const minusBtn = document.createElement('button')
+      minusBtn.textContent = '-'
+      minusBtn.style.backgroundColor = '#9ca3af'
+      minusBtn.style.color = 'white'
+
+      const qtyDisplay = document.createElement('span')
+      qtyDisplay.style.minWidth = '3rem'
+      qtyDisplay.style.textAlign = 'center'
+      qtyDisplay.textContent = String(initial)
+
+      const plusBtn = document.createElement('button')
+      plusBtn.textContent = '+'
+      plusBtn.style.backgroundColor = '#9ca3af'
+      plusBtn.style.color = 'white'
+
+      const hiddenInput = document.createElement('input')
+      hiddenInput.type = 'hidden'
+      hiddenInput.name = 'quantity'
+      hiddenInput.value = String(initial)
+
+      let currentQty = initial
+
+      const updateQuantity = (newQty) => {
+        currentQty = Math.max(min, Math.min(max, newQty))
+        qtyDisplay.textContent = String(currentQty)
+        hiddenInput.value = String(currentQty)
+      }
+
+      minusBtn.onclick = () => updateQuantity(currentQty - 1)
+      plusBtn.onclick = () => updateQuantity(currentQty + 1)
+
+      container.appendChild(minusBtn)
+      container.appendChild(qtyDisplay)
+      container.appendChild(plusBtn)
+      container.appendChild(hiddenInput)
+
+      if (productId) {
+        container.setAttribute('data-product-id', productId)
+      }
+
+      return container
+    })
+
+    // Manually trigger hydration (in real app, this happens automatically)
+    hydrateIslands()
+
+    console.log('Islands hydrated successfully!')
+  </script>
+</body>
+</html>
