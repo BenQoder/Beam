@@ -731,6 +731,208 @@ export default createRoute(async (c) => {
           display: block !important;
         }
 
+        /* ============ REACTIVE STATE STYLES ============ */
+
+        .reactive-demo {
+          background: #f9fafb;
+          border: 1px solid #e5e5e5;
+          border-radius: 6px;
+          padding: 1rem;
+          margin: 0.5rem 0;
+        }
+
+        /* Accordion */
+        .accordion-trigger {
+          width: 100%;
+          text-align: left;
+          padding: 0.75rem 1rem;
+          background: #f3f4f6;
+          border: 1px solid #d1d5db;
+          border-radius: 4px;
+          cursor: pointer;
+          font-size: 1rem;
+        }
+        .accordion-trigger:hover {
+          background: #e5e7eb;
+        }
+        .accordion-content {
+          padding: 1rem;
+          background: white;
+          border: 1px solid #d1d5db;
+          border-top: none;
+          border-radius: 0 0 4px 4px;
+        }
+
+        /* Tabs */
+        .tabs-nav {
+          display: flex;
+          gap: 0;
+          border-bottom: 2px solid #e5e5e5;
+        }
+        .tabs-nav button {
+          padding: 0.75rem 1.25rem;
+          background: transparent;
+          border: none;
+          border-bottom: 2px solid transparent;
+          margin-bottom: -2px;
+          cursor: pointer;
+          font-size: 0.95rem;
+          color: #6b7280;
+          transition: all 0.15s;
+        }
+        .tabs-nav button:hover {
+          color: #374151;
+          background: #f9fafb;
+        }
+        .tabs-nav button.active {
+          color: #3b82f6;
+          border-bottom-color: #3b82f6;
+          font-weight: 500;
+        }
+        .tabs-content {
+          padding: 1rem 0;
+        }
+        .tab-panel {
+          background: white;
+          padding: 1rem;
+          border: 1px solid #e5e5e5;
+          border-radius: 4px;
+        }
+
+        /* Carousel */
+        .carousel-controls {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          margin-bottom: 1rem;
+        }
+        .carousel-btn {
+          padding: 0.5rem 1rem;
+          background: #3b82f6;
+          color: white;
+          border: none;
+          border-radius: 4px;
+          cursor: pointer;
+        }
+        .carousel-btn:hover {
+          background: #2563eb;
+        }
+        .carousel-counter {
+          font-weight: 500;
+        }
+        .carousel-slide {
+          min-height: 100px;
+        }
+        .slide {
+          background: white;
+          padding: 2rem;
+          text-align: center;
+          font-size: 1.25rem;
+          border: 1px solid #e5e5e5;
+          border-radius: 6px;
+        }
+
+        /* Counter */
+        .counter-controls {
+          display: flex;
+          align-items: center;
+          gap: 1rem;
+          justify-content: center;
+        }
+        .counter-btn {
+          width: 40px;
+          height: 40px;
+          font-size: 1.25rem;
+          background: #3b82f6;
+          color: white;
+          border: none;
+          border-radius: 50%;
+          cursor: pointer;
+        }
+        .counter-btn:disabled {
+          background: #d1d5db;
+          cursor: not-allowed;
+        }
+        .counter-btn:not(:disabled):hover {
+          background: #2563eb;
+        }
+        .counter-value {
+          font-size: 2rem;
+          font-weight: 700;
+          min-width: 3rem;
+          text-align: center;
+        }
+
+        /* Reactive Dropdown */
+        .dropdown-btn {
+          padding: 0.75rem 1rem;
+          background: #f3f4f6;
+          border: 1px solid #d1d5db;
+          border-radius: 4px;
+          cursor: pointer;
+        }
+        .dropdown-btn:hover {
+          background: #e5e7eb;
+        }
+        .reactive-demo .dropdown {
+          position: absolute;
+          background: white;
+          border: 1px solid #e5e5e5;
+          border-radius: 6px;
+          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+          margin-top: 4px;
+          z-index: 10;
+        }
+        .reactive-demo .dropdown a {
+          display: block;
+          padding: 0.6rem 1rem;
+          color: #333;
+          text-decoration: none;
+        }
+        .reactive-demo .dropdown a:hover {
+          background: #f5f5f5;
+        }
+
+        /* Named State Demo */
+        .named-state-demo {
+          display: flex;
+          flex-direction: column;
+          gap: 1rem;
+        }
+        .cart-display {
+          background: #3b82f6;
+          color: white;
+          padding: 1rem;
+          border-radius: 6px;
+          font-size: 1.1rem;
+          font-weight: 500;
+        }
+        .product-list {
+          display: flex;
+          flex-direction: column;
+          gap: 0.5rem;
+        }
+        .product-item {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          padding: 0.75rem;
+          background: white;
+          border: 1px solid #e5e5e5;
+          border-radius: 4px;
+        }
+        .product-item button {
+          padding: 0.4rem 0.75rem;
+          background: #10b981;
+          color: white;
+          border: none;
+          border-radius: 4px;
+          cursor: pointer;
+        }
+        .product-item button:hover {
+          background: #059669;
+        }
+
         /* Toggle demo content */
         .toggle-content {
           background: #f0f9ff;
@@ -1098,6 +1300,108 @@ export default createRoute(async (c) => {
         <button beam-class-toggle="highlighted" beam-class-target="#highlight-target">Toggle Highlight</button>
         <div id="highlight-target" class="highlight-box">
           This box will get the "highlighted" class toggled when you click the button.
+        </div>
+      </div>
+
+      {/* Reactive State System */}
+      <div class="demo-section">
+        <h2>18b. Reactive State (beam-state) - No Server</h2>
+        <p class="text-muted">Fine-grained reactivity for UI components like tabs, accordions, carousels.</p>
+
+        {/* Accordion */}
+        <h4>Accordion</h4>
+        <div beam-state='{"open": false}' class="reactive-demo">
+          <button beam-click="open = !open" class="accordion-trigger">
+            <span beam-show="!open">▶</span>
+            <span beam-show="open">▼</span>
+            Toggle Accordion
+          </button>
+          <div beam-show="open" class="accordion-content">
+            <p>This content is controlled by reactive state.</p>
+            <p>No server round-trip needed!</p>
+          </div>
+        </div>
+
+        {/* Tabs */}
+        <h4 style="margin-top: 1.5rem;">Tabs</h4>
+        <div beam-state='{"tab": 0}' class="reactive-demo">
+          <div class="tabs-nav">
+            <button beam-click="tab = 0" beam-class="{'{ active: tab === 0 }'}">Tab 1</button>
+            <button beam-click="tab = 1" beam-class="{'{ active: tab === 1 }'}">Tab 2</button>
+            <button beam-click="tab = 2" beam-class="{'{ active: tab === 2 }'}">Tab 3</button>
+          </div>
+          <div class="tabs-content">
+            <div beam-show="tab === 0" class="tab-panel">Content for Tab 1. This is the first panel.</div>
+            <div beam-show="tab === 1" class="tab-panel">Content for Tab 2. Different content here!</div>
+            <div beam-show="tab === 2" class="tab-panel">Content for Tab 3. The final panel.</div>
+          </div>
+        </div>
+
+        {/* Carousel/Slider */}
+        <h4 style="margin-top: 1.5rem;">Carousel / Slider</h4>
+        <div beam-state='{"slide": 0, "total": 5}' class="reactive-demo">
+          <div class="carousel-controls">
+            <button beam-click="slide = (slide - 1 + total) % total" class="carousel-btn">← Prev</button>
+            <span class="carousel-counter">
+              Slide <span beam-text="slide + 1"></span> of <span beam-text="total"></span>
+            </span>
+            <button beam-click="slide = (slide + 1) % total" class="carousel-btn">Next →</button>
+          </div>
+          <div class="carousel-slide">
+            <div beam-show="slide === 0" class="slide">🏠 Slide 1: Welcome!</div>
+            <div beam-show="slide === 1" class="slide">📦 Slide 2: Products</div>
+            <div beam-show="slide === 2" class="slide">💡 Slide 3: Features</div>
+            <div beam-show="slide === 3" class="slide">📞 Slide 4: Contact</div>
+            <div beam-show="slide === 4" class="slide">✅ Slide 5: Done!</div>
+          </div>
+        </div>
+
+        {/* Counter with disabled state */}
+        <h4 style="margin-top: 1.5rem;">Counter with Attribute Binding</h4>
+        <div beam-state='{"count": 0}' class="reactive-demo">
+          <div class="counter-controls">
+            <button beam-click="count--" beam-attr-disabled="count === 0" class="counter-btn">-</button>
+            <span class="counter-value" beam-text="count"></span>
+            <button beam-click="count++" beam-attr-disabled="count >= 10" class="counter-btn">+</button>
+          </div>
+          <p class="text-muted">- is disabled at 0, + is disabled at 10</p>
+        </div>
+
+        {/* Dropdown */}
+        <h4 style="margin-top: 1.5rem;">Dropdown (Reactive)</h4>
+        <div beam-state='{"open": false}' class="reactive-demo">
+          <button beam-click="open = !open" class="dropdown-btn">
+            Menu <span beam-show="!open">▼</span><span beam-show="open">▲</span>
+          </button>
+          <div beam-show="open" beam-class="{'{ dropdown: true }'}">
+            <a href="#profile">Profile</a>
+            <a href="#settings">Settings</a>
+            <a href="#logout">Logout</a>
+          </div>
+        </div>
+
+        {/* Named State (Cross-Component) */}
+        <h4 style="margin-top: 1.5rem;">Named State (Cross-Component)</h4>
+        <p class="text-muted">State can be shared across components using <code>beam-id</code> and <code>beam-state-ref</code>.</p>
+        <div class="named-state-demo">
+          <div beam-state='{"cartCount": 0}' beam-id="demo-cart" class="cart-display">
+            🛒 Cart: <span beam-text="cartCount"></span> items
+          </div>
+          <div class="product-list">
+            <div class="product-item">
+              <span>Widget</span>
+              <button beam-state-ref="demo-cart" beam-click="cartCount++">Add to Cart</button>
+            </div>
+            <div class="product-item">
+              <span>Gadget</span>
+              <button beam-state-ref="demo-cart" beam-click="cartCount++">Add to Cart</button>
+            </div>
+            <div class="product-item">
+              <span>Gizmo</span>
+              <button beam-state-ref="demo-cart" beam-click="cartCount++">Add to Cart</button>
+            </div>
+          </div>
+          <button beam-state-ref="demo-cart" beam-click="cartCount = 0" style="margin-top: 0.5rem;">Clear Cart</button>
         </div>
       </div>
 

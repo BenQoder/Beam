@@ -1,5 +1,6 @@
 import { Idiomorph } from 'idiomorph';
 import { newWebSocketRpcSession } from 'capnweb';
+import { beamReactivity } from './reactivity';
 // ============ BEAM - capnweb RPC Client ============
 //
 // Uses capnweb for:
@@ -2563,6 +2564,8 @@ const beamUtils = {
     isConnected: checkWsConnected,
     reconnect: manualReconnect,
     getSession: api.getSession,
+    // Reactive state API (from reactivity.ts)
+    ...beamReactivity,
 };
 // Create a Proxy that handles both utility methods and dynamic action calls
 window.beam = new Proxy(beamUtils, {

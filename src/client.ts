@@ -1,5 +1,6 @@
 import { Idiomorph } from 'idiomorph'
 import { newWebSocketRpcSession, type RpcStub } from 'capnweb'
+import { beamReactivity } from './reactivity'
 
 // ============ BEAM - capnweb RPC Client ============
 //
@@ -2939,6 +2940,8 @@ const beamUtils = {
   isConnected: checkWsConnected,
   reconnect: manualReconnect,
   getSession: api.getSession,
+  // Reactive state API (from reactivity.ts)
+  ...beamReactivity,
 }
 
 // Type for the dynamic action caller

@@ -32,6 +32,7 @@ A lightweight, declarative UI framework for building interactive web application
 - **Dropdowns** - Click-outside closing, Escape key support (no server)
 - **Collapse** - Expand/collapse with text swap (no server)
 - **Class Toggle** - Toggle CSS classes on elements (no server)
+- **Reactive State** - Fine-grained reactivity for UI components (tabs, accordions, carousels)
 - **Multi-Render** - Update multiple targets in a single action response
 - **Async Components** - Full support for HonoX async components in `ctx.render()`
 
@@ -562,6 +563,22 @@ These attributes handle UI state entirely on the client, without making server r
 |-----------|-------------|---------|
 | `beam-class-toggle` | CSS class to toggle | `beam-class-toggle="active"` |
 | `beam-class-target` | Target element (defaults to self) | `beam-class-target="#sidebar"` |
+
+#### Reactive State
+
+Fine-grained reactivity for UI components (carousels, tabs, accordions) without server round-trips.
+
+| Attribute | Description | Example |
+|-----------|-------------|---------|
+| `beam-state` | Declare reactive state scope (JSON) | `beam-state='{"open": false}'` |
+| `beam-id` | Name the state for cross-component access | `beam-id="cart"` |
+| `beam-state-ref` | Reference a named state from elsewhere | `beam-state-ref="cart"` |
+| `beam-text` | Bind text content to expression | `beam-text="count"` |
+| `beam-attr-*` | Bind any attribute to expression | `beam-attr-disabled="count === 0"` |
+| `beam-show` | Show/hide element based on expression | `beam-show="open"` |
+| `beam-class` | Toggle classes based on object | `beam-class="{ active: isActive }"` |
+| `beam-click` | Click handler that mutates state | `beam-click="open = !open"` |
+| `beam-model` | Two-way binding for inputs | `beam-model="firstName"` |
 
 ---
 
@@ -1385,6 +1402,112 @@ Toggle CSS classes on elements:
 <button beam-class-toggle="pressed">
   Toggle Me
 </button>
+```
+
+### Reactive State
+
+Fine-grained reactivity for UI components like carousels, tabs, accordions, and modals. All declarative via HTML attributes.
+
+```html
+<!-- Accordion -->
+<div beam-state='{"open": false}'>
+  <button beam-click="open = !open">Toggle</button>
+  <div beam-show="open">
+    <p>Expanded content here...</p>
+  </div>
+</div>
+
+<!-- Tabs -->
+<div beam-state='{"tab": 0}'>
+  <button beam-click="tab = 0" beam-class="{ active: tab === 0 }">Tab 1</button>
+  <button beam-click="tab = 1" beam-class="{ active: tab === 1 }">Tab 2</button>
+  <button beam-click="tab = 2" beam-class="{ active: tab === 2 }">Tab 3</button>
+
+  <div beam-show="tab === 0">Content for Tab 1</div>
+  <div beam-show="tab === 1">Content for Tab 2</div>
+  <div beam-show="tab === 2">Content for Tab 3</div>
+</div>
+
+<!-- Carousel -->
+<div beam-state='{"slide": 0, "total": 5}'>
+  <button beam-click="slide = (slide - 1 + total) % total">← Prev</button>
+  <span beam-text="slide + 1"></span> / <span beam-text="total"></span>
+  <button beam-click="slide = (slide + 1) % total">Next →</button>
+</div>
+
+<!-- Dropdown with dynamic class -->
+<div beam-state='{"open": false}'>
+  <button beam-click="open = !open">Menu</button>
+  <div beam-show="open" beam-class="{ dropdown: true }">
+    <a href="/profile">Profile</a>
+    <a href="/settings">Settings</a>
+  </div>
+</div>
+
+<!-- Counter with attribute binding -->
+<div beam-state='{"count": 0}'>
+  <button beam-click="count--" beam-attr-disabled="count === 0">-</button>
+  <span beam-text="count"></span>
+  <button beam-click="count++">+</button>
+</div>
+```
+
+#### Named State (Cross-Component)
+
+Share state between different parts of the page:
+
+```html
+<!-- Cart state defined once -->
+<div beam-state='{"count": 0}' beam-id="cart">
+  Cart: <span beam-text="count"></span> items
+</div>
+
+<!-- Add to cart button elsewhere -->
+<button beam-state-ref="cart" beam-click="count++">
+  Add to Cart
+</button>
+```
+
+#### JavaScript API
+
+Access reactive state programmatically:
+
+```javascript
+// Get named state
+const cartState = beam.getState('cart')
+cartState.count++  // Triggers reactive updates
+
+// Get state by element
+const el = document.querySelector('[beam-state]')
+const state = beam.getState(el)
+
+// Batch multiple updates
+beam.batch(() => {
+  state.a = 1
+  state.b = 2
+})
+```
+
+#### Standalone Usage (No Beam Server)
+
+The reactivity system can be used independently without the Beam WebSocket server:
+
+```typescript
+// Just import reactivity - no server connection needed
+import '@benqoder/beam/reactivity'
+```
+
+This is useful for:
+- Static sites that don't need server communication
+- Adding reactivity to existing projects
+- Using with other frameworks
+
+The API is exposed on `window.beamReactivity`:
+
+```javascript
+// When using standalone
+const state = beamReactivity.getState('my-state')
+state.count++
 ```
 
 ### CSS for Transitions

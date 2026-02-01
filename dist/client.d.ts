@@ -34,6 +34,9 @@ declare function clearScrollState(actionOrAll?: string | boolean): void;
 declare function checkWsConnected(): boolean;
 declare function manualReconnect(): Promise<BeamServerStub>;
 declare const beamUtils: {
+    getState: (elOrId: Element | string) => object | undefined;
+    batch: (fn: () => void) => void;
+    init: () => void;
     showToast: typeof showToast;
     closeModal: typeof closeModal;
     closeDrawer: typeof closeDrawer;
