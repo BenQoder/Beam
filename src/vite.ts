@@ -89,9 +89,6 @@ export function beamPlugin(options: BeamPluginOptions = {}): Plugin {
         const authImport = auth ? `import auth from '${auth}'` : ''
         const authConfig = auth ? ', auth' : ''
 
-        // Generate islands import if configured
-        const islandsImport = islands ? `import '${islands}'` : ''
-
         // Generate session config code
         let sessionConfig = ''
         let storageImport = ''
@@ -117,11 +114,11 @@ export function beamPlugin(options: BeamPluginOptions = {}): Plugin {
         }
 
         // Generate plain JavaScript - TypeScript types are handled via virtual-beam.d.ts
+        // Note: Islands are imported separately on the client side via import.meta.glob
         return `
 import { createBeam, collectActions } from '@benqoder/beam'
 ${authImport}
 ${storageImport}
-${islandsImport}
 
 const actions = collectActions(import.meta.glob('${actions}', { eager: true }))
 
