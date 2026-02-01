@@ -3,3 +3,5 @@ export { createBeam, KVSession, CookieSession, beamTokenMeta } from './createBea
 export { render } from './render';
 // Auto-discovery utilities
 export { collectActions, } from './collect';
+// Islands functionality
+export { defineIsland, registerIsland, hydrateIslands, scanIslands, getIslandRegistry, } from './islands';

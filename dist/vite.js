@@ -12,6 +12,7 @@ const RESOLVED_VIRTUAL_MODULE_ID = '\0' + VIRTUAL_MODULE_ID;
  *   plugins: [
  *     beamPlugin({
  *       actions: '/app/actions/*.tsx',
+ *       islands: '/app/islands/*.tsx',
  *     })
  *   ]
  * })
@@ -23,7 +24,7 @@ const RESOLVED_VIRTUAL_MODULE_ID = '\0' + VIRTUAL_MODULE_ID;
  * ```
  */
 export function beamPlugin(options = {}) {
-    const { actions = '/app/actions/*.tsx', auth, session, } = options;
+    const { actions = '/app/actions/*.tsx', islands, auth, session, } = options;
     return {
         name: 'beam-plugin',
         resolveId(id) {
@@ -35,6 +36,8 @@ export function beamPlugin(options = {}) {
             if (id === RESOLVED_VIRTUAL_MODULE_ID) {
                 const authImport = auth ? `import auth from '${auth}'` : '';
                 const authConfig = auth ? ', auth' : '';
+                // Generate islands import if configured
+                const islandsImport = islands ? `import '${islands}'` : '';
                 // Generate session config code
                 let sessionConfig = '';
                 let storageImport = '';
@@ -61,6 +64,7 @@ export function beamPlugin(options = {}) {
 import { createBeam, collectActions } from '@benqoder/beam'
 ${authImport}
 ${storageImport}
+${islandsImport}
 
 const actions = collectActions(import.meta.glob('${actions}', { eager: true }))
 

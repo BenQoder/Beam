@@ -7,6 +7,12 @@ export interface BeamPluginOptions {
    */
   actions?: string
   /**
+   * Glob pattern for island components (must start with '/' for virtual modules)
+   * @default '/app/islands/*.tsx'
+   * @example '/app/islands/\*\*\/*.tsx'
+   */
+  islands?: string
+  /**
    * Path to auth resolver module (must export default AuthResolver function)
    * @example '/app/auth.ts'
    */
@@ -50,6 +56,7 @@ const RESOLVED_VIRTUAL_MODULE_ID = '\0' + VIRTUAL_MODULE_ID
  *   plugins: [
  *     beamPlugin({
  *       actions: '/app/actions/*.tsx',
+ *       islands: '/app/islands/*.tsx',
  *     })
  *   ]
  * })
@@ -63,6 +70,7 @@ const RESOLVED_VIRTUAL_MODULE_ID = '\0' + VIRTUAL_MODULE_ID
 export function beamPlugin(options: BeamPluginOptions = {}): Plugin {
   const {
     actions = '/app/actions/*.tsx',
+    islands,
     auth,
     session,
   } = options
@@ -80,6 +88,9 @@ export function beamPlugin(options: BeamPluginOptions = {}): Plugin {
       if (id === RESOLVED_VIRTUAL_MODULE_ID) {
         const authImport = auth ? `import auth from '${auth}'` : ''
         const authConfig = auth ? ', auth' : ''
+
+        // Generate islands import if configured
+        const islandsImport = islands ? `import '${islands}'` : ''
 
         // Generate session config code
         let sessionConfig = ''
@@ -110,6 +121,7 @@ export function beamPlugin(options: BeamPluginOptions = {}): Plugin {
 import { createBeam, collectActions } from '@benqoder/beam'
 ${authImport}
 ${storageImport}
+${islandsImport}
 
 const actions = collectActions(import.meta.glob('${actions}', { eager: true }))
 

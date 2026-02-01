@@ -192,6 +192,21 @@ export interface BeamVariables<TEnv = object> {
     beamAuthToken: string;
 }
 /**
+ * Island component props - only primitives allowed for security
+ */
+export type IslandProps = Record<string, string | number | boolean>;
+/**
+ * Island component function
+ */
+export type IslandComponent<TProps extends IslandProps = IslandProps> = (props: TProps) => any;
+/**
+ * Island definition
+ */
+export interface IslandDefinition {
+    name: string;
+    component: IslandComponent;
+}
+/**
  * The Beam instance returned by createBeam
  */
 export interface BeamInstance<TEnv extends object = object> {

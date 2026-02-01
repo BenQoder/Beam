@@ -8,6 +8,15 @@ export {
   collectActions,
 } from './collect'
 
+// Islands functionality
+export {
+  defineIsland,
+  registerIsland,
+  hydrateIslands,
+  scanIslands,
+  getIslandRegistry,
+} from './islands'
+
 // Type exports
 export type {
   ActionHandler,
@@ -25,4 +34,7 @@ export type {
   SessionConfig,
   SessionStorageFactory,
   AuthTokenPayload,
+  IslandProps,
+  IslandComponent,
+  IslandDefinition,
 } from './types'

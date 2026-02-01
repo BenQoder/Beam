@@ -1,5 +1,6 @@
 import { Idiomorph } from 'idiomorph';
 import { newWebSocketRpcSession } from 'capnweb';
+import { hydrateIslands } from './islands';
 // ============ BEAM - capnweb RPC Client ============
 //
 // Uses capnweb for:
@@ -505,6 +506,8 @@ function swap(target, html, mode, trigger) {
             morph(target, main);
             break;
     }
+    // Hydrate islands in the updated content
+    hydrateIslands(target);
     // Out-of-band swaps
     for (const { selector, content, swapMode } of oob) {
         const oobTarget = $(selector);
@@ -515,6 +518,8 @@ function swap(target, html, mode, trigger) {
             else {
                 swap(oobTarget, content, swapMode);
             }
+            // Hydrate islands in out-of-band content
+            hydrateIslands(oobTarget);
         }
     }
     // Process hungry elements - auto-update elements that match IDs in response
@@ -875,6 +880,10 @@ function openModal(html, size = 'medium', spacing) {
     backdrop.classList.add('open');
     document.body.classList.add('modal-open');
     activeModal = $('#modal-content');
+    // Hydrate islands in modal content
+    if (activeModal) {
+        hydrateIslands(activeModal);
+    }
     const autoFocus = activeModal?.querySelector('[autofocus]');
     const firstInput = activeModal?.querySelector('input, button, textarea, select');
     (autoFocus || firstInput)?.focus();
@@ -912,6 +921,10 @@ function openDrawer(html, position = 'right', size = 'medium', spacing) {
     backdrop.classList.add('open');
     document.body.classList.add('drawer-open');
     activeDrawer = $('#drawer-content');
+    // Hydrate islands in drawer content
+    if (activeDrawer) {
+        hydrateIslands(activeDrawer);
+    }
     const autoFocus = activeDrawer?.querySelector('[autofocus]');
     const firstInput = activeDrawer?.querySelector('input, button, textarea, select');
     (autoFocus || firstInput)?.focus();

@@ -1,5 +1,6 @@
 import { Idiomorph } from 'idiomorph'
 import { newWebSocketRpcSession, type RpcStub } from 'capnweb'
+import { hydrateIslands } from './islands'
 
 // ============ BEAM - capnweb RPC Client ============
 //
@@ -596,6 +597,9 @@ function swap(target: Element, html: string, mode: string, trigger?: HTMLElement
       break
   }
 
+  // Hydrate islands in the updated content
+  hydrateIslands(target)
+
   // Out-of-band swaps
   for (const { selector, content, swapMode } of oob) {
     const oobTarget = $(selector)
@@ -605,6 +609,8 @@ function swap(target: Element, html: string, mode: string, trigger?: HTMLElement
       } else {
         swap(oobTarget, content, swapMode)
       }
+      // Hydrate islands in out-of-band content
+      hydrateIslands(oobTarget)
     }
   }
 
@@ -1011,6 +1017,11 @@ function openModal(html: string, size: string = 'medium', spacing?: number): voi
 
   activeModal = $('#modal-content') as HTMLElement
 
+  // Hydrate islands in modal content
+  if (activeModal) {
+    hydrateIslands(activeModal)
+  }
+
   const autoFocus = activeModal?.querySelector<HTMLElement>('[autofocus]')
   const firstInput = activeModal?.querySelector<HTMLElement>('input, button, textarea, select')
   ;(autoFocus || firstInput)?.focus()
@@ -1054,6 +1065,11 @@ function openDrawer(html: string, position: string = 'right', size: string = 'me
   document.body.classList.add('drawer-open')
 
   activeDrawer = $('#drawer-content') as HTMLElement
+
+  // Hydrate islands in drawer content
+  if (activeDrawer) {
+    hydrateIslands(activeDrawer)
+  }
 
   const autoFocus = activeDrawer?.querySelector<HTMLElement>('[autofocus]')
   const firstInput = activeDrawer?.querySelector<HTMLElement>('input, button, textarea, select')

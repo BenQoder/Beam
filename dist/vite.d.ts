@@ -6,6 +6,12 @@ export interface BeamPluginOptions {
      */
     actions?: string;
     /**
+     * Glob pattern for island components (must start with '/' for virtual modules)
+     * @default '/app/islands/*.tsx'
+     * @example '/app/islands/\*\*\/*.tsx'
+     */
+    islands?: string;
+    /**
      * Path to auth resolver module (must export default AuthResolver function)
      * @example '/app/auth.ts'
      */
@@ -45,6 +51,7 @@ export interface BeamPluginOptions {
  *   plugins: [
  *     beamPlugin({
  *       actions: '/app/actions/*.tsx',
+ *       islands: '/app/islands/*.tsx',
  *     })
  *   ]
  * })
