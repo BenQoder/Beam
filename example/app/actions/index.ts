@@ -27,6 +27,25 @@ import {
   testRedirect,
 } from './demo'
 import { getCurrentUser } from './auth'
+import {
+  searchProducts,
+  saveField,
+  validateBio,
+  loadCategory,
+  filterProducts,
+  selectPlan,
+  submitContact,
+  searchCities,
+  selectCity,
+  loadStates,
+  startInlineEdit,
+  saveInlineEdit,
+  updatePrice,
+  testInclude,
+  testBeamKeep,
+  testBeamKeepRemoval,
+  testBeamKeepRemovalReset,
+} from './inputs'
 
 export const actions: Record<string, ActionHandler<Env>> = {
   addToCart,
@@ -56,4 +75,22 @@ export const actions: Record<string, ActionHandler<Env>> = {
   testRedirect,
   // Auth actions
   getCurrentUser,
+  // Input demo actions
+  searchProducts,
+  saveField,
+  validateBio,
+  loadCategory,
+  filterProducts,
+  selectPlan,
+  submitContact,
+  searchCities,
+  selectCity,
+  loadStates,
+  startInlineEdit,
+  saveInlineEdit,
+  updatePrice,
+  testInclude,
+  testBeamKeep,
+  testBeamKeepRemoval,
+  testBeamKeepRemovalReset,
 }

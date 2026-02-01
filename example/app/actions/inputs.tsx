@@ -452,3 +452,109 @@ export async function testBeamKeep(_ctx: BeamContext<Env>, _params: Record<strin
     </div>
   )
 }
+
+// ============ BEAM-KEEP REMOVAL TEST ============
+
+/**
+ * Tests that beam-keep elements are properly REMOVED when the new DOM doesn't contain them.
+ * This returns a completely different form (success message) without any input elements.
+ * The input with beam-keep should be REMOVED, not preserved/appended.
+ */
+export async function testBeamKeepRemoval(_ctx: BeamContext<Env>, params: Record<string, unknown>): Promise<string> {
+  const email = String(params['keep-email'] || '')
+
+  await delay(300) // Simulate network
+
+  // Return a completely different UI - NO input element
+  // The beam-keep input should be REMOVED (not appended at the bottom)
+  return render(
+    <div class="keep-removal-success">
+      <div class="success-icon">✓</div>
+      <h4>Form Submitted Successfully!</h4>
+      <p>Email received: <strong>{email || '(empty)'}</strong></p>
+      <p class="success-note">
+        If you see an input field below this message, the beam-keep removal is broken.
+      </p>
+      <button
+        type="button"
+        beam-action="testBeamKeepRemovalReset"
+        beam-target="#keep-removal-container"
+      >
+        Reset Demo
+      </button>
+      <style>{`
+        .keep-removal-success {
+          text-align: center;
+          padding: 2rem;
+          background: #dcfce7;
+          border: 1px solid #86efac;
+          border-radius: 8px;
+        }
+        .success-icon {
+          font-size: 2rem;
+          color: #16a34a;
+          margin-bottom: 0.5rem;
+        }
+        .keep-removal-success h4 {
+          margin: 0 0 0.5rem;
+          color: #166534;
+        }
+        .keep-removal-success p {
+          margin: 0.25rem 0;
+          color: #15803d;
+        }
+        .success-note {
+          font-size: 0.875rem;
+          color: #166534;
+          margin-top: 1rem !important;
+          padding: 0.5rem;
+          background: #f0fdf4;
+          border-radius: 4px;
+        }
+      `}</style>
+    </div>
+  )
+}
+
+/**
+ * Resets the beam-keep removal demo back to the form state
+ */
+export async function testBeamKeepRemovalReset(_ctx: BeamContext<Env>, _params: Record<string, unknown>): Promise<string> {
+  return render(
+    <div class="keep-removal-form">
+      <div class="form-group">
+        <label>Email (has beam-keep)</label>
+        <input
+          type="email"
+          name="keep-email"
+          placeholder="Type something here..."
+          beam-keep
+          class="keep-removal-input"
+        />
+      </div>
+      <button
+        type="button"
+        beam-action="testBeamKeepRemoval"
+        beam-include="keep-email"
+        beam-target="#keep-removal-container"
+      >
+        Submit (Swaps to Different Form)
+      </button>
+      <style>{`
+        .keep-removal-form {
+          padding: 1rem;
+          background: #f8fafc;
+          border: 1px solid #e2e8f0;
+          border-radius: 8px;
+        }
+        .keep-removal-input {
+          width: 100%;
+          padding: 0.75rem;
+          border: 1px solid #d1d5db;
+          border-radius: 6px;
+          font-size: 1rem;
+        }
+      `}</style>
+    </div>
+  )
+}

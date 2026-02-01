@@ -227,7 +227,8 @@ function morph(target: Element, html: string, options?: { keepElements?: string[
   Idiomorph.morph(target, html, {
     morphStyle: 'innerHTML',
     callbacks: {
-      // Skip morphing elements marked with beam-keep
+      // Skip morphing elements marked with beam-keep (preserves their current value)
+      // This only applies when both old and new DOM have a matching element
       beforeNodeMorphed: (fromEl: Element, toEl: Element) => {
         // Only handle Element nodes
         if (!(fromEl instanceof Element)) return true
@@ -250,14 +251,10 @@ function morph(target: Element, html: string, options?: { keepElements?: string[
         }
 
         return true
-      },
-      // Prevent removal of beam-keep elements
-      beforeNodeRemoved: (node: Node) => {
-        if (node instanceof Element && node.hasAttribute('beam-keep')) {
-          return false
-        }
-        return true
       }
+      // Note: We intentionally do NOT prevent removal of beam-keep elements.
+      // If an element doesn't exist in the new DOM, it should be removed.
+      // beam-keep only preserves values during morphing, not during removal.
     }
   })
 }

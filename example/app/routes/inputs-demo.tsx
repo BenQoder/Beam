@@ -643,6 +643,44 @@ export default createRoute(async (c) => {
         </p>
       </div>
 
+      {/* ============ BEAM-KEEP REMOVAL TEST ============ */}
+      <div class="demo-section">
+        <h2>20. Beam-Keep Removal Test (Form Swap)</h2>
+        <p class="text-muted">
+          Tests that <code>beam-keep</code> elements are <strong>removed</strong> when they don't exist in the new DOM.
+          <br/>
+          <code>beam-keep</code> preserves values during <em>updates</em>, but allows <em>removal</em> when the element is gone.
+          <br/>
+          <strong>Expected:</strong> Type in the input, click "Submit" → form swaps to success message, input is GONE (not preserved).
+        </p>
+        <div id="keep-removal-container">
+          <div class="keep-removal-form">
+            <div class="form-group">
+              <label>Email (has beam-keep)</label>
+              <input
+                type="email"
+                name="keep-email"
+                placeholder="Type something here..."
+                beam-keep
+                class="keep-removal-input"
+              />
+            </div>
+            <button
+              type="button"
+              beam-action="testBeamKeepRemoval"
+              beam-include="keep-email"
+              beam-target="#keep-removal-container"
+            >
+              Submit (Swaps to Different Form)
+            </button>
+          </div>
+        </div>
+        <p class="text-muted" style="margin-top: 1rem;">
+          <strong>Before fix:</strong> Input would persist below the success message (bug).<br/>
+          <strong>After fix:</strong> Input is properly removed when form swaps.
+        </p>
+      </div>
+
       {/* ============ STYLES ============ */}
       <style>{`
         .demo-section {
@@ -944,6 +982,27 @@ export default createRoute(async (c) => {
           border-radius: 4px;
           font-family: monospace;
           font-size: 0.875rem;
+        }
+
+        /* Beam-keep removal test styles */
+        .keep-removal-form {
+          padding: 1rem;
+          background: #f8fafc;
+          border: 1px solid #e2e8f0;
+          border-radius: 8px;
+        }
+        .keep-removal-input {
+          width: 100%;
+          padding: 0.75rem;
+          border: 1px solid #d1d5db;
+          border-radius: 6px;
+          font-size: 1rem;
+          margin-bottom: 1rem;
+        }
+        .keep-removal-input:focus {
+          outline: none;
+          border-color: #3b82f6;
+          box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
         }
       `}</style>
     </Layout>
