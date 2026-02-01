@@ -14,6 +14,7 @@ export default defineConfig(({ mode }) => {
     plugins: [
       beamPlugin({
         actions: '/app/actions/*.tsx',
+        islands: '/app/islands/*.tsx',
         auth: '/app/auth.ts',
         session: { storage: '/app/session-storage.ts' }, // Uses KV for persistence
       }),
