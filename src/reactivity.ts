@@ -293,24 +293,31 @@ function setupReactiveScope(el: HTMLElement): void {
   const json = el.getAttribute('beam-state')
   if (!json) return
 
-  // Support referencing state from a script element
-  let initial: object
-  if (json.startsWith('#')) {
-    const scriptEl = document.querySelector(json)
-    initial = JSON.parse(scriptEl?.textContent || '{}')
-  } else {
-    initial = JSON.parse(json)
-  }
-
-  const state = createReactiveProxy(initial)
-  reactiveElStates.set(el, state)
-
-  // Register named state if beam-id is present
   const id = el.getAttribute('beam-id')
-  if (id) {
-    reactiveNamedStates.set(id, state)
+
+  // Check if named state already exists (preserve state across morphs)
+  let state: object
+  if (id && reactiveNamedStates.has(id)) {
+    // Reuse existing named state - preserves state after DOM morph
+    state = reactiveNamedStates.get(id)!
+  } else {
+    // Create new state from JSON
+    let initial: object
+    if (json.startsWith('#')) {
+      const scriptEl = document.querySelector(json)
+      initial = JSON.parse(scriptEl?.textContent || '{}')
+    } else {
+      initial = JSON.parse(json)
+    }
+    state = createReactiveProxy(initial)
+
+    // Register named state if beam-id is present
+    if (id) {
+      reactiveNamedStates.set(id, state)
+    }
   }
 
+  reactiveElStates.set(el, state)
   processReactiveBindings(el, state)
 }
 

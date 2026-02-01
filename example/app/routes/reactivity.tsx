@@ -355,9 +355,48 @@ export default createRoute((c) => {
 <div beam-state-ref="game" beam-class="{ active: score > 50 }">Level</div>`}</pre>
       </div>
 
+      {/* State Persistence After Morph */}
+      <div class="demo-section">
+        <h2>11. State Persistence After Morph</h2>
+        <p class="text-muted">Named states (with <code>beam-id</code>) persist when the DOM is morphed by <code>beam-action</code>.</p>
+
+        <div class="morph-demo">
+          {/* State with beam-id - will persist across morphs */}
+          <div id="morph-target" beam-state='{"count": 0, "message": "Initial"}' beam-id="persist-demo" class="morph-box">
+            <h4>Persistent State</h4>
+            <div class="counter-inline">
+              <button beam-click="count--" class="btn-small-counter">-</button>
+              <span class="count-display" beam-text="count"></span>
+              <button beam-click="count++" class="btn-small-counter">+</button>
+            </div>
+            <p class="morph-message">Message: <span beam-text="message"></span></p>
+            <p class="morph-hint">Increment the counter, then click "Morph Container" - state persists!</p>
+          </div>
+
+          {/* Button that triggers morph */}
+          <div class="morph-actions">
+            <button beam-action="morphReactiveDemo" beam-target="#morph-target" class="btn-morph">
+              Morph Container (server update)
+            </button>
+            <p class="text-muted">This replaces the container HTML but preserves the reactive state.</p>
+          </div>
+        </div>
+
+        <pre class="code-preview">{`<!-- Named state persists across morphs -->
+<div id="target" beam-state='{"count": 0}' beam-id="my-state">
+  <span beam-text="count"></span>
+  <button beam-click="count++">+</button>
+</div>
+
+<!-- When this action morphs #target, the count value is preserved -->
+<button beam-action="updateContent" beam-target="#target">
+  Update Content
+</button>`}</pre>
+      </div>
+
       {/* Pure HTML Usage */}
       <div class="demo-section">
-        <h2>11. Pure HTML Usage</h2>
+        <h2>12. Pure HTML Usage</h2>
         <p class="text-muted">No build tools required - just include the script!</p>
         <pre class="code-preview">{`<!DOCTYPE html>
 <html>
@@ -903,6 +942,74 @@ export default createRoute((c) => {
         .level-high {
           background: #d1fae5;
           color: #065f46;
+        }
+
+        /* Morph Demo */
+        .morph-demo {
+          display: flex;
+          flex-direction: column;
+          gap: 1rem;
+        }
+        .morph-box {
+          background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+          border: 2px solid #0ea5e9;
+          padding: 1.5rem;
+          border-radius: 8px;
+        }
+        .morph-box h4 {
+          margin: 0 0 1rem;
+          color: #0369a1;
+        }
+        .counter-inline {
+          display: flex;
+          align-items: center;
+          gap: 0.75rem;
+          margin-bottom: 1rem;
+        }
+        .btn-small-counter {
+          width: 36px;
+          height: 36px;
+          font-size: 1.25rem;
+          background: #0ea5e9;
+          color: white;
+          border: none;
+          border-radius: 6px;
+          cursor: pointer;
+        }
+        .btn-small-counter:hover {
+          background: #0284c7;
+        }
+        .count-display {
+          font-size: 1.5rem;
+          font-weight: 700;
+          min-width: 40px;
+          text-align: center;
+        }
+        .morph-message {
+          margin: 0.5rem 0;
+          color: #0369a1;
+        }
+        .morph-hint {
+          font-size: 0.85rem;
+          color: #64748b;
+          margin: 0;
+        }
+        .morph-actions {
+          display: flex;
+          align-items: center;
+          gap: 1rem;
+        }
+        .btn-morph {
+          padding: 0.75rem 1.5rem;
+          background: #8b5cf6;
+          color: white;
+          border: none;
+          border-radius: 6px;
+          cursor: pointer;
+          font-weight: 500;
+        }
+        .btn-morph:hover {
+          background: #7c3aed;
         }
 
         @media (max-width: 768px) {
