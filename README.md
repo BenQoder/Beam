@@ -34,6 +34,84 @@ A lightweight, declarative UI framework for building interactive web application
 - **Class Toggle** - Toggle CSS classes on elements (no server)
 - **Multi-Render** - Update multiple targets in a single action response
 - **Async Components** - Full support for HonoX async components in `ctx.render()`
+- **Beam Islands** - Client-side reactive components with primitive-only props (security-first)
+
+## Beam Islands
+
+Beam Islands provide first-class client-side interactivity while maintaining Beam's HTML-first philosophy:
+
+- **Reactive Components** - Create stateful client components with familiar patterns
+- **Security by Design** - Only primitive values (string, number, boolean) can be passed as props
+- **Auto-Hydration** - Islands automatically initialize on page load and after Beam updates
+- **Zero Configuration** - Works seamlessly with modals, drawers, and action responses
+- **DOM Morphing Safe** - Islands survive morphdom updates via hydration markers
+
+### Creating an Island
+
+```tsx
+// app/islands/Counter.tsx
+import { defineIsland } from '@benqoder/beam/islands'
+
+export default defineIsland('Counter', ({ initial = 0, step = 1 }) => {
+  const container = document.createElement('div')
+  let count = initial
+
+  const display = document.createElement('span')
+  display.textContent = String(count)
+
+  const btn = document.createElement('button')
+  btn.textContent = '+'
+  btn.onclick = () => {
+    count += step
+    display.textContent = String(count)
+  }
+
+  container.appendChild(display)
+  container.appendChild(btn)
+  return container
+})
+```
+
+### Using Islands in HTML
+
+```html
+<!-- Pass props via data-* attributes -->
+<div beam-island="Counter" data-initial="10" data-step="5"></div>
+```
+
+### Vite Configuration
+
+```typescript
+beamPlugin({
+  actions: '/app/actions/*.tsx',
+  islands: '/app/islands/*.tsx',  // Enable islands
+})
+```
+
+### Client Setup
+
+```typescript
+// app/client.ts
+import '@benqoder/beam/client'
+
+// Import islands to register them
+const islands = import.meta.glob('/app/islands/*.tsx', { eager: true })
+Object.values(islands) // Prevent tree-shaking
+```
+
+### Security Model
+
+Islands enforce security by only accepting primitive props:
+
+```html
+<!-- ✅ SAFE - Only primitives -->
+<div beam-island="ProductCard" data-id="123" data-price="99.99" data-featured="true"></div>
+
+<!-- ❌ NOT POSSIBLE - Type system prevents this -->
+<div beam-island="ProductCard" data-product={complexObject}></div>
+```
+
+This prevents data leaks common with JSON serialization approaches.
 
 ## Installation
 

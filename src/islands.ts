@@ -49,14 +49,7 @@ function parseIslandProps(element: Element): IslandProps {
       const key = attr.name.slice(5) // Remove 'data-' prefix
       const value = attr.value
       
-      // Try to parse as number
-      const numValue = Number(value)
-      if (!isNaN(numValue) && value !== '' && value !== 'true' && value !== 'false') {
-        props[key] = numValue
-        continue
-      }
-      
-      // Try to parse as boolean
+      // Try to parse as boolean first (exact match)
       if (value === 'true') {
         props[key] = true
         continue
@@ -64,6 +57,15 @@ function parseIslandProps(element: Element): IslandProps {
       if (value === 'false') {
         props[key] = false
         continue
+      }
+      
+      // Try to parse as number (must be valid numeric string with content)
+      if (value.trim() !== '') {
+        const numValue = Number(value)
+        if (!isNaN(numValue) && /^-?\d+\.?\d*$/.test(value.trim())) {
+          props[key] = numValue
+          continue
+        }
       }
       
       // Default to string
@@ -101,7 +103,7 @@ function hydrateIsland(element: Element): void {
     const result = component(props)
     
     // If the component returns JSX/DOM, replace element content
-    if (result) {
+    if (result && result !== null) {
       // Check if result has a render method (hono/jsx/dom compatibility)
       if (typeof result === 'object' && 'render' in result && typeof result.render === 'function') {
         element.innerHTML = ''

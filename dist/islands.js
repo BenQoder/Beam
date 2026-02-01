@@ -38,13 +38,7 @@ function parseIslandProps(element) {
         if (attr.name.startsWith('data-') && attr.name !== 'data-beam-hydrated') {
             const key = attr.name.slice(5); // Remove 'data-' prefix
             const value = attr.value;
-            // Try to parse as number
-            const numValue = Number(value);
-            if (!isNaN(numValue) && value !== '' && value !== 'true' && value !== 'false') {
-                props[key] = numValue;
-                continue;
-            }
-            // Try to parse as boolean
+            // Try to parse as boolean first (exact match)
             if (value === 'true') {
                 props[key] = true;
                 continue;
@@ -52,6 +46,14 @@ function parseIslandProps(element) {
             if (value === 'false') {
                 props[key] = false;
                 continue;
+            }
+            // Try to parse as number (must be valid numeric string with content)
+            if (value.trim() !== '') {
+                const numValue = Number(value);
+                if (!isNaN(numValue) && /^-?\d+\.?\d*$/.test(value.trim())) {
+                    props[key] = numValue;
+                    continue;
+                }
             }
             // Default to string
             props[key] = value;
@@ -82,7 +84,7 @@ function hydrateIsland(element) {
         // Render the component
         const result = component(props);
         // If the component returns JSX/DOM, replace element content
-        if (result) {
+        if (result && result !== null) {
             // Check if result has a render method (hono/jsx/dom compatibility)
             if (typeof result === 'object' && 'render' in result && typeof result.render === 'function') {
                 element.innerHTML = '';
