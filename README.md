@@ -570,13 +570,13 @@ Fine-grained reactivity for UI components (carousels, tabs, accordions) without 
 
 | Attribute | Description | Example |
 |-----------|-------------|---------|
-| `beam-state` | Declare reactive state scope (JSON) | `beam-state='{"open": false}'` |
+| `beam-state` | Declare reactive state (JSON, key-value, or simple value) | `beam-state="tab: 0; total: 5"` |
 | `beam-id` | Name the state for cross-component access | `beam-id="cart"` |
 | `beam-state-ref` | Reference a named state from elsewhere | `beam-state-ref="cart"` |
 | `beam-text` | Bind text content to expression | `beam-text="count"` |
 | `beam-attr-*` | Bind any attribute to expression | `beam-attr-disabled="count === 0"` |
 | `beam-show` | Show/hide element based on expression | `beam-show="open"` |
-| `beam-class` | Toggle classes based on object | `beam-class="{ active: isActive }"` |
+| `beam-class` | Toggle classes (simplified or JSON syntax) | `beam-class="active: tab === 0"` |
 | `beam-click` | Click handler that mutates state | `beam-click="open = !open"` |
 | `beam-model` | Two-way binding for inputs | `beam-model="firstName"` |
 
@@ -1408,20 +1408,77 @@ Toggle CSS classes on elements:
 
 Fine-grained reactivity for UI components like carousels, tabs, accordions, and modals. All declarative via HTML attributes.
 
+#### beam-state Syntax Options
+
+**1. Simple value with beam-id** (property name comes from beam-id):
+```html
+<div beam-state="false" beam-id="open">
+  <button beam-click="open = !open">Toggle</button>
+  <div beam-show="open">Content</div>
+</div>
+
+<div beam-state="0" beam-id="count">
+  <button beam-click="count++">Clicked <span beam-text="count"></span> times</button>
+</div>
+```
+
+**2. Key-value pairs** (semicolon-separated):
+```html
+<div beam-state="tab: 0; total: 5">
+  <button beam-click="tab = (tab + 1) % total">Next</button>
+  <span beam-text="tab + 1"></span> of <span beam-text="total"></span>
+</div>
+
+<div beam-state="name: 'World'; greeting: 'Hello'">
+  <span beam-text="greeting + ', ' + name + '!'"></span>
+</div>
+```
+
+**3. JSON** (for arrays and nested objects):
+```html
+<div beam-state='{"items": [1, 2, 3], "config": {"enabled": true}}'>
+  ...
+</div>
+```
+
+#### beam-class Syntax Options
+
+**1. Simplified syntax** (no JSON required):
+```html
+<!-- Single class -->
+<button beam-class="active: tab === 0">Tab 1</button>
+
+<!-- Multiple classes (semicolon-separated) -->
+<div beam-class="text-red: hasError; text-green: !hasError; bold: important">
+```
+
+**2. Multiple classes with one condition** (quote the class names):
+```html
+<div beam-class="'bg-green text-white shadow-lg': isActive; 'bg-gray text-dark': !isActive">
+```
+
+**3. JSON** (backward compatible):
+```html
+<button beam-class="{ active: tab === 0, highlight: selected }">
+<div beam-class="{ 'text-green italic': !hasError, bold: important }">
+```
+
+#### Examples
+
 ```html
 <!-- Accordion -->
-<div beam-state='{"open": false}'>
+<div beam-state="open: false">
   <button beam-click="open = !open">Toggle</button>
   <div beam-show="open">
     <p>Expanded content here...</p>
   </div>
 </div>
 
-<!-- Tabs -->
-<div beam-state='{"tab": 0}'>
-  <button beam-click="tab = 0" beam-class="{ active: tab === 0 }">Tab 1</button>
-  <button beam-click="tab = 1" beam-class="{ active: tab === 1 }">Tab 2</button>
-  <button beam-click="tab = 2" beam-class="{ active: tab === 2 }">Tab 3</button>
+<!-- Tabs with simplified beam-class -->
+<div beam-state="tab: 0">
+  <button beam-click="tab = 0" beam-class="active: tab === 0">Tab 1</button>
+  <button beam-click="tab = 1" beam-class="active: tab === 1">Tab 2</button>
+  <button beam-click="tab = 2" beam-class="active: tab === 2">Tab 3</button>
 
   <div beam-show="tab === 0">Content for Tab 1</div>
   <div beam-show="tab === 1">Content for Tab 2</div>
@@ -1429,36 +1486,34 @@ Fine-grained reactivity for UI components like carousels, tabs, accordions, and 
 </div>
 
 <!-- Carousel -->
-<div beam-state='{"slide": 0, "total": 5}'>
+<div beam-state="slide: 0; total: 5">
   <button beam-click="slide = (slide - 1 + total) % total">← Prev</button>
   <span beam-text="slide + 1"></span> / <span beam-text="total"></span>
   <button beam-click="slide = (slide + 1) % total">Next →</button>
 </div>
 
-<!-- Dropdown with dynamic class -->
-<div beam-state='{"open": false}'>
-  <button beam-click="open = !open">Menu</button>
-  <div beam-show="open" beam-class="{ dropdown: true }">
-    <a href="/profile">Profile</a>
-    <a href="/settings">Settings</a>
-  </div>
-</div>
-
 <!-- Counter with attribute binding -->
-<div beam-state='{"count": 0}'>
+<div beam-state="count: 0">
   <button beam-click="count--" beam-attr-disabled="count === 0">-</button>
   <span beam-text="count"></span>
   <button beam-click="count++">+</button>
+</div>
+
+<!-- Status indicator with multiple classes -->
+<div beam-state="status: 'idle'">
+  <div beam-class="status-idle: status === 'idle'; status-loading: status === 'loading'; status-error: status === 'error'">
+    <span beam-text="status"></span>
+  </div>
 </div>
 ```
 
 #### Named State (Cross-Component)
 
-Share state between different parts of the page:
+Share state between different parts of the page. Named states (with `beam-id`) persist across DOM morphs:
 
 ```html
 <!-- Cart state defined once -->
-<div beam-state='{"count": 0}' beam-id="cart">
+<div beam-state="count: 0" beam-id="cart">
   Cart: <span beam-text="count"></span> items
 </div>
 
@@ -1467,6 +1522,8 @@ Share state between different parts of the page:
   Add to Cart
 </button>
 ```
+
+**Note:** Named states persist when the DOM is morphed by `beam-action`. This means reactive state is preserved even when server actions update the page.
 
 #### JavaScript API
 
