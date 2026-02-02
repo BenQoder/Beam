@@ -144,6 +144,8 @@ Use `beam-include` to collect values from input elements and include them in act
   beam-data-source="form"
   beam-target="#result"
 >Save</button>
+
+<div id="result"></div>
 ```
 
 The action receives merged params with proper type conversion:
@@ -251,15 +253,15 @@ export function refreshDashboard(ctx: BeamContext<Env>) {
 }
 ```
 
-**2. Auto-detect by ID (no targets needed)**
+**2. Auto-detect by beam-id / beam-item-id (no targets needed)**
 
 ```tsx
 export function refreshDashboard(ctx: BeamContext<Env>) {
-  // Client automatically finds elements by id, beam-id, or beam-item-id
+  // Client automatically finds elements by beam-id or beam-item-id
   return ctx.render([
-    <div id="stats">Visits: {visits}</div>,
-    <div id="users">Users: {users}</div>,
-    <div id="revenue">Revenue: ${revenue}</div>,
+    <div beam-id="stats">Visits: {visits}</div>,
+    <div beam-id="users">Users: {users}</div>,
+    <div beam-id="revenue">Revenue: ${revenue}</div>,
   ])
 }
 ```
@@ -271,7 +273,7 @@ export function updateDashboard(ctx: BeamContext<Env>) {
   return ctx.render(
     [
       <div>Header content</div>,           // Uses explicit target
-      <div id="content">Main content</div>, // Auto-detected by ID
+      <div beam-id="content">Main content</div>, // Auto-detected by beam-id
     ],
     { target: '#header' }  // Only first item gets explicit target
   )
@@ -280,9 +282,14 @@ export function updateDashboard(ctx: BeamContext<Env>) {
 
 **Target Resolution Order:**
 1. Explicit target from comma-separated list (by index)
-2. ID from the HTML fragment's root element (`id`, `beam-id`, or `beam-item-id`)
+2. Identity from the HTML fragment's root element (`beam-id` or `beam-item-id`)
 3. Frontend fallback (`beam-target` on the triggering element)
 4. Skip if no target found
+
+Notes:
+- `beam-target` accepts any valid CSS selector (e.g. `#id`, `.class`, `[attr=value]`). Using `#id` targets is still fully supported.
+- Auto-targeting (step 2) intentionally does **not** use plain `id="..."` anymore; it uses only `beam-id` / `beam-item-id`.
+- When an explicit target is used and the server returns a single root element that has the same `beam-id`/`beam-item-id` as the target, Beam unwraps it and swaps only the target’s inner content. This prevents accidentally nesting the component inside itself.
 
 **Exclusion:** Use `!selector` to explicitly skip an item:
 ```tsx

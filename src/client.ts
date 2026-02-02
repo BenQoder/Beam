@@ -221,12 +221,41 @@ function $$(selector: string): NodeListOf<Element> {
   return document.querySelectorAll(selector)
 }
 
-function morph(target: Element, html: string, options?: { keepElements?: string[] }): void {
+type MorphStyle = 'innerHTML' | 'outerHTML'
+
+function normalizeHtmlForTarget(target: Element, html: string): string {
+  const temp = document.createElement('div')
+  temp.innerHTML = html.trim()
+
+  // If server sent a wrapper that matches the target element, unwrap it.
+  // This avoids nesting <div beam-id="x"> inside <div beam-id="x"> and matches
+  // the intuitive expectation: targeting an element updates its *inner* content.
+  if (temp.childElementCount !== 1) return html
+  const root = temp.firstElementChild
+  if (!root) return html
+
+  const targetBeamId = target.getAttribute('beam-id')
+  const rootBeamId = root.getAttribute('beam-id')
+  if (targetBeamId && rootBeamId && targetBeamId === rootBeamId) return root.innerHTML
+
+  const targetBeamItemId = target.getAttribute('beam-item-id')
+  const rootBeamItemId = root.getAttribute('beam-item-id')
+  if (targetBeamItemId && rootBeamItemId && targetBeamItemId === rootBeamItemId) return root.innerHTML
+
+  return html
+}
+
+function morph(
+  target: Element,
+  html: string,
+  options?: { keepElements?: string[]; style?: MorphStyle }
+): void {
   const keepSelectors = options?.keepElements || []
+  const morphStyle: MorphStyle = options?.style || 'innerHTML'
 
   // @ts-ignore - idiomorph types
   Idiomorph.morph(target, html, {
-    morphStyle: 'innerHTML',
+    morphStyle,
     callbacks: {
       // Skip morphing elements marked with beam-keep (preserves their current value)
       // This only applies when both old and new DOM have a matching element
@@ -560,7 +589,7 @@ function dedupeItems(target: Element, html: string): string {
       // Morph existing item with fresh data
       const existing = target.querySelector(`[beam-item-id="${id}"]`)
       if (existing) {
-        morph(existing, el.outerHTML)
+        morph(existing, el.outerHTML, { style: 'outerHTML' })
       }
       // Remove from incoming HTML (already updated in place)
       el.remove()
@@ -572,25 +601,26 @@ function dedupeItems(target: Element, html: string): string {
 
 function swap(target: Element, html: string, mode: string, trigger?: HTMLElement): void {
   const { main, oob } = parseOobSwaps(html)
+  const normalizedMain = normalizeHtmlForTarget(target, main)
 
   switch (mode) {
     case 'append':
       trigger?.remove()
-      target.insertAdjacentHTML('beforeend', dedupeItems(target, main))
+      target.insertAdjacentHTML('beforeend', dedupeItems(target, normalizedMain))
       break
     case 'prepend':
       trigger?.remove()
-      target.insertAdjacentHTML('afterbegin', dedupeItems(target, main))
+      target.insertAdjacentHTML('afterbegin', dedupeItems(target, normalizedMain))
       break
     case 'replace':
-      target.innerHTML = main
+      target.innerHTML = normalizedMain
       break
     case 'delete':
       target.remove()
       break
     case 'morph':
     default:
-      morph(target, main)
+      morph(target, normalizedMain)
       break
   }
 
@@ -658,17 +688,14 @@ function handleHtmlResponse(
         console.warn(`[beam] Target "${explicitTarget}" not found on page, skipping`)
       }
     } else {
-      // Priority 3: id, beam-id, or beam-item-id on root element
+      // Priority 3: beam-id or beam-item-id on root element
       const temp = document.createElement('div')
       temp.innerHTML = htmlItem.trim()
       const rootEl = temp.firstElementChild
 
-      // Check id first, then beam-id, then beam-item-id
-      const id = rootEl?.id
       const beamId = rootEl?.getAttribute('beam-id')
       const beamItemId = rootEl?.getAttribute('beam-item-id')
-      const selector = id ? `#${id}`
-        : beamId ? `[beam-id="${beamId}"]`
+      const selector = beamId ? `[beam-id="${beamId}"]`
         : beamItemId ? `[beam-item-id="${beamItemId}"]`
         : null
 

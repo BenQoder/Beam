@@ -53,7 +53,7 @@ export interface BeamContext<TEnv = object> {
    * Accepts JSX directly (converts to string), single string, or array for multi-target rendering.
    * @example ctx.render(<ProductList />, { script: 'playSound("ding")' })
    * @example ctx.render([<StatsWidget />, <NotificationList />], { target: '#stats, #notifications' })
-   * @example ctx.render([<div id="stats">...</div>, <div id="notifications">...</div>]) // auto-detects targets by ID
+   * @example ctx.render([<div beam-id="stats">...</div>, <div beam-id="notifications">...</div>]) // auto-detects targets by beam-id / beam-item-id
    */
   render(
     content: string | Promise<string> | (string | Promise<string>)[],
