@@ -3,11 +3,35 @@
 // All declarative via HTML attributes, no JS config required.
 // Can be used standalone without Beam server.
 //
-// Usage:
-//   <div beam-state='{"open": false}'>
+// Usage (multiple syntax options):
+//
+//   Simple value (uses beam-id as property name):
+//   <div beam-state="false" beam-id="open">
 //     <button beam-click="open = !open">Toggle</button>
 //     <div beam-show="open">Content</div>
 //   </div>
+//
+//   Key-value pairs:
+//   <div beam-state="tab: 0; total: 5">
+//     <button beam-click="tab = (tab + 1) % total">Next</button>
+//   </div>
+//
+//   JSON (for arrays/nested objects):
+//   <div beam-state='{"items": [1, 2, 3]}'>
+//     ...
+//   </div>
+//
+// beam-class syntax options:
+//
+//   Simplified (semicolon-separated key-value pairs):
+//   <button beam-class="active: tab === 0">Tab 1</button>
+//   <div beam-class="text-red: hasError; text-green: !hasError">
+//
+//   Multiple classes with one condition (quote the class names):
+//   <div beam-class="'text-green italic': !hasError; bold: important">
+//
+//   JSON (backward compatible):
+//   <button beam-class="{ active: tab === 0, highlight: selected }">
 
 // --- Signal Primitives ---
 interface ReactiveSignal<T> {
@@ -154,8 +178,8 @@ function evalReactiveExpr(expr: string, state: object | null, extras: Record<str
     // For single expressions, just return the result
     const hasMultipleStatements = expr.includes(';')
     const fnBody = hasMultipleStatements
-      ? `with($s) { ${expr} }`  // Multiple statements - execute all
-      : `with($s) { return (${expr}) }`  // Single expression - return result
+      ? `with($s) { ${expr} }` // Multiple statements - execute all
+      : `with($s) { return (${expr}) }` // Single expression - return result
     const fn = new Function('$s', ...extraKeys, fnBody)
     return fn(state, ...extraVals)
   } catch (e) {
@@ -218,12 +242,16 @@ function processReactiveBindings(root: HTMLElement, _state: object): void {
   // beam-class: class toggling
   root.querySelectorAll<HTMLElement>('[beam-class]').forEach((el) => {
     if (!isInReactiveScope(el, root)) return
-    const expr = el.getAttribute('beam-class')!
+    const raw = el.getAttribute('beam-class')!
+    const expr = parseClassExpr(raw)
     createReactiveEffect(() => {
       const classes = evalReactiveExpr(expr, getReactiveState(el))
       if (typeof classes === 'object' && classes) {
         for (const [cls, active] of Object.entries(classes as Record<string, boolean>)) {
-          el.classList.toggle(cls, Boolean(active))
+          // Support space-separated class names (e.g., 'text-red bold')
+          for (const c of cls.split(/\s+/).filter(Boolean)) {
+            el.classList.toggle(c, Boolean(active))
+          }
         }
       }
     })
@@ -288,12 +316,108 @@ function processReactiveBindings(root: HTMLElement, _state: object): void {
   })
 }
 
+// --- Class Expression Parsing ---
+function parseClassExpr(raw: string): string {
+  const trimmed = raw.trim()
+
+  // If starts with '{', it's already a JS object expression
+  if (trimmed.startsWith('{')) {
+    return trimmed
+  }
+
+  // Parse "class: expr; class2: expr2" into "{ 'class': expr, 'class2': expr2 }"
+  // Also supports quoted class names for multiple classes: "'text-red bold': condition"
+  const pairs = trimmed.split(';').map((p) => p.trim()).filter(Boolean)
+  const entries: string[] = []
+
+  for (const pair of pairs) {
+    const colonIdx = pair.indexOf(':')
+    if (colonIdx === -1) continue
+
+    const className = pair.slice(0, colonIdx).trim()
+    const expr = pair.slice(colonIdx + 1).trim()
+
+    // Check if already quoted (for space-separated class names)
+    if ((className.startsWith("'") && className.endsWith("'")) ||
+        (className.startsWith('"') && className.endsWith('"'))) {
+      entries.push(`${className}: ${expr}`)
+    } else {
+      // Quote the class name to handle hyphens (e.g., 'text-red')
+      entries.push(`'${className}': ${expr}`)
+    }
+  }
+
+  return `{ ${entries.join(', ')} }`
+}
+
+// --- State Value Parsing ---
+function parseSimpleValue(val: string): unknown {
+  // Boolean
+  if (val === 'true') return true
+  if (val === 'false') return false
+  if (val === 'null') return null
+
+  // Number
+  if (/^-?\d+(\.\d+)?$/.test(val)) {
+    return parseFloat(val)
+  }
+
+  // Quoted string
+  if ((val.startsWith("'") && val.endsWith("'")) || (val.startsWith('"') && val.endsWith('"'))) {
+    return val.slice(1, -1)
+  }
+
+  return undefined // Not a simple value
+}
+
+function parseStateValue(raw: string, beamId: string | null): object {
+  const trimmed = raw.trim()
+
+  // 1. JSON object or array
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    return JSON.parse(trimmed)
+  }
+
+  // 2. Simple value → { [beamId]: value }
+  const simple = parseSimpleValue(trimmed)
+  if (simple !== undefined) {
+    if (!beamId) {
+      console.warn('[beam] Simple beam-state requires beam-id for property name')
+      return { value: simple } // Fallback
+    }
+    return { [beamId]: simple }
+  }
+
+  // 3. Key-value pairs: "key: value; key2: value2"
+  const result: Record<string, unknown> = {}
+  const pairs = trimmed.split(';').map((p) => p.trim()).filter(Boolean)
+
+  for (const pair of pairs) {
+    const colonIdx = pair.indexOf(':')
+    if (colonIdx === -1) continue
+
+    const key = pair.slice(0, colonIdx).trim()
+    const val = pair.slice(colonIdx + 1).trim()
+    const parsed = parseSimpleValue(val)
+    result[key] = parsed !== undefined ? parsed : val
+  }
+
+  return result
+}
+
 // --- Setup Reactive Scope ---
 function setupReactiveScope(el: HTMLElement): void {
-  const json = el.getAttribute('beam-state')
-  if (!json) return
+  const stateAttr = el.getAttribute('beam-state')
+  if (!stateAttr) return
 
   const id = el.getAttribute('beam-id')
+
+  // Warn about dashed beam-ids (they won't work in JS expressions)
+  if (id && id.includes('-')) {
+    console.warn(
+      `[beam] beam-id="${id}" contains dashes which won't work in expressions. Use camelCase instead (e.g., "${id.replace(/-([a-z])/g, (_, c) => c.toUpperCase())}")`
+    )
+  }
 
   // Check if named state already exists (preserve state across morphs)
   let state: object
@@ -301,13 +425,15 @@ function setupReactiveScope(el: HTMLElement): void {
     // Reuse existing named state - preserves state after DOM morph
     state = reactiveNamedStates.get(id)!
   } else {
-    // Create new state from JSON
+    // Create new state from attribute
     let initial: object
-    if (json.startsWith('#')) {
-      const scriptEl = document.querySelector(json)
+    if (stateAttr.startsWith('#')) {
+      // Script element reference (always JSON)
+      const scriptEl = document.querySelector(stateAttr)
       initial = JSON.parse(scriptEl?.textContent || '{}')
     } else {
-      initial = JSON.parse(json)
+      // Parse state value (JSON, simple value, or key-value pairs)
+      initial = parseStateValue(stateAttr, id)
     }
     state = createReactiveProxy(initial)
 
@@ -349,12 +475,16 @@ function setupRefElements(): void {
 
     // beam-class
     if (el.hasAttribute('beam-class')) {
-      const expr = el.getAttribute('beam-class')!
+      const raw = el.getAttribute('beam-class')!
+      const expr = parseClassExpr(raw)
       createReactiveEffect(() => {
         const classes = evalReactiveExpr(expr, getReactiveState(el))
         if (typeof classes === 'object' && classes) {
           for (const [cls, active] of Object.entries(classes as Record<string, boolean>)) {
-            el.classList.toggle(cls, Boolean(active))
+            // Support space-separated class names (e.g., 'text-red bold')
+            for (const c of cls.split(/\s+/).filter(Boolean)) {
+              el.classList.toggle(c, Boolean(active))
+            }
           }
         }
       })
