@@ -196,9 +196,9 @@ export default createRoute(async (c) => {
           <button beam-action="addItem" beam-swap="prepend" beam-target="#swap-list">
             Prepend Item
           </button>
-            <button beam-action="replaceList" beam-swap="replace" beam-target="#swap-list">
-              Replace
-            </button>
+          <button beam-action="replaceList" beam-swap="replace" beam-target="#swap-list">
+            Replace
+          </button>
         </div>
       </div>
 
@@ -680,58 +680,24 @@ export default createRoute(async (c) => {
         }
         .badge-success { background: #dcfce7; color: #16a34a; }
 
-        /* ============ ALPINE REPLACEMENT STYLES ============ */
+        /* ============ REACTIVE STATE STYLES ============ */
 
-        /* Toggle */
-        [beam-hidden] { display: none !important; }
-        [beam-collapsed] { display: none !important; }
-
-        /* Dropdown */
-        [beam-dropdown] { position: relative; display: inline-block; }
-        [beam-dropdown-content] {
-          position: absolute;
-          top: 100%;
-          left: 0;
+        .dropdown {
           background: white;
           min-width: 150px;
           border-radius: 6px;
           box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-          z-index: 100;
-          margin-top: 4px;
           border: 1px solid #e5e5e5;
+          padding: 0.25rem 0;
         }
-        [beam-dropdown-content] a {
+        .dropdown a {
           display: block;
           padding: 0.6rem 1rem;
           color: #333;
           text-decoration: none;
           transition: background 0.15s;
         }
-        [beam-dropdown-content] a:first-child { border-radius: 6px 6px 0 0; }
-        [beam-dropdown-content] a:last-child { border-radius: 0 0 6px 6px; }
-        [beam-dropdown-content] a:hover { background: #f5f5f5; }
-
-        /* Transitions */
-        [beam-transition="fade"] {
-          transition: opacity 150ms ease-out;
-        }
-        [beam-transition="fade"][beam-hidden] {
-          opacity: 0;
-          pointer-events: none;
-          display: block !important;
-        }
-        [beam-transition="slide"] {
-          transition: opacity 150ms ease-out, transform 150ms ease-out;
-          transform-origin: top;
-        }
-        [beam-transition="slide"][beam-hidden] {
-          opacity: 0;
-          transform: translateY(-10px);
-          pointer-events: none;
-          display: block !important;
-        }
-
-        /* ============ REACTIVE STATE STYLES ============ */
+        .dropdown a:hover { background: #f5f5f5; }
 
         .reactive-demo {
           background: #f9fafb;
@@ -1220,89 +1186,80 @@ export default createRoute(async (c) => {
 
       {/* ============ ALPINE REPLACEMENT FEATURES ============ */}
 
-      {/* Toggle */}
+      {/* Reactive Toggles */}
       <div class="demo-section">
-        <h2>15. Toggle (beam-toggle) - No Server</h2>
-        <p class="text-muted">Client-side visibility toggle without server round-trip.</p>
-        <div class="demo-actions">
-          <button beam-toggle="#toggle-content-1">Toggle Menu</button>
-          <button beam-toggle="#toggle-content-2">Toggle with Fade</button>
-          <button beam-toggle="#toggle-content-3">Toggle with Slide</button>
-        </div>
-        <div id="toggle-content-1" beam-hidden class="toggle-content">
-          <p><strong>Basic Toggle!</strong></p>
-          <p>This content toggles instantly without any animation.</p>
-          <ul>
-            <li>Item 1</li>
-            <li>Item 2</li>
-            <li>Item 3</li>
-          </ul>
-        </div>
-        <div id="toggle-content-2" beam-hidden beam-transition="fade" class="toggle-content">
-          <p><strong>Fade Transition!</strong></p>
-          <p>This content fades in and out smoothly.</p>
-        </div>
-        <div id="toggle-content-3" beam-hidden beam-transition="slide" class="toggle-content">
-          <p><strong>Slide Transition!</strong></p>
-          <p>This content slides down from the top.</p>
+        <h2>15. Reactive Toggle (beam-state-toggle) - No Server</h2>
+        <p class="text-muted">Single UI model: reactive state + bindings.</p>
+        <div beam-state='{"open1": false, "open2": false, "open3": false}' class="reactive-demo">
+          <div class="demo-actions">
+            <button type="button" beam-state-toggle="open1">Toggle Menu</button>
+            <button type="button" beam-state-toggle="open2">Toggle Panel</button>
+            <button type="button" beam-state-toggle="open3">Toggle Details</button>
+          </div>
+
+          <div beam-show="open1" class="toggle-content">
+            <p><strong>Menu</strong></p>
+            <p>This content is controlled by state.</p>
+            <ul>
+              <li>Item 1</li>
+              <li>Item 2</li>
+              <li>Item 3</li>
+            </ul>
+          </div>
+
+          <div beam-show="open2" class="toggle-content">
+            <p><strong>Panel</strong></p>
+            <p>Also controlled by state — no server round-trip.</p>
+          </div>
+
+          <div beam-show="open3" class="details-content">
+            <p><strong>Details</strong></p>
+            <p>This section expands/collapses via state.</p>
+          </div>
         </div>
       </div>
 
-      {/* Dropdown */}
+      {/* Reactive Dropdown */}
       <div class="demo-section">
-        <h2>16. Dropdown (beam-dropdown) - No Server</h2>
-        <p class="text-muted">Dropdowns with automatic outside-click and Escape key closing.</p>
-        <div class="demo-actions">
-          <div beam-dropdown>
-            <button beam-dropdown-trigger>Account Menu</button>
-            <div beam-dropdown-content beam-hidden>
-              <a href="#profile">Profile</a>
-              <a href="#settings">Settings</a>
-              <a href="#billing">Billing</a>
-              <a href="#logout">Logout</a>
-            </div>
+        <h2>16. Reactive Dropdown (beam-state) - No Server</h2>
+        <p class="text-muted">A dropdown is just state + conditional rendering.</p>
+        <div beam-state='{"open": false}' class="reactive-demo">
+          <button type="button" beam-state-toggle="open" class="dropdown-btn">
+            Account <span beam-show="!open">▼</span><span beam-show="open">▲</span>
+          </button>
+          <div beam-show="open" class="dropdown" style="margin-top: 0.5rem;">
+            <a href="#profile">Profile</a>
+            <a href="#settings">Settings</a>
+            <a href="#logout">Logout</a>
           </div>
-          <div beam-dropdown>
-            <button beam-dropdown-trigger>Actions</button>
-            <div beam-dropdown-content beam-hidden>
-              <a href="#edit">Edit</a>
-              <a href="#duplicate">Duplicate</a>
-              <a href="#delete">Delete</a>
-            </div>
-          </div>
-          <div beam-dropdown>
-            <button beam-dropdown-trigger>Help</button>
-            <div beam-dropdown-content beam-hidden>
-              <a href="#docs">Documentation</a>
-              <a href="#support">Support</a>
-              <a href="#feedback">Send Feedback</a>
-            </div>
-          </div>
-        </div>
-        <p class="text-muted" style="margin-top: 1rem;">
-          <strong>Tip:</strong> Click outside or press Escape to close. Only one dropdown is open at a time.
-        </p>
-      </div>
-
-      {/* Collapse */}
-      <div class="demo-section">
-        <h2>17. Collapse (beam-collapse) - No Server</h2>
-        <p class="text-muted">Expand/collapse with automatic button text swap.</p>
-        <button beam-collapse="#collapse-content" beam-collapse-text="Show less details">Show more details</button>
-        <div id="collapse-content" beam-collapsed class="details-content">
-          <p><strong>Expanded Content!</strong></p>
-          <p>Notice how the button text changed from "Show more details" to "Show less details".</p>
-          <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.</p>
         </div>
       </div>
 
-      {/* Class Toggle */}
+      {/* Reactive Collapse */}
       <div class="demo-section">
-        <h2>18. Class Toggle (beam-class-toggle) - No Server</h2>
-        <p class="text-muted">Toggle CSS classes on target elements.</p>
-        <button beam-class-toggle="highlighted" beam-class-target="#highlight-target">Toggle Highlight</button>
-        <div id="highlight-target" class="highlight-box">
-          This box will get the "highlighted" class toggled when you click the button.
+        <h2>17. Reactive Collapse (beam-state-toggle) - No Server</h2>
+        <p class="text-muted">Collapse is a boolean + conditional content.</p>
+        <div beam-state='{"open": false}' class="reactive-demo">
+          <button type="button" beam-state-toggle="open">
+            <span beam-show="!open">Show more details</span>
+            <span beam-show="open">Show less details</span>
+          </button>
+          <div beam-show="open" class="details-content">
+            <p><strong>Expanded Content!</strong></p>
+            <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit.</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Reactive Class Toggle */}
+      <div class="demo-section">
+        <h2>18. Reactive Class Toggle (beam-class + beam-state-toggle) - No Server</h2>
+        <p class="text-muted">Bind classes to state instead of mutating the DOM.</p>
+        <div beam-state='{"highlighted": false}' class="reactive-demo">
+          <button type="button" beam-state-toggle="highlighted">Toggle Highlight</button>
+          <div beam-class="highlighted: highlighted" class="highlight-box">
+            This box gets the "highlighted" class when state is true.
+          </div>
         </div>
       </div>
 
@@ -1411,19 +1368,21 @@ export default createRoute(async (c) => {
       {/* Combined Example */}
       <div class="demo-section">
         <h2>19. Combined Example - Navigation Pattern</h2>
-        <p class="text-muted">Multiple toggles controlling the same target (mobile menu pattern).</p>
-        <div class="demo-actions">
-          <button beam-toggle="#mobile-menu">Open Menu</button>
-          <button beam-toggle="#mobile-menu">Toggle Menu</button>
-        </div>
-        <div id="mobile-menu" beam-hidden beam-transition="slide" class="toggle-content">
-          <nav style="display: flex; flex-direction: column; gap: 0.5rem;">
-            <a href="#home" style="padding: 0.5rem; color: #333;">Home</a>
-            <a href="#products" style="padding: 0.5rem; color: #333;">Products</a>
-            <a href="#about" style="padding: 0.5rem; color: #333;">About</a>
-            <a href="#contact" style="padding: 0.5rem; color: #333;">Contact</a>
-          </nav>
-          <button beam-toggle="#mobile-menu" style="margin-top: 1rem;">Close Menu</button>
+        <p class="text-muted">Multiple buttons controlling the same state (mobile menu pattern).</p>
+        <div beam-state='{"open": false}' class="reactive-demo">
+          <div class="demo-actions">
+            <button type="button" beam-state-toggle="open=true">Open Menu</button>
+            <button type="button" beam-state-toggle="open">Toggle Menu</button>
+          </div>
+          <div beam-show="open" class="toggle-content">
+            <nav style="display: flex; flex-direction: column; gap: 0.5rem;">
+              <a href="#home" style="padding: 0.5rem; color: #333;">Home</a>
+              <a href="#products" style="padding: 0.5rem; color: #333;">Products</a>
+              <a href="#about" style="padding: 0.5rem; color: #333;">About</a>
+              <a href="#contact" style="padding: 0.5rem; color: #333;">Contact</a>
+            </nav>
+            <button type="button" beam-state-toggle="open=false" style="margin-top: 1rem;">Close Menu</button>
+          </div>
         </div>
       </div>
     </Layout>

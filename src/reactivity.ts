@@ -121,7 +121,7 @@ function createReactiveProxy<T extends object>(obj: T): T {
         // Make nested objects reactive
         if (val && typeof val === 'object' && !Array.isArray(val)) {
           val = createReactiveProxy(val as object)
-          ;(target as Record<string, unknown>)[prop] = val
+            ; (target as Record<string, unknown>)[prop] = val
         }
         signals.set(prop, createSignal(val))
       }
@@ -129,7 +129,7 @@ function createReactiveProxy<T extends object>(obj: T): T {
     },
     set(target, prop, value) {
       if (typeof prop === 'symbol') {
-        ;(target as Record<symbol, unknown>)[prop] = value
+        ; (target as Record<symbol, unknown>)[prop] = value
         return true
       }
       if (!signals.has(prop)) {
@@ -137,7 +137,7 @@ function createReactiveProxy<T extends object>(obj: T): T {
       } else {
         writeSignal(signals.get(prop)!, value)
       }
-      ;(target as Record<string, unknown>)[prop] = value
+      ; (target as Record<string, unknown>)[prop] = value
       return true
     },
   }) as T
@@ -200,6 +200,56 @@ function isInReactiveScope(el: Element, scopeRoot: Element): boolean {
 
 // --- Binding Processor ---
 function processReactiveBindings(root: HTMLElement, _state: object): void {
+  // beam-state-toggle: toggle (or set) a boolean state property
+  // Usage:
+  //   <button beam-state-toggle="open">Toggle</button>
+  //   <button beam-state-toggle="open=true">Open</button>
+  //   <button beam-state-toggle="open=false">Close</button>
+  // Works with named state via beam-state-ref.
+  root.querySelectorAll<HTMLElement>('[beam-state-toggle]').forEach((el) => {
+    if (!isInReactiveScope(el, root)) return
+    if (el.hasAttribute('beam-state-toggle-bound')) return
+    el.setAttribute('beam-state-toggle-bound', '')
+
+    const spec = (el.getAttribute('beam-state-toggle') || '').trim()
+    if (!spec) {
+      console.warn('[beam] beam-state-toggle requires a property name (e.g., beam-state-toggle="open")')
+      return
+    }
+
+    const [rawKey, rawValue] = spec.split('=', 2)
+    const key = rawKey.trim()
+    const valueSpec = rawValue?.trim()
+
+    el.addEventListener('click', () => {
+      const state = getReactiveState(el) as Record<string, unknown> | null
+      if (!state) return
+
+      const current = state[key]
+      let next: unknown
+
+      if (valueSpec === 'true') next = true
+      else if (valueSpec === 'false') next = false
+      else if (valueSpec === 'null') next = null
+      else if (valueSpec != null && valueSpec !== '') {
+        // If value is provided but not a boolean keyword, store as string
+        next = valueSpec
+      } else {
+        // Default: boolean toggle
+        next = !Boolean(current)
+      }
+
+      state[key] = next
+
+      if (typeof next === 'boolean') {
+        el.setAttribute('aria-pressed', String(next))
+        if (el.hasAttribute('aria-expanded')) {
+          el.setAttribute('aria-expanded', String(next))
+        }
+      }
+    })
+  })
+
   // beam-text: text interpolation
   root.querySelectorAll<HTMLElement>('[beam-text]').forEach((el) => {
     if (!isInReactiveScope(el, root)) return
@@ -308,7 +358,7 @@ function processReactiveBindings(root: HTMLElement, _state: object): void {
         } else {
           val = inputEl.value
         }
-        ;(state as Record<string, unknown>)[prop] = val
+        ; (state as Record<string, unknown>)[prop] = val
       }
     }
     el.addEventListener('input', updateState)
@@ -339,7 +389,7 @@ function parseClassExpr(raw: string): string {
 
     // Check if already quoted (for space-separated class names)
     if ((className.startsWith("'") && className.endsWith("'")) ||
-        (className.startsWith('"') && className.endsWith('"'))) {
+      (className.startsWith('"') && className.endsWith('"'))) {
       entries.push(`${className}: ${expr}`)
     } else {
       // Quote the class name to handle hyphens (e.g., 'text-red')
@@ -549,7 +599,7 @@ function setupRefElements(): void {
           } else {
             val = inputEl.value
           }
-          ;(state as Record<string, unknown>)[prop] = val
+          ; (state as Record<string, unknown>)[prop] = val
         }
       }
       el.addEventListener('input', updateState)
@@ -616,7 +666,7 @@ if (typeof document !== 'undefined') {
 
 // Expose on window for standalone usage
 if (typeof window !== 'undefined') {
-  ;(window as unknown as { beamReactivity: typeof beamReactivity }).beamReactivity = beamReactivity
+  ; (window as unknown as { beamReactivity: typeof beamReactivity }).beamReactivity = beamReactivity
 }
 
 // Export for standalone usage

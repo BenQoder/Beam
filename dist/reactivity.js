@@ -179,6 +179,55 @@ function isInReactiveScope(el, scopeRoot) {
 }
 // --- Binding Processor ---
 function processReactiveBindings(root, _state) {
+    // beam-state-toggle: toggle (or set) a boolean state property
+    // Usage:
+    //   <button beam-state-toggle="open">Toggle</button>
+    //   <button beam-state-toggle="open=true">Open</button>
+    //   <button beam-state-toggle="open=false">Close</button>
+    // Works with named state via beam-state-ref.
+    root.querySelectorAll('[beam-state-toggle]').forEach((el) => {
+        if (!isInReactiveScope(el, root))
+            return;
+        if (el.hasAttribute('beam-state-toggle-bound'))
+            return;
+        el.setAttribute('beam-state-toggle-bound', '');
+        const spec = (el.getAttribute('beam-state-toggle') || '').trim();
+        if (!spec) {
+            console.warn('[beam] beam-state-toggle requires a property name (e.g., beam-state-toggle="open")');
+            return;
+        }
+        const [rawKey, rawValue] = spec.split('=', 2);
+        const key = rawKey.trim();
+        const valueSpec = rawValue?.trim();
+        el.addEventListener('click', () => {
+            const state = getReactiveState(el);
+            if (!state)
+                return;
+            const current = state[key];
+            let next;
+            if (valueSpec === 'true')
+                next = true;
+            else if (valueSpec === 'false')
+                next = false;
+            else if (valueSpec === 'null')
+                next = null;
+            else if (valueSpec != null && valueSpec !== '') {
+                // If value is provided but not a boolean keyword, store as string
+                next = valueSpec;
+            }
+            else {
+                // Default: boolean toggle
+                next = !Boolean(current);
+            }
+            state[key] = next;
+            if (typeof next === 'boolean') {
+                el.setAttribute('aria-pressed', String(next));
+                if (el.hasAttribute('aria-expanded')) {
+                    el.setAttribute('aria-expanded', String(next));
+                }
+            }
+        });
+    });
     // beam-text: text interpolation
     root.querySelectorAll('[beam-text]').forEach((el) => {
         if (!isInReactiveScope(el, root))

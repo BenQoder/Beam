@@ -14,7 +14,7 @@ export default createRoute(async (c) => {
         <h2>1. Live Search (beam-action + beam-watch)</h2>
         <p class="text-muted">
           Input with <code>beam-action</code> + <code>beam-watch="input"</code> triggers on every keystroke.
-          <br/>
+          <br />
           <strong>Expected:</strong> Results update as you type (debounced).
         </p>
         <div class="input-group">
@@ -38,7 +38,7 @@ export default createRoute(async (c) => {
         <h2>2. Auto-Save Input (beam-watch="change")</h2>
         <p class="text-muted">
           Input saves automatically on change (blur). No form needed.
-          <br/>
+          <br />
           <strong>Expected:</strong> Value saves when you leave the field.
         </p>
         <div class="input-group">
@@ -64,7 +64,7 @@ export default createRoute(async (c) => {
         <h2>3. Real-time Input Feedback (beam-watch="input")</h2>
         <p class="text-muted">
           Shows character count and validation as you type.
-          <br/>
+          <br />
           <strong>Expected:</strong> Feedback updates on every keystroke.
         </p>
         <div class="input-group">
@@ -90,7 +90,7 @@ export default createRoute(async (c) => {
         <h2>4. Select Dropdown (beam-watch="change")</h2>
         <p class="text-muted">
           Dropdown triggers action on selection change.
-          <br/>
+          <br />
           <strong>Expected:</strong> Content updates when selection changes.
         </p>
         <div class="input-group">
@@ -117,7 +117,7 @@ export default createRoute(async (c) => {
         <h2>5. Checkbox Filters (beam-watch="change")</h2>
         <p class="text-muted">
           Checkboxes trigger filtering on change.
-          <br/>
+          <br />
           <strong>Expected:</strong> Results filter when checkboxes are toggled.
         </p>
         <div class="filter-group">
@@ -165,7 +165,7 @@ export default createRoute(async (c) => {
         <h2>6. Radio Buttons (beam-watch="change")</h2>
         <p class="text-muted">
           Radio buttons trigger action on selection.
-          <br/>
+          <br />
           <strong>Expected:</strong> Price updates when plan is selected.
         </p>
         <div class="radio-group">
@@ -213,7 +213,7 @@ export default createRoute(async (c) => {
         <h2>7. Form with Real-time Validation</h2>
         <p class="text-muted">
           Form fields validate individually as you type, form submits as a whole.
-          <br/>
+          <br />
           <strong>Expected:</strong> Each field shows validation feedback, form submits when valid.
         </p>
         <form beam-action="submitContact" beam-target="#contact-result">
@@ -265,7 +265,7 @@ export default createRoute(async (c) => {
         <h2>8. Autocomplete / Typeahead</h2>
         <p class="text-muted">
           Input shows suggestions as you type, click to select.
-          <br/>
+          <br />
           <strong>Expected:</strong> Dropdown appears with matching suggestions.
         </p>
         <div class="autocomplete-wrapper">
@@ -293,7 +293,7 @@ export default createRoute(async (c) => {
         <h2>9. Dependent Fields (Country → State)</h2>
         <p class="text-muted">
           Second select updates based on first selection.
-          <br/>
+          <br />
           <strong>Expected:</strong> States populate when country is selected.
         </p>
         <div class="input-row">
@@ -327,7 +327,7 @@ export default createRoute(async (c) => {
         <h2>10. Inline Edit (Click to Edit)</h2>
         <p class="text-muted">
           Click text to edit, saves on blur or Enter.
-          <br/>
+          <br />
           <strong>Expected:</strong> Text becomes editable input, saves when done.
         </p>
         <div id="inline-edit-container">
@@ -348,7 +348,7 @@ export default createRoute(async (c) => {
         <h2>11. Range Slider (beam-throttle)</h2>
         <p class="text-muted">
           Range input updates display as you drag using <code>beam-throttle</code> instead of debounce.
-          <br/>
+          <br />
           <strong>Expected:</strong> Value updates at regular intervals while dragging (not delayed).
         </p>
         <div class="range-group">
@@ -375,7 +375,7 @@ export default createRoute(async (c) => {
         <h2>12. Conditional Trigger (beam-watch-if)</h2>
         <p class="text-muted">
           Search only triggers when input is at least 3 characters.
-          <br/>
+          <br />
           <strong>Expected:</strong> No request until you type 3+ characters.
         </p>
         <div class="input-group">
@@ -400,7 +400,7 @@ export default createRoute(async (c) => {
         <h2>13. Loading Class (beam-loading-class)</h2>
         <p class="text-muted">
           Input gets a custom class while request is in progress.
-          <br/>
+          <br />
           <strong>Expected:</strong> Input border turns blue and pulses while loading.
         </p>
         <div class="input-group">
@@ -425,7 +425,7 @@ export default createRoute(async (c) => {
         <h2>14. Dirty Form Tracking (beam-dirty-track)</h2>
         <p class="text-muted">
           Form tracks changes and shows dirty indicator.
-          <br/>
+          <br />
           <strong>Expected:</strong> Asterisk appears after you modify any field. Revert button restores original values.
         </p>
         <form id="dirty-form" beam-dirty-track>
@@ -461,7 +461,7 @@ export default createRoute(async (c) => {
         <h2>15. Unsaved Changes Warning (beam-warn-unsaved)</h2>
         <p class="text-muted">
           Form warns before navigating away if there are unsaved changes.
-          <br/>
+          <br />
           <strong>Expected:</strong> Modify a field, then try to close/refresh the page. Browser should warn you.
         </p>
         <form beam-dirty-track beam-warn-unsaved>
@@ -477,7 +477,7 @@ export default createRoute(async (c) => {
         <h2>16. Conditional Fields (beam-enable-if, beam-visible-if)</h2>
         <p class="text-muted">
           Fields enable/disable or show/hide based on other field values.
-          <br/>
+          <br />
           <strong>Expected:</strong> Check "Subscribe" to enable email input. Select "Other" to show custom input.
         </p>
         <div class="form-group">
@@ -520,7 +520,7 @@ export default createRoute(async (c) => {
         <h2>17. Required-If (beam-required-if)</h2>
         <p class="text-muted">
           Field becomes required based on another field's state.
-          <br/>
+          <br />
           <strong>Expected:</strong> Check "Business account" to make company name required (shows red border on submit).
         </p>
         <form onsubmit="event.preventDefault(); alert('Form submitted!')">
@@ -548,7 +548,7 @@ export default createRoute(async (c) => {
         <h2>18. Include Inputs (beam-include)</h2>
         <p class="text-muted">
           Collect values from inputs by <code>beam-id</code>, <code>id</code>, or <code>name</code> and include in action params.
-          <br/>
+          <br />
           <strong>Expected:</strong> Button collects input values and sends them to the action. Types are auto-converted.
         </p>
         <div class="input-row">
@@ -618,7 +618,7 @@ export default createRoute(async (c) => {
         <h2>19. Beam-Keep Test (beam-keep)</h2>
         <p class="text-muted">
           Tests that <code>beam-keep</code> prevents an element from being replaced during updates.
-          <br/>
+          <br />
           <strong>Expected:</strong> Only the element WITHOUT beam-keep should update. The beam-keep element stays unchanged.
         </p>
         <div
@@ -648,9 +648,9 @@ export default createRoute(async (c) => {
         <h2>20. Beam-Keep Removal Test (Form Swap)</h2>
         <p class="text-muted">
           Tests that <code>beam-keep</code> elements are <strong>removed</strong> when they don't exist in the new DOM.
-          <br/>
+          <br />
           <code>beam-keep</code> preserves values during <em>updates</em>, but allows <em>removal</em> when the element is gone.
-          <br/>
+          <br />
           <strong>Expected:</strong> Type in the input, click "Submit" → form swaps to success message, input is GONE (not preserved).
         </p>
         <div id="keep-removal-container">
@@ -676,7 +676,7 @@ export default createRoute(async (c) => {
           </div>
         </div>
         <p class="text-muted" style="margin-top: 1rem;">
-          <strong>Before fix:</strong> Input would persist below the success message (bug).<br/>
+          <strong>Before fix:</strong> Input would persist below the success message (bug).<br />
           <strong>After fix:</strong> Input is properly removed when form swaps.
         </p>
       </div>

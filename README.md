@@ -365,20 +365,20 @@ Async components are awaited automatically - no manual `Promise.resolve()` or he
 
 ### Actions
 
-| Attribute             | Description                                                  | Example                                     |
-| --------------------- | ------------------------------------------------------------ | ------------------------------------------- |
-| `beam-action`         | Action name to call                                          | `beam-action="increment"`                   |
-| `beam-target`         | CSS selector for where to render response                    | `beam-target="#counter"`                    |
-| `beam-data-*`         | Pass data to the action                                      | `beam-data-id="123"`                        |
-| `beam-include`        | Include values from inputs by beam-id, id, or name           | `beam-include="name,email,age"`             |
-| `beam-swap`           | How to swap content: `replace`, `append`, `prepend`, `delete`         | `beam-swap="replace"`                |
-| `beam-confirm`        | Show confirmation dialog before action                       | `beam-confirm="Delete this item?"`          |
-| `beam-confirm-prompt` | Require typing text to confirm                               | `beam-confirm-prompt="Type DELETE\|DELETE"` |
-| `beam-instant`        | Trigger on mousedown instead of click                        | `beam-instant`                              |
-| `beam-disable`        | Disable element(s) during request                            | `beam-disable` or `beam-disable="#btn"`     |
-| `beam-placeholder`    | Show placeholder in target while loading                     | `beam-placeholder="<p>Loading...</p>"`      |
-| `beam-push`           | Push URL to browser history after action                     | `beam-push="/new-url"`                      |
-| `beam-replace`        | Replace current URL in history                               | `beam-replace="?page=2"`                    |
+| Attribute             | Description                                                   | Example                                     |
+| --------------------- | ------------------------------------------------------------- | ------------------------------------------- |
+| `beam-action`         | Action name to call                                           | `beam-action="increment"`                   |
+| `beam-target`         | CSS selector for where to render response                     | `beam-target="#counter"`                    |
+| `beam-data-*`         | Pass data to the action                                       | `beam-data-id="123"`                        |
+| `beam-include`        | Include values from inputs by beam-id, id, or name            | `beam-include="name,email,age"`             |
+| `beam-swap`           | How to swap content: `replace`, `append`, `prepend`, `delete` | `beam-swap="replace"`                       |
+| `beam-confirm`        | Show confirmation dialog before action                        | `beam-confirm="Delete this item?"`          |
+| `beam-confirm-prompt` | Require typing text to confirm                                | `beam-confirm-prompt="Type DELETE\|DELETE"` |
+| `beam-instant`        | Trigger on mousedown instead of click                         | `beam-instant`                              |
+| `beam-disable`        | Disable element(s) during request                             | `beam-disable` or `beam-disable="#btn"`     |
+| `beam-placeholder`    | Show placeholder in target while loading                      | `beam-placeholder="<p>Loading...</p>"`      |
+| `beam-push`           | Push URL to browser history after action                      | `beam-push="/new-url"`                      |
+| `beam-replace`        | Replace current URL in history                                | `beam-replace="?page=2"`                    |
 
 Swap notes:
 
@@ -389,7 +389,7 @@ Swap notes:
 
 Swap transitions (optional):
 
-Add `beam-swap-transition` on the *target* element to animate after swaps:
+Add `beam-swap-transition` on the _target_ element to animate after swaps:
 
 ```html
 <div id="results" beam-swap-transition="fade"></div>
@@ -571,40 +571,9 @@ return ctx.drawer(render(<MyDrawer />), { position: "left", size: "medium" });
 | ----------- | ----------------------------------- | ------------------- |
 | `beam-keep` | Preserve element during DOM updates | `<video beam-keep>` |
 
-### Client-Side UI State (No Server Round-Trip)
+### Client-Side Reactive State (No Server Round-Trip)
 
-These attributes handle UI state entirely on the client, without making server requests. Perfect for menus, dropdowns, accordions, and other interactive UI patterns.
-
-#### Toggle
-
-| Attribute         | Description                                     | Example                  |
-| ----------------- | ----------------------------------------------- | ------------------------ |
-| `beam-toggle`     | Toggle visibility of target element             | `beam-toggle="#menu"`    |
-| `beam-hidden`     | Mark element as initially hidden                | `<div beam-hidden>`      |
-| `beam-transition` | Add transition effect: `fade`, `slide`, `scale` | `beam-transition="fade"` |
-
-#### Dropdown
-
-| Attribute               | Description                                   | Example                                   |
-| ----------------------- | --------------------------------------------- | ----------------------------------------- |
-| `beam-dropdown`         | Container for dropdown (provides positioning) | `<div beam-dropdown>`                     |
-| `beam-dropdown-trigger` | Button that opens the dropdown                | `<button beam-dropdown-trigger>`          |
-| `beam-dropdown-content` | The dropdown content (add `beam-hidden`)      | `<div beam-dropdown-content beam-hidden>` |
-
-#### Collapse
-
-| Attribute            | Description                         | Example                          |
-| -------------------- | ----------------------------------- | -------------------------------- |
-| `beam-collapse`      | Toggle collapsed state of target    | `beam-collapse="#details"`       |
-| `beam-collapsed`     | Mark element as initially collapsed | `<div beam-collapsed>`           |
-| `beam-collapse-text` | Swap button text when toggled       | `beam-collapse-text="Show less"` |
-
-#### Class Toggle
-
-| Attribute           | Description                       | Example                        |
-| ------------------- | --------------------------------- | ------------------------------ |
-| `beam-class-toggle` | CSS class to toggle               | `beam-class-toggle="active"`   |
-| `beam-class-target` | Target element (defaults to self) | `beam-class-target="#sidebar"` |
+Beam supports a single client-side UI model: reactive state + declarative bindings. Use `beam-state` to define state, `beam-show` / `beam-class` / `beam-text` / `beam-attr-*` to bind UI, and `beam-click` / `beam-model` / `beam-state-toggle` to mutate state.
 
 #### Reactive State
 
@@ -620,6 +589,7 @@ Fine-grained reactivity for UI components (carousels, tabs, accordions) without 
 | `beam-show`      | Show/hide element based on expression                     | `beam-show="open"`                 |
 | `beam-class`     | Toggle classes (simplified or JSON syntax)                | `beam-class="active: tab === 0"`   |
 | `beam-click`     | Click handler that mutates state                          | `beam-click="open = !open"`        |
+| `beam-state-toggle` | Toggle (or set) a state property (sugar)               | `beam-state-toggle="open"`         |
 | `beam-model`     | Two-way binding for inputs                                | `beam-model="firstName"`           |
 
 ---
@@ -628,12 +598,12 @@ Fine-grained reactivity for UI components (carousels, tabs, accordions) without 
 
 Control how content is inserted into the target element:
 
-| Mode      | Description                                               |
-| --------- | --------------------------------------------------------- |
+| Mode      | Description                                                                                 |
+| --------- | ------------------------------------------------------------------------------------------- |
 | `replace` | Replace target HTML (default) while preserving focus and `beam-keep` elements when possible |
-| `append`  | Add to the end of target                                  |
-| `prepend` | Add to the beginning of target                            |
-| `delete`  | Remove the target element                                 |
+| `append`  | Add to the end of target                                                                    |
+| `prepend` | Add to the beginning of target                                                              |
+| `delete`  | Remove the target element                                                                   |
 
 ```html
 <!-- Append new items to a list -->
@@ -1372,90 +1342,9 @@ Preserve specific elements during DOM updates (useful for video players, animati
 
 ---
 
-## Client-Side UI State
+## Client-Side Reactive State
 
-These features handle UI interactions entirely on the client without server requests. They replace common Alpine.js patterns.
-
-### Toggle
-
-Show/hide elements with optional transitions:
-
-```html
-<!-- Basic toggle -->
-<button beam-toggle="#menu">Toggle Menu</button>
-<div id="menu" beam-hidden>
-  <a href="/home">Home</a>
-  <a href="/about">About</a>
-</div>
-
-<!-- With fade transition -->
-<button beam-toggle="#panel">Show Panel</button>
-<div id="panel" beam-hidden beam-transition="fade">
-  Fades in and out smoothly
-</div>
-
-<!-- With slide transition -->
-<button beam-toggle="#dropdown">Open</button>
-<div id="dropdown" beam-hidden beam-transition="slide">
-  Slides down from top
-</div>
-```
-
-The trigger button automatically gets `aria-expanded` attribute updated.
-
-### Dropdown
-
-Dropdowns with automatic outside-click closing and Escape key support:
-
-```html
-<div beam-dropdown>
-  <button beam-dropdown-trigger>Account ▼</button>
-  <div beam-dropdown-content beam-hidden>
-    <a href="/profile">Profile</a>
-    <a href="/settings">Settings</a>
-    <a href="/logout">Logout</a>
-  </div>
-</div>
-```
-
-Features:
-
-- Click outside to close
-- Press Escape to close
-- Only one dropdown open at a time
-- Automatic `aria-expanded` management
-
-### Collapse
-
-Expand/collapse content with automatic button text swapping:
-
-```html
-<button beam-collapse="#details" beam-collapse-text="Show less">
-  Show more
-</button>
-<div id="details" beam-collapsed>
-  <p>This content is initially hidden.</p>
-  <p>Click the button to expand/collapse.</p>
-  <p>Notice the button text changes automatically!</p>
-</div>
-```
-
-The button text swaps between "Show more" and "Show less" on each click.
-
-### Class Toggle
-
-Toggle CSS classes on elements:
-
-```html
-<!-- Toggle class on another element -->
-<button beam-class-toggle="active" beam-class-target="#sidebar">
-  Toggle Sidebar
-</button>
-<div id="sidebar">Sidebar content</div>
-
-<!-- Toggle class on self -->
-<button beam-class-toggle="pressed">Toggle Me</button>
-```
+Beam uses a single client-side UI model: reactive state + declarative bindings.
 
 ### Reactive State
 
@@ -1467,7 +1356,7 @@ Fine-grained reactivity for UI components like carousels, tabs, accordions, and 
 
 ```html
 <div beam-state="false" beam-id="open">
-  <button beam-click="open = !open">Toggle</button>
+  <button type="button" beam-state-toggle="open">Toggle</button>
   <div beam-show="open">Content</div>
 </div>
 
@@ -1632,44 +1521,9 @@ const state = beamReactivity.getState("my-state");
 state.count++;
 ```
 
-### CSS for Transitions
+### CSS
 
-Include the Beam CSS for transition support:
-
-```css
-/* Required base styles */
-[beam-hidden] {
-  display: none !important;
-}
-[beam-collapsed] {
-  display: none !important;
-}
-
-/* Fade transition */
-[beam-transition="fade"] {
-  transition: opacity 150ms ease-out;
-}
-[beam-transition="fade"][beam-hidden] {
-  opacity: 0;
-  pointer-events: none;
-  display: block !important;
-}
-
-/* Slide transition */
-[beam-transition="slide"] {
-  transition:
-    opacity 150ms ease-out,
-    transform 150ms ease-out;
-}
-[beam-transition="slide"][beam-hidden] {
-  opacity: 0;
-  transform: translateY(-10px);
-  pointer-events: none;
-  display: block !important;
-}
-```
-
-Or import the included CSS:
+Or import the included CSS (swap transitions, modal/drawer styles):
 
 ```typescript
 import "@benqoder/beam/styles";
@@ -1691,9 +1545,9 @@ import "@benqoder/beam/beam.css";
 **After (Beam):**
 
 ```html
-<div>
-  <button beam-toggle="#menu">Menu</button>
-  <div id="menu" beam-hidden>Content</div>
+<div beam-state='{"open": false}'>
+  <button type="button" beam-state-toggle="open">Menu</button>
+  <div beam-show="open">Content</div>
 </div>
 ```
 
@@ -1709,9 +1563,9 @@ import "@benqoder/beam/beam.css";
 **After (Beam):**
 
 ```html
-<div beam-dropdown>
-  <button beam-dropdown-trigger>Account</button>
-  <div beam-dropdown-content beam-hidden>Dropdown</div>
+<div beam-state='{"open": false}'>
+  <button type="button" beam-state-toggle="open">Account</button>
+  <div beam-show="open">Dropdown</div>
 </div>
 ```
 
