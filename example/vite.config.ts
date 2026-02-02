@@ -6,11 +6,6 @@ import { beamPlugin } from '@benqoder/beam/vite'
 
 export default defineConfig(({ mode }) => {
   const common = {
-    resolve: {
-      alias: {
-        'idiomorph': 'idiomorph/dist/idiomorph.esm.js',
-      },
-    },
     plugins: [
       beamPlugin({
         actions: '/app/actions/*.tsx',

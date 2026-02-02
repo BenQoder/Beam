@@ -12,8 +12,7 @@
     "@benqoder/beam": "file:..",
     "capnweb": "^0.4.0",
     "hono": "^4.6.0",
-    "honox": "^0.1.0",
-    "idiomorph": "^0.3.0"
+    "honox": "^0.1.0"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20241127.0",

@@ -12,6 +12,38 @@
 
 /* === TRANSITIONS === */
 
+/* === SWAP TRANSITIONS (for server-driven updates) === */
+/* Usage: <div beam-swap-transition="fade">...</div>
+   Beam briefly adds .beam-swap-enter after swap and removes it next frame. */
+
+[beam-swap-transition="fade"] {
+  transition: opacity 150ms ease-out;
+}
+
+[beam-swap-transition="fade"].beam-swap-enter {
+  opacity: 0;
+}
+
+[beam-swap-transition="slide"] {
+  transition: opacity 150ms ease-out, transform 150ms ease-out;
+  transform-origin: top;
+}
+
+[beam-swap-transition="slide"].beam-swap-enter {
+  opacity: 0;
+  transform: translateY(-10px);
+}
+
+[beam-swap-transition="scale"] {
+  transition: opacity 150ms ease-out, transform 150ms ease-out;
+  transform-origin: top;
+}
+
+[beam-swap-transition="scale"].beam-swap-enter {
+  opacity: 0;
+  transform: scale(0.98);
+}
+
 /* Fade transition */
 [beam-transition="fade"] {
   transition: opacity 150ms ease-out;

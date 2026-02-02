@@ -29,7 +29,7 @@ export interface RenderOptions {
   script?: string
   /** CSS selector for target element (overrides frontend target) */
   target?: string
-  /** Swap mode: 'morph' | 'replace' | 'append' | 'prepend' | 'delete' */
+  /** Swap mode: 'replace' | 'append' | 'prepend' | 'delete' */
   swap?: string
 }
 
@@ -53,7 +53,7 @@ export interface BeamContext<TEnv = object> {
    * Accepts JSX directly (converts to string), single string, or array for multi-target rendering.
    * @example ctx.render(<ProductList />, { script: 'playSound("ding")' })
    * @example ctx.render([<StatsWidget />, <NotificationList />], { target: '#stats, #notifications' })
-   * @example ctx.render([<div beam-id="stats">...</div>, <div beam-id="notifications">...</div>]) // auto-detects targets by beam-id / beam-item-id
+   * @example ctx.render([<div id="stats">...</div>, <div beam-id="notifications">...</div>]) // auto-detects targets by id / beam-id / beam-item-id (priority: id → beam-id → beam-item-id)
    */
   render(
     content: string | Promise<string> | (string | Promise<string>)[],
@@ -142,7 +142,7 @@ export interface ActionResponse {
   redirect?: string
   /** CSS selector for target element (optional - overrides frontend target). Can be comma-separated for array html: "#a, #b, #c" */
   target?: string
-  /** Swap mode: 'morph' | 'replace' | 'append' | 'prepend' | 'delete' (optional) */
+  /** Swap mode: 'replace' | 'append' | 'prepend' | 'delete' (optional) */
   swap?: string
   /** Open a modal with HTML content */
   modal?: string | ModalOptions

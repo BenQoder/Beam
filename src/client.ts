@@ -1,4 +1,3 @@
-import { Idiomorph } from 'idiomorph'
 import { newWebSocketRpcSession, type RpcStub } from 'capnweb'
 import { beamReactivity } from './reactivity'
 
@@ -221,7 +220,7 @@ function $$(selector: string): NodeListOf<Element> {
   return document.querySelectorAll(selector)
 }
 
-type MorphStyle = 'innerHTML' | 'outerHTML'
+type HtmlApplyStyle = 'innerHTML' | 'outerHTML'
 
 function normalizeHtmlForTarget(target: Element, html: string): string {
   const temp = document.createElement('div')
@@ -234,6 +233,10 @@ function normalizeHtmlForTarget(target: Element, html: string): string {
   const root = temp.firstElementChild
   if (!root) return html
 
+  const targetId = target instanceof HTMLElement ? target.id : ''
+  const rootId = root instanceof HTMLElement ? root.id : ''
+  if (targetId && rootId && targetId === rootId) return root.innerHTML
+
   const targetBeamId = target.getAttribute('beam-id')
   const rootBeamId = root.getAttribute('beam-id')
   if (targetBeamId && rootBeamId && targetBeamId === rootBeamId) return root.innerHTML
@@ -245,48 +248,122 @@ function normalizeHtmlForTarget(target: Element, html: string): string {
   return html
 }
 
-function morph(
+function applyHtml(
   target: Element,
   html: string,
-  options?: { keepElements?: string[]; style?: MorphStyle }
+  options?: { keepElements?: string[]; style?: HtmlApplyStyle }
 ): void {
   const keepSelectors = options?.keepElements || []
-  const morphStyle: MorphStyle = options?.style || 'innerHTML'
+  const applyStyle: HtmlApplyStyle = options?.style || 'innerHTML'
 
-  // @ts-ignore - idiomorph types
-  Idiomorph.morph(target, html, {
-    morphStyle,
-    callbacks: {
-      // Skip morphing elements marked with beam-keep (preserves their current value)
-      // This only applies when both old and new DOM have a matching element
-      beforeNodeMorphed: (fromEl: Element, toEl: Element) => {
-        // Only handle Element nodes
-        if (!(fromEl instanceof Element)) return true
+  // Lightweight, dependency-free implementation:
+  // - Replaces innerHTML/outerHTML (no DOM diff)
+  // - Reinserts elements marked with [beam-keep] (matched by identity)
+  // - Restores focused input caret/selection when possible
 
-        // Check if element has beam-keep attribute
-        if (fromEl.hasAttribute('beam-keep')) {
-          // Don't morph this element - keep it as is
-          return false
-        }
+  const escapeCssLocal = (value: string): string => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const cssEscape = (window as any).CSS?.escape as ((v: string) => string) | undefined
+    if (cssEscape) return cssEscape(value)
+    return value.replace(/[^a-zA-Z0-9_-]/g, '\\$&')
+  }
 
-        // Check if element matches any keep selectors
-        for (const selector of keepSelectors) {
-          try {
-            if (fromEl.matches(selector)) {
-              return false
-            }
-          } catch {
-            // Invalid selector, ignore
-          }
-        }
+  const getIdentitySelector = (el: Element): string | null => {
+    const beamId = el.getAttribute('beam-id')
+    if (beamId) return `[beam-id="${escapeCssLocal(beamId)}"]`
 
-        return true
-      }
-      // Note: We intentionally do NOT prevent removal of beam-keep elements.
-      // If an element doesn't exist in the new DOM, it should be removed.
-      // beam-keep only preserves values during morphing, not during removal.
+    const beamItemId = el.getAttribute('beam-item-id')
+    if (beamItemId) return `[beam-item-id="${escapeCssLocal(beamItemId)}"]`
+
+    if (el instanceof HTMLElement && el.id) {
+      return `#${escapeCssLocal(el.id)}`
     }
+
+    if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement) {
+      const name = el.getAttribute('name')
+      if (name) return `${el.tagName.toLowerCase()}[name="${escapeCssLocal(name)}"]`
+    }
+
+    return null
+  }
+
+  const preserved: Array<{ selector: string; el: Element }> = []
+  const shouldPreserve = (el: Element): boolean => {
+    if (el.hasAttribute('beam-keep')) return true
+    for (const selector of keepSelectors) {
+      try {
+        if (el.matches(selector)) return true
+      } catch {
+        // Ignore invalid selectors
+      }
+    }
+    return false
+  }
+
+  target.querySelectorAll('*').forEach((el) => {
+    if (!shouldPreserve(el)) return
+    const selector = getIdentitySelector(el)
+    if (!selector) return
+    preserved.push({ selector, el })
   })
+
+  const active = document.activeElement
+  const activeState = (() => {
+    if (!(active instanceof HTMLElement)) return null
+    if (!target.contains(active)) return null
+    const selector = getIdentitySelector(active)
+    if (!selector) return null
+    if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) {
+      return {
+        selector,
+        selectionStart: active.selectionStart,
+        selectionEnd: active.selectionEnd,
+        selectionDirection: active.selectionDirection,
+        scrollLeft: active.scrollLeft,
+      }
+    }
+    return { selector }
+  })()
+
+  const htmlToApply = applyStyle === 'innerHTML' ? normalizeHtmlForTarget(target, html) : html
+
+  let nextTarget: Element = target
+  if (applyStyle === 'innerHTML') {
+    target.innerHTML = htmlToApply
+  } else {
+    const temp = document.createElement('div')
+    temp.innerHTML = htmlToApply.trim()
+    const replacement = temp.firstElementChild
+    if (!replacement) return
+    target.replaceWith(replacement)
+    nextTarget = replacement
+  }
+
+  // Reinsert preserved nodes where placeholders exist
+  for (const { selector, el } of preserved) {
+    const placeholder = nextTarget.querySelector(selector)
+    if (!placeholder) continue
+    if (placeholder === el) continue
+    placeholder.replaceWith(el)
+  }
+
+  // Restore focus + caret when possible
+  if (activeState) {
+    const el = nextTarget.querySelector(activeState.selector)
+    if (el instanceof HTMLElement) {
+      el.focus?.()
+      if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+        try {
+          if (typeof activeState.selectionStart === 'number' && typeof activeState.selectionEnd === 'number') {
+            el.setSelectionRange(activeState.selectionStart, activeState.selectionEnd, activeState.selectionDirection || undefined)
+          }
+          if (typeof activeState.scrollLeft === 'number') el.scrollLeft = activeState.scrollLeft
+        } catch {
+          // Ignore selection restore failures
+        }
+      }
+    }
+  }
 }
 
 function getParams(el: HTMLElement): Record<string, unknown> {
@@ -313,8 +390,8 @@ function getParams(el: HTMLElement): Record<string, unknown> {
     for (const id of ids) {
       // Find element by beam-id, id, or name (priority order)
       const inputEl = document.querySelector(`[beam-id="${id}"]`) ||
-                      document.getElementById(id) ||
-                      document.querySelector(`[name="${id}"]`)
+        document.getElementById(id) ||
+        document.querySelector(`[name="${id}"]`)
 
       if (inputEl) {
         params[id] = getIncludedInputValue(inputEl)
@@ -510,7 +587,7 @@ function optimistic(el: HTMLElement): OptimisticHandle {
       snapshot = targetEl.innerHTML
       const params = getParams(el)
       const html = template.replace(/\{\{(\w+)\}\}/g, (_, key) => String(params[key] ?? ''))
-      morph(targetEl, html)
+      applyHtml(targetEl, html)
     }
   }
 
@@ -518,7 +595,7 @@ function optimistic(el: HTMLElement): OptimisticHandle {
     rollback() {
       if (snapshot && targetSelector) {
         const targetEl = $(targetSelector)
-        if (targetEl) morph(targetEl, snapshot)
+        if (targetEl) applyHtml(targetEl, snapshot)
       }
     },
   }
@@ -566,9 +643,165 @@ function showPlaceholder(el: HTMLElement): PlaceholderHandle {
 
 // ============ SWAP STRATEGIES ============
 
+function escapeCss(value: string): string {
+  // CSS.escape is not available in some older browsers
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const cssEscape = (window as any).CSS?.escape as ((v: string) => string) | undefined
+  if (cssEscape) return cssEscape(value)
+  return value.replace(/[^a-zA-Z0-9_-]/g, '\\$&')
+}
+
+type PreservedNode = { selector: string; el: Element }
+
+function getPreserveSelector(el: Element): string | null {
+  const beamId = el.getAttribute('beam-id')
+  if (beamId) return `[beam-id="${escapeCss(beamId)}"]`
+
+  const beamItemId = el.getAttribute('beam-item-id')
+  if (beamItemId) return `[beam-item-id="${escapeCss(beamItemId)}"]`
+
+  if (el instanceof HTMLElement && el.id) {
+    return `#${escapeCss(el.id)}`
+  }
+
+  // For form controls, fall back to name+tag (helps keep Alpine state on inputs)
+  if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement) {
+    const name = el.getAttribute('name')
+    if (name) {
+      return `${el.tagName.toLowerCase()}[name="${escapeCss(name)}"]`
+    }
+  }
+
+  return null
+}
+
+function collectPreservedNodes(target: Element): PreservedNode[] {
+  const nodes: PreservedNode[] = []
+  target.querySelectorAll('[beam-keep]').forEach((el) => {
+    const selector = getPreserveSelector(el)
+    if (!selector) return
+    nodes.push({ selector, el })
+  })
+  return nodes
+}
+
+function restorePreservedNodes(target: Element, preserved: PreservedNode[]): void {
+  for (const { selector, el } of preserved) {
+    // If it was removed during swap, try to re-insert it where a matching placeholder exists.
+    const placeholder = target.querySelector(selector)
+    if (!placeholder) continue
+    if (placeholder === el) continue
+    placeholder.replaceWith(el)
+  }
+}
+
+type ActiveElementState = {
+  selector: string
+  selectionStart?: number | null
+  selectionEnd?: number | null
+  selectionDirection?: 'forward' | 'backward' | 'none' | null
+  scrollLeft?: number
+} | null
+
+function captureActiveElementState(target: Element): ActiveElementState {
+  const active = document.activeElement
+  if (!(active instanceof HTMLElement)) return null
+  if (!target.contains(active)) return null
+
+  const selector = getPreserveSelector(active)
+  if (!selector) return null
+
+  if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) {
+    return {
+      selector,
+      selectionStart: active.selectionStart,
+      selectionEnd: active.selectionEnd,
+      selectionDirection: active.selectionDirection,
+      scrollLeft: active.scrollLeft,
+    }
+  }
+
+  return { selector }
+}
+
+function restoreActiveElementState(target: Element, state: ActiveElementState): void {
+  if (!state) return
+  const el = target.querySelector(state.selector)
+  if (!(el instanceof HTMLElement)) return
+
+  // Restore focus
+  el.focus?.()
+
+  // Restore caret / selection for inputs
+  if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+    try {
+      if (typeof state.selectionStart === 'number' && typeof state.selectionEnd === 'number') {
+        el.setSelectionRange(state.selectionStart, state.selectionEnd, state.selectionDirection || undefined)
+      }
+      if (typeof state.scrollLeft === 'number') {
+        el.scrollLeft = state.scrollLeft
+      }
+    } catch {
+      // Ignore selection restore errors
+    }
+  }
+}
+
+type SwapScrollState =
+  | { kind: 'window'; x: number; y: number }
+  | { kind: 'element'; el: HTMLElement; x: number; y: number }
+
+function captureSwapScrollState(target: Element): SwapScrollState {
+  if (target === document.body || target === document.documentElement) {
+    return { kind: 'window', x: window.scrollX, y: window.scrollY }
+  }
+  if (target instanceof HTMLElement) {
+    return { kind: 'element', el: target, x: target.scrollLeft, y: target.scrollTop }
+  }
+  return { kind: 'window', x: window.scrollX, y: window.scrollY }
+}
+
+function restoreSwapScrollState(state: SwapScrollState): void {
+  if (state.kind === 'window') {
+    window.scrollTo(state.x, state.y)
+    return
+  }
+  if (state.kind === 'element') {
+    state.el.scrollLeft = state.x
+    state.el.scrollTop = state.y
+  }
+}
+
+function runSwapTransition(target: Element): void {
+  if (!(target instanceof HTMLElement)) return
+  const mode = target.getAttribute('beam-swap-transition')
+  if (!mode) return
+
+  // CSS-driven: [beam-swap-transition="fade"].beam-swap-enter { opacity: 0 }
+  target.classList.add('beam-swap-enter')
+  requestAnimationFrame(() => {
+    target.classList.remove('beam-swap-enter')
+  })
+}
+
+function initAlpine(target: Element): void {
+  // If Alpine is on the page, initialize any newly added DOM.
+  // This does not preserve state for *replaced* nodes, but it keeps
+  // state for nodes preserved via [beam-keep].
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const alpine = (window as any).Alpine
+  if (alpine?.initTree && target instanceof HTMLElement) {
+    try {
+      alpine.initTree(target)
+    } catch {
+      // Ignore Alpine init errors
+    }
+  }
+}
+
 /**
  * Deduplicate items by beam-item-id before inserting.
- * - Updates existing items with fresh data (morphs in place)
+ * - Updates existing items with fresh data (updates in place)
  * - Removes duplicates from incoming HTML (so they don't double-insert)
  */
 function dedupeItems(target: Element, html: string): string {
@@ -586,10 +819,10 @@ function dedupeItems(target: Element, html: string): string {
   temp.querySelectorAll('[beam-item-id]').forEach((el) => {
     const id = el.getAttribute('beam-item-id')
     if (id && existingIds.has(id)) {
-      // Morph existing item with fresh data
+      // Update existing item with fresh data
       const existing = target.querySelector(`[beam-item-id="${id}"]`)
       if (existing) {
-        morph(existing, el.outerHTML, { style: 'outerHTML' })
+        applyHtml(existing, el.outerHTML, { style: 'outerHTML' })
       }
       // Remove from incoming HTML (already updated in place)
       el.remove()
@@ -600,8 +833,18 @@ function dedupeItems(target: Element, html: string): string {
 }
 
 function swap(target: Element, html: string, mode: string, trigger?: HTMLElement): void {
+  // Only allow known modes; everything else falls back to replace.
+  if (mode !== 'append' && mode !== 'prepend' && mode !== 'replace' && mode !== 'delete') {
+    mode = 'replace'
+  }
+
   const { main, oob } = parseOobSwaps(html)
   const normalizedMain = normalizeHtmlForTarget(target, main)
+
+  // For replace swaps, capture state for a smoother UX.
+  const preserved = mode === 'replace' ? collectPreservedNodes(target) : []
+  const activeState = mode === 'replace' ? captureActiveElementState(target) : null
+  const scrollState = mode === 'replace' ? captureSwapScrollState(target) : null
 
   switch (mode) {
     case 'append':
@@ -614,13 +857,14 @@ function swap(target: Element, html: string, mode: string, trigger?: HTMLElement
       break
     case 'replace':
       target.innerHTML = normalizedMain
+      restorePreservedNodes(target, preserved)
+      restoreActiveElementState(target, activeState)
+      if (scrollState) restoreSwapScrollState(scrollState)
+      initAlpine(target)
+      runSwapTransition(target)
       break
     case 'delete':
       target.remove()
-      break
-    case 'morph':
-    default:
-      morph(target, normalizedMain)
       break
   }
 
@@ -628,11 +872,7 @@ function swap(target: Element, html: string, mode: string, trigger?: HTMLElement
   for (const { selector, content, swapMode } of oob) {
     const oobTarget = $(selector)
     if (oobTarget) {
-      if (swapMode === 'morph' || !swapMode) {
-        morph(oobTarget, content)
-      } else {
-        swap(oobTarget, content, swapMode)
-      }
+      swap(oobTarget, content, swapMode || 'replace')
     }
   }
 
@@ -688,22 +928,29 @@ function handleHtmlResponse(
         console.warn(`[beam] Target "${explicitTarget}" not found on page, skipping`)
       }
     } else {
-      // Priority 3: beam-id or beam-item-id on root element
+      // Priority 3: auto-detect by id / beam-id / beam-item-id on root element
+      // Each identifier works on its own. If multiple are present, we use a deterministic
+      // priority order so only *one* target is selected.
       const temp = document.createElement('div')
       temp.innerHTML = htmlItem.trim()
       const rootEl = temp.firstElementChild
 
+      const id = rootEl instanceof HTMLElement ? rootEl.id : ''
       const beamId = rootEl?.getAttribute('beam-id')
       const beamItemId = rootEl?.getAttribute('beam-item-id')
-      const selector = beamId ? `[beam-id="${beamId}"]`
-        : beamItemId ? `[beam-item-id="${beamItemId}"]`
-        : null
+
+      const selector = id
+        ? `#${escapeCss(id)}`
+        : beamId
+          ? `[beam-id="${escapeCss(beamId)}"]`
+          : beamItemId
+            ? `[beam-item-id="${escapeCss(beamItemId)}"]`
+            : null
 
       if (selector && !excluded.has(selector)) {
         const target = $(selector)
         if (target) {
-          // Replace entire element using outerHTML (preserves styles/classes)
-          target.outerHTML = htmlItem.trim()
+          applyHtml(target, htmlItem.trim(), { style: 'outerHTML' })
         } else {
           console.warn(`[beam] Target "${selector}" (from HTML) not found on page, skipping`)
         }
@@ -721,7 +968,7 @@ function parseOobSwaps(html: string): { main: string; oob: Array<{ selector: str
 
   temp.querySelectorAll('template[beam-touch]').forEach((tpl) => {
     const selector = tpl.getAttribute('beam-touch')
-    const swapMode = tpl.getAttribute('beam-swap') || 'morph'
+    const swapMode = tpl.getAttribute('beam-swap') || 'replace'
     if (selector) {
       oob.push({ selector, content: (tpl as HTMLTemplateElement).innerHTML, swapMode })
     }
@@ -735,7 +982,7 @@ function parseOobSwaps(html: string): { main: string; oob: Array<{ selector: str
 
 async function rpc(action: string, data: Record<string, unknown>, el: HTMLElement): Promise<void> {
   const frontendTarget = el.getAttribute('beam-target')
-  const frontendSwap = el.getAttribute('beam-swap') || 'morph'
+  const frontendSwap = el.getAttribute('beam-swap') || 'replace'
   const opt = optimistic(el)
   const placeholder = showPlaceholder(el)
 
@@ -1038,7 +1285,7 @@ function openModal(html: string, size: string = 'medium', spacing?: number): voi
 
   const autoFocus = activeModal?.querySelector<HTMLElement>('[autofocus]')
   const firstInput = activeModal?.querySelector<HTMLElement>('input, button, textarea, select')
-  ;(autoFocus || firstInput)?.focus()
+    ; (autoFocus || firstInput)?.focus()
 }
 
 function closeModal(): void {
@@ -1082,7 +1329,7 @@ function openDrawer(html: string, position: string = 'right', size: string = 'me
 
   const autoFocus = activeDrawer?.querySelector<HTMLElement>('[autofocus]')
   const firstInput = activeDrawer?.querySelector<HTMLElement>('input, button, textarea, select')
-  ;(autoFocus || firstInput)?.focus()
+    ; (autoFocus || firstInput)?.focus()
 }
 
 function closeDrawer(): void {
@@ -1142,7 +1389,7 @@ function updateOfflineState(): void {
 
   // Disable/enable elements when offline
   document.querySelectorAll<HTMLElement>('[beam-offline-disable]').forEach((el) => {
-    ;(el as HTMLButtonElement).disabled = !isOnline
+    ; (el as HTMLButtonElement).disabled = !isOnline
   })
 
   // Add/remove body class
@@ -1227,12 +1474,12 @@ function setupSwitch(el: HTMLElement): void {
       if (enableFor !== null) {
         const values = enableFor.split(',').map((v) => v.trim())
         const shouldEnable = values.includes(value)
-        ;(target as HTMLButtonElement).disabled = !shouldEnable
+          ; (target as HTMLButtonElement).disabled = !shouldEnable
       }
       if (disableFor !== null) {
         const values = disableFor.split(',').map((v) => v.trim())
         const shouldDisable = values.includes(value)
-        ;(target as HTMLButtonElement).disabled = shouldDisable
+          ; (target as HTMLButtonElement).disabled = shouldDisable
       }
     })
   }
@@ -1336,7 +1583,7 @@ document.addEventListener('click', async (e) => {
 
   const href = link.href
   const targetSelector = link.getAttribute('beam-target') || 'body'
-  const swapMode = link.getAttribute('beam-swap') || 'morph'
+  const swapMode = link.getAttribute('beam-swap') || 'replace'
 
   // Show placeholder if specified
   const placeholder = showPlaceholder(link)
@@ -1466,13 +1713,13 @@ function restoreScrollState(): boolean {
     // Restore cached content (has all pages)
     target.innerHTML = state.html
 
-    // Morph fresh server data over cached data (server takes precedence)
+    // Apply fresh server data over cached data (server takes precedence)
     // Match elements by beam-item-id attribute
     freshContainer.querySelectorAll('[beam-item-id]').forEach((freshEl) => {
       const itemId = freshEl.getAttribute('beam-item-id')
       const cachedEl = target.querySelector(`[beam-item-id="${itemId}"]`)
       if (cachedEl) {
-        morph(cachedEl, freshEl.outerHTML)
+        applyHtml(cachedEl, freshEl.outerHTML, { style: 'outerHTML' })
       }
     })
 
@@ -1480,7 +1727,7 @@ function restoreScrollState(): boolean {
     freshContainer.querySelectorAll('[id]').forEach((freshEl) => {
       const cachedEl = target.querySelector(`#${freshEl.id}`)
       if (cachedEl && !freshEl.hasAttribute('beam-item-id')) {
-        morph(cachedEl, freshEl.outerHTML)
+        applyHtml(cachedEl, freshEl.outerHTML, { style: 'outerHTML' })
       }
     })
 
@@ -1857,7 +2104,7 @@ document.addEventListener(
     const cached = cache.get(key)
 
     const targetSelector = link.getAttribute('beam-target')
-    const swapMode = link.getAttribute('beam-swap') || 'morph'
+    const swapMode = link.getAttribute('beam-swap') || 'replace'
 
     // Show placeholder
     const placeholder = showPlaceholder(link)
@@ -1918,7 +2165,7 @@ document.addEventListener('submit', async (e) => {
 
   const data = Object.fromEntries(new FormData(form))
   const targetSelector = form.getAttribute('beam-target')
-  const swapMode = form.getAttribute('beam-swap') || 'morph'
+  const swapMode = form.getAttribute('beam-swap') || 'replace'
 
   // Show placeholder
   const placeholder = showPlaceholder(form)
@@ -2006,7 +2253,7 @@ function setupValidation(el: HTMLElement): void {
           if (target) {
             // For validation, use first item if array, otherwise use as-is
             const htmlStr = Array.isArray(response.html) ? response.html[0] : response.html
-            if (htmlStr) morph(target, htmlStr)
+            if (htmlStr) swap(target, htmlStr, 'replace')
           }
         }
         // Execute script (if present)
@@ -2124,7 +2371,7 @@ function setupInputWatcher(el: Element): void {
   const throttleMs = htmlEl.getAttribute('beam-throttle')
   const action = htmlEl.getAttribute('beam-action')
   const targetSelector = htmlEl.getAttribute('beam-target')
-  const swapMode = htmlEl.getAttribute('beam-swap') || 'morph'
+  const swapMode = htmlEl.getAttribute('beam-swap') || 'replace'
   const castType = htmlEl.getAttribute('beam-cast')
   const loadingClass = htmlEl.getAttribute('beam-loading-class')
 
@@ -2177,15 +2424,7 @@ function setupInputWatcher(el: Element): void {
         targets.forEach((target, i) => {
           const html = htmlArray[i] || htmlArray[0]
           if (html) {
-            if (swapMode === 'append') {
-              target.insertAdjacentHTML('beforeend', html)
-            } else if (swapMode === 'prepend') {
-              target.insertAdjacentHTML('afterbegin', html)
-            } else if (swapMode === 'replace') {
-              target.outerHTML = html
-            } else {
-              morph(target, html)
-            }
+            swap(target, html, swapMode)
           }
         })
       }
@@ -2197,11 +2436,7 @@ function setupInputWatcher(el: Element): void {
         for (const { selector, content, swapMode: oobSwapMode } of oob) {
           const oobTarget = $(selector)
           if (oobTarget) {
-            if (oobSwapMode === 'morph' || !oobSwapMode) {
-              morph(oobTarget, content)
-            } else {
-              swap(oobTarget, content, oobSwapMode)
-            }
+            swap(oobTarget, content, oobSwapMode || 'replace')
           }
         }
       }
@@ -2283,7 +2518,7 @@ const deferObserver = new IntersectionObserver(
 
       const params = getParams(el)
       const targetSelector = el.getAttribute('beam-target')
-      const swapMode = el.getAttribute('beam-swap') || 'morph'
+      const swapMode = el.getAttribute('beam-swap') || 'replace'
 
       setLoading(el, true, action, params)
 
@@ -2351,7 +2586,7 @@ function startPolling(el: HTMLElement): void {
 
     const params = getParams(el)
     const targetSelector = el.getAttribute('beam-target')
-    const swapMode = el.getAttribute('beam-swap') || 'morph'
+    const swapMode = el.getAttribute('beam-swap') || 'replace'
 
     try {
       const response = await api.call(action, params)
@@ -2421,7 +2656,7 @@ function processHungryElements(html: string): void {
     // Look for matching element in response
     const fresh = temp.querySelector(`#${id}`)
     if (fresh) {
-      morph(hungry, fresh.innerHTML)
+      swap(hungry, fresh.innerHTML, 'replace')
     }
   })
 }
@@ -2865,14 +3100,14 @@ function updateConditionalFields(): void {
   document.querySelectorAll<HTMLElement>('[beam-enable-if]').forEach((el) => {
     const condition = el.getAttribute('beam-enable-if')!
     const shouldEnable = evaluateCondition(condition)
-    ;(el as HTMLInputElement | HTMLButtonElement).disabled = !shouldEnable
+      ; (el as HTMLInputElement | HTMLButtonElement).disabled = !shouldEnable
   })
 
   // Disable-if
   document.querySelectorAll<HTMLElement>('[beam-disable-if]').forEach((el) => {
     const condition = el.getAttribute('beam-disable-if')!
     const shouldDisable = evaluateCondition(condition)
-    ;(el as HTMLInputElement | HTMLButtonElement).disabled = shouldDisable
+      ; (el as HTMLInputElement | HTMLButtonElement).disabled = shouldDisable
   })
 
   // Visible-if (show when condition is true)
@@ -2893,7 +3128,7 @@ function updateConditionalFields(): void {
   document.querySelectorAll<HTMLElement>('[beam-required-if]').forEach((el) => {
     const condition = el.getAttribute('beam-required-if')!
     const shouldRequire = evaluateCondition(condition)
-    ;(el as HTMLInputElement).required = shouldRequire
+      ; (el as HTMLInputElement).required = shouldRequire
   })
 }
 
@@ -2912,7 +3147,7 @@ conditionalObserver.observe(document.body, { childList: true, subtree: true })
 
 interface CallOptions {
   target?: string
-  swap?: string  // 'morph' | 'innerHTML' | 'append' | 'prepend' | etc.
+  swap?: string  // 'replace' | 'append' | 'prepend' | 'delete'
 }
 
 // Clear scroll state for current page or all pages
@@ -3026,7 +3261,7 @@ window.beam = new Proxy(beamUtils, {
 
       // Server target/swap override frontend options
       const targetSelector = response.target || opts.target || null
-      const swapMode = response.swap || opts.swap || 'morph'
+      const swapMode = response.swap || opts.swap || 'replace'
 
       // Handle HTML swap - supports single string or array
       handleHtmlResponse(response, targetSelector, swapMode)
@@ -3041,11 +3276,11 @@ window.beam = new Proxy(beamUtils, {
   }
 }) as typeof beamUtils & { [action: string]: ActionCaller }
 
-// Legacy exports for backwards compatibility
-;(window as any).showToast = showToast
-;(window as any).closeModal = closeModal
-;(window as any).closeDrawer = closeDrawer
-;(window as any).clearCache = clearCache
+  // Legacy exports for backwards compatibility
+  ; (window as any).showToast = showToast
+  ; (window as any).closeModal = closeModal
+  ; (window as any).closeDrawer = closeDrawer
+  ; (window as any).clearCache = clearCache
 
 // Initialize capnweb RPC connection
 connect().catch(console.error)

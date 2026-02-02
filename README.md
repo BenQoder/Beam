@@ -1,6 +1,6 @@
 # Beam
 
-A lightweight, declarative UI framework for building interactive web applications with WebSocket RPC. Beam provides Unpoly-like functionality with zero JavaScript configuration—just add attributes to your HTML.
+A lightweight, declarative UI framework for building interactive web applications with WebSocket RPC. Beam provides server-driven UI updates with minimal JavaScript configuration—just add attributes to your HTML.
 
 ## Features
 
@@ -9,7 +9,7 @@ A lightweight, declarative UI framework for building interactive web application
 - **Auto-discovery** - Handlers are automatically found via Vite plugin
 - **Modals & Drawers** - Built-in overlay components
 - **Smart Loading** - Per-action loading indicators with parameter matching
-- **DOM Morphing** - Smooth updates via Idiomorph
+- **DOM Updates** - Server-driven UI updates
 - **Real-time Validation** - Validate forms as users type
 - **Input Watchers** - Trigger actions on input/change events with debounce/throttle
 - **Conditional Triggers** - Only trigger when conditions are met (`beam-watch-if`)
@@ -48,36 +48,36 @@ npm install @benqoder/beam
 
 ```typescript
 // vite.config.ts
-import { beamPlugin } from '@benqoder/beam/vite'
+import { beamPlugin } from "@benqoder/beam/vite";
 
 export default defineConfig({
   plugins: [
     beamPlugin({
-      actions: './actions/*.tsx',
+      actions: "./actions/*.tsx",
     }),
   ],
-})
+});
 ```
 
 ### 2. Initialize Beam Server
 
 ```typescript
 // app/server.ts
-import { createApp } from 'honox/server'
-import { beam } from 'virtual:beam'
+import { createApp } from "honox/server";
+import { beam } from "virtual:beam";
 
 const app = createApp({
   init: beam.init,
-})
+});
 
-export default app
+export default app;
 ```
 
 ### 3. Add the Client Script
 
 ```typescript
 // app/client.ts
-import '@benqoder/beam/client'
+import "@benqoder/beam/client";
 ```
 
 ### 4. Create an Action
@@ -85,8 +85,8 @@ import '@benqoder/beam/client'
 ```tsx
 // app/actions/counter.tsx
 export function increment(c) {
-  const count = parseInt(c.req.query('count') || '0')
-  return <div>Count: {count + 1}</div>
+  const count = parseInt(c.req.query("count") || "0");
+  return <div>Count: {count + 1}</div>;
 }
 ```
 
@@ -94,9 +94,7 @@ export function increment(c) {
 
 ```html
 <div id="counter">Count: 0</div>
-<button beam-action="increment" beam-target="#counter">
-  Increment
-</button>
+<button beam-action="increment" beam-target="#counter">Increment</button>
 ```
 
 ---
@@ -110,17 +108,13 @@ Actions are server functions that return HTML. They're the primary way to handle
 ```tsx
 // app/actions/demo.tsx
 export function greet(c) {
-  const name = c.req.query('name') || 'World'
-  return <div>Hello, {name}!</div>
+  const name = c.req.query("name") || "World";
+  return <div>Hello, {name}!</div>;
 }
 ```
 
 ```html
-<button
-  beam-action="greet"
-  beam-data-name="Alice"
-  beam-target="#greeting"
->
+<button beam-action="greet" beam-data-name="Alice" beam-target="#greeting">
   Say Hello
 </button>
 <div id="greeting"></div>
@@ -132,10 +126,10 @@ Use `beam-include` to collect values from input elements and include them in act
 
 ```html
 <!-- Define inputs with beam-id, id, or name -->
-<input beam-id="name" type="text" value="Ben"/>
-<input id="email" type="email" value="ben@example.com"/>
-<input name="age" type="number" value="30"/>
-<input beam-id="subscribe" type="checkbox" checked/>
+<input beam-id="name" type="text" value="Ben" />
+<input id="email" type="email" value="ben@example.com" />
+<input name="age" type="number" value="30" />
+<input beam-id="subscribe" type="checkbox" checked />
 
 <!-- Button includes specific inputs -->
 <button
@@ -143,12 +137,15 @@ Use `beam-include` to collect values from input elements and include them in act
   beam-include="name,email,age,subscribe"
   beam-data-source="form"
   beam-target="#result"
->Save</button>
+>
+  Save
+</button>
 
 <div id="result"></div>
 ```
 
 The action receives merged params with proper type conversion:
+
 ```json
 {
   "source": "form",
@@ -160,6 +157,7 @@ The action receives merged params with proper type conversion:
 ```
 
 Type conversion:
+
 - `checkbox` → `boolean` (checked state)
 - `number`/`range` → `number`
 - All others → `string`
@@ -172,8 +170,12 @@ Two ways to open modals:
 
 ```html
 <!-- Shows placeholder while loading, then replaces with action result -->
-<button beam-modal="confirmDelete" beam-data-id="123" beam-size="small"
-        beam-placeholder="<div>Loading...</div>">
+<button
+  beam-modal="confirmDelete"
+  beam-data-id="123"
+  beam-size="small"
+  beam-placeholder="<div>Loading...</div>"
+>
   Delete Item
 </button>
 ```
@@ -182,15 +184,21 @@ Two ways to open modals:
 
 ```tsx
 // app/actions/confirm.tsx
-export function confirmDelete(ctx: BeamContext<Env>, { id }: Record<string, unknown>) {
+export function confirmDelete(
+  ctx: BeamContext<Env>,
+  { id }: Record<string, unknown>,
+) {
   return ctx.modal(
     <div>
       <h2>Confirm Delete</h2>
       <p>Are you sure you want to delete item {id}?</p>
-      <button beam-action="deleteItem" beam-data-id={id} beam-close>Delete</button>
+      <button beam-action="deleteItem" beam-data-id={id} beam-close>
+        Delete
+      </button>
       <button beam-close>Cancel</button>
-    </div>
-  , { size: 'small' })
+    </div>,
+    { size: "small" },
+  );
 }
 ```
 
@@ -207,8 +215,12 @@ Two ways to open drawers:
 **1. `beam-drawer` attribute** - Explicitly opens in a drawer:
 
 ```html
-<button beam-drawer="openCart" beam-position="right" beam-size="medium"
-        beam-placeholder="<div>Loading cart...</div>">
+<button
+  beam-drawer="openCart"
+  beam-position="right"
+  beam-size="medium"
+  beam-placeholder="<div>Loading cart...</div>"
+>
   Open Cart
 </button>
 ```
@@ -223,8 +235,9 @@ export function openCart(ctx: BeamContext<Env>) {
       <h2>Shopping Cart</h2>
       <div class="cart-items">{/* Cart contents */}</div>
       <button beam-close>Close</button>
-    </div>
-  , { position: 'right', size: 'medium' })
+    </div>,
+    { position: "right", size: "medium" },
+  );
 }
 ```
 
@@ -248,8 +261,8 @@ export function refreshDashboard(ctx: BeamContext<Env>) {
       <div class="stat-card">Users: {users}</div>,
       <div class="stat-card">Revenue: ${revenue}</div>,
     ],
-    { target: '#stats, #users, #revenue' }
-  )
+    { target: "#stats, #users, #revenue" },
+  );
 }
 ```
 
@@ -262,7 +275,7 @@ export function refreshDashboard(ctx: BeamContext<Env>) {
     <div beam-id="stats">Visits: {visits}</div>,
     <div beam-id="users">Users: {users}</div>,
     <div beam-id="revenue">Revenue: ${revenue}</div>,
-  ])
+  ]);
 }
 ```
 
@@ -272,31 +285,34 @@ export function refreshDashboard(ctx: BeamContext<Env>) {
 export function updateDashboard(ctx: BeamContext<Env>) {
   return ctx.render(
     [
-      <div>Header content</div>,           // Uses explicit target
+      <div>Header content</div>, // Uses explicit target
       <div beam-id="content">Main content</div>, // Auto-detected by beam-id
     ],
-    { target: '#header' }  // Only first item gets explicit target
-  )
+    { target: "#header" }, // Only first item gets explicit target
+  );
 }
 ```
 
 **Target Resolution Order:**
+
 1. Explicit target from comma-separated list (by index)
 2. Identity from the HTML fragment's root element (`beam-id` or `beam-item-id`)
 3. Frontend fallback (`beam-target` on the triggering element)
 4. Skip if no target found
 
 Notes:
+
 - `beam-target` accepts any valid CSS selector (e.g. `#id`, `.class`, `[attr=value]`). Using `#id` targets is still fully supported.
 - Auto-targeting (step 2) intentionally does **not** use plain `id="..."` anymore; it uses only `beam-id` / `beam-item-id`.
 - When an explicit target is used and the server returns a single root element that has the same `beam-id`/`beam-item-id` as the target, Beam unwraps it and swaps only the target’s inner content. This prevents accidentally nesting the component inside itself.
 
 **Exclusion:** Use `!selector` to explicitly skip an item:
+
 ```tsx
 ctx.render(
   [<Box1 />, <Box2 />, <Box3 />],
-  { target: '#a, !#skip, #c' }  // Box2 is skipped
-)
+  { target: "#a, !#skip, #c" }, // Box2 is skipped
+);
 ```
 
 ### Async Components
@@ -306,36 +322,38 @@ ctx.render(
 ```tsx
 // Async component that fetches data
 async function UserCard({ userId }: { userId: string }) {
-  const user = await db.getUser(userId)  // Async data fetch
+  const user = await db.getUser(userId); // Async data fetch
   return (
     <div class="user-card">
       <h3>{user.name}</h3>
       <p>{user.email}</p>
     </div>
-  )
+  );
 }
 
 // Use directly in ctx.render() - no wrapper needed
-export function loadUser(ctx: BeamContext<Env>, { id }: Record<string, unknown>) {
-  return ctx.render(<UserCard userId={id as string} />, { target: '#user' })
+export function loadUser(
+  ctx: BeamContext<Env>,
+  { id }: Record<string, unknown>,
+) {
+  return ctx.render(<UserCard userId={id as string} />, { target: "#user" });
 }
 
 // Works with arrays too
 export function loadUsers(ctx: BeamContext<Env>) {
-  return ctx.render([
-    <UserCard userId="1" />,
-    <UserCard userId="2" />,
-    <UserCard userId="3" />,
-  ], { target: '#user1, #user2, #user3' })
+  return ctx.render(
+    [<UserCard userId="1" />, <UserCard userId="2" />, <UserCard userId="3" />],
+    { target: "#user1, #user2, #user3" },
+  );
 }
 
 // Mixed sync and async
 export function loadDashboard(ctx: BeamContext<Env>) {
   return ctx.render([
-    <div>Static header</div>,      // Sync
-    <UserCard userId="current" />,  // Async
-    <StatsWidget />,                // Async
-  ])
+    <div>Static header</div>, // Sync
+    <UserCard userId="current" />, // Async
+    <StatsWidget />, // Async
+  ]);
 }
 ```
 
@@ -347,193 +365,210 @@ Async components are awaited automatically - no manual `Promise.resolve()` or he
 
 ### Actions
 
-| Attribute | Description | Example |
-|-----------|-------------|---------|
-| `beam-action` | Action name to call | `beam-action="increment"` |
-| `beam-target` | CSS selector for where to render response | `beam-target="#counter"` |
-| `beam-data-*` | Pass data to the action | `beam-data-id="123"` |
-| `beam-include` | Include values from inputs by beam-id, id, or name | `beam-include="name,email,age"` |
-| `beam-swap` | How to swap content: `morph`, `append`, `prepend`, `replace` | `beam-swap="append"` |
-| `beam-confirm` | Show confirmation dialog before action | `beam-confirm="Delete this item?"` |
-| `beam-confirm-prompt` | Require typing text to confirm | `beam-confirm-prompt="Type DELETE\|DELETE"` |
-| `beam-instant` | Trigger on mousedown instead of click | `beam-instant` |
-| `beam-disable` | Disable element(s) during request | `beam-disable` or `beam-disable="#btn"` |
-| `beam-placeholder` | Show placeholder in target while loading | `beam-placeholder="<p>Loading...</p>"` |
-| `beam-push` | Push URL to browser history after action | `beam-push="/new-url"` |
-| `beam-replace` | Replace current URL in history | `beam-replace="?page=2"` |
+| Attribute             | Description                                                  | Example                                     |
+| --------------------- | ------------------------------------------------------------ | ------------------------------------------- |
+| `beam-action`         | Action name to call                                          | `beam-action="increment"`                   |
+| `beam-target`         | CSS selector for where to render response                    | `beam-target="#counter"`                    |
+| `beam-data-*`         | Pass data to the action                                      | `beam-data-id="123"`                        |
+| `beam-include`        | Include values from inputs by beam-id, id, or name           | `beam-include="name,email,age"`             |
+| `beam-swap`           | How to swap content: `replace`, `append`, `prepend`, `delete`         | `beam-swap="replace"`                |
+| `beam-confirm`        | Show confirmation dialog before action                       | `beam-confirm="Delete this item?"`          |
+| `beam-confirm-prompt` | Require typing text to confirm                               | `beam-confirm-prompt="Type DELETE\|DELETE"` |
+| `beam-instant`        | Trigger on mousedown instead of click                        | `beam-instant`                              |
+| `beam-disable`        | Disable element(s) during request                            | `beam-disable` or `beam-disable="#btn"`     |
+| `beam-placeholder`    | Show placeholder in target while loading                     | `beam-placeholder="<p>Loading...</p>"`      |
+| `beam-push`           | Push URL to browser history after action                     | `beam-push="/new-url"`                      |
+| `beam-replace`        | Replace current URL in history                               | `beam-replace="?page=2"`                    |
+
+Swap notes:
+
+- `replace` replaces `target.innerHTML` (no DOM diff), then tries to preserve UX:
+  - Keeps focused input caret/selection when possible.
+  - Reinserts elements marked with `beam-keep` (matched by `beam-id`, `beam-item-id`, `id`, or input `name`).
+  - If Alpine.js is present on the page, initializes any newly inserted DOM (`Alpine.initTree`).
+
+Swap transitions (optional):
+
+Add `beam-swap-transition` on the *target* element to animate after swaps:
+
+```html
+<div id="results" beam-swap-transition="fade"></div>
+```
+
+Supported values: `fade`, `slide`, `scale`.
 
 ### Modals & Drawers
 
-| Attribute | Description | Example |
-|-----------|-------------|---------|
-| `beam-modal` | Action to call and display result in modal | `beam-modal="editUser"` |
-| `beam-drawer` | Action to call and display result in drawer | `beam-drawer="openCart"` |
-| `beam-size` | Size for modal/drawer: `small`, `medium`, `large` | `beam-size="large"` |
-| `beam-position` | Drawer position: `left`, `right` | `beam-position="left"` |
-| `beam-placeholder` | HTML to show while loading | `beam-placeholder="<p>Loading...</p>"` |
-| `beam-close` | Close the current modal/drawer when clicked | `beam-close` |
+| Attribute          | Description                                       | Example                                |
+| ------------------ | ------------------------------------------------- | -------------------------------------- |
+| `beam-modal`       | Action to call and display result in modal        | `beam-modal="editUser"`                |
+| `beam-drawer`      | Action to call and display result in drawer       | `beam-drawer="openCart"`               |
+| `beam-size`        | Size for modal/drawer: `small`, `medium`, `large` | `beam-size="large"`                    |
+| `beam-position`    | Drawer position: `left`, `right`                  | `beam-position="left"`                 |
+| `beam-placeholder` | HTML to show while loading                        | `beam-placeholder="<p>Loading...</p>"` |
+| `beam-close`       | Close the current modal/drawer when clicked       | `beam-close`                           |
 
 Modals and drawers can also be returned from `beam-action` using context helpers:
 
 ```tsx
 // Modal with options
-return ctx.modal(render(<MyModal />), { size: 'large', spacing: 20 })
+return ctx.modal(render(<MyModal />), { size: "large", spacing: 20 });
 
 // Drawer with options
-return ctx.drawer(render(<MyDrawer />), { position: 'left', size: 'medium' })
+return ctx.drawer(render(<MyDrawer />), { position: "left", size: "medium" });
 ```
 
 ### Forms
 
-| Attribute | Description | Example |
-|-----------|-------------|---------|
+| Attribute     | Description                            | Example                         |
+| ------------- | -------------------------------------- | ------------------------------- |
 | `beam-action` | Action to call on submit (on `<form>`) | `<form beam-action="saveUser">` |
-| `beam-reset` | Reset form after successful submit | `beam-reset` |
+| `beam-reset`  | Reset form after successful submit     | `beam-reset`                    |
 
 ### Loading States
 
-| Attribute | Description | Example |
-|-----------|-------------|---------|
-| `beam-loading-for` | Show element while action is loading | `beam-loading-for="saveUser"` |
-| `beam-loading-for="*"` | Show for any loading action | `beam-loading-for="*"` |
-| `beam-loading-data-*` | Match specific parameters | `beam-loading-data-id="123"` |
-| `beam-loading-class` | Add class while loading | `beam-loading-class="opacity-50"` |
-| `beam-loading-remove` | Hide element while NOT loading | `beam-loading-remove` |
+| Attribute              | Description                          | Example                           |
+| ---------------------- | ------------------------------------ | --------------------------------- |
+| `beam-loading-for`     | Show element while action is loading | `beam-loading-for="saveUser"`     |
+| `beam-loading-for="*"` | Show for any loading action          | `beam-loading-for="*"`            |
+| `beam-loading-data-*`  | Match specific parameters            | `beam-loading-data-id="123"`      |
+| `beam-loading-class`   | Add class while loading              | `beam-loading-class="opacity-50"` |
+| `beam-loading-remove`  | Hide element while NOT loading       | `beam-loading-remove`             |
 
 ### Validation
 
-| Attribute | Description | Example |
-|-----------|-------------|---------|
-| `beam-validate` | Target selector to update with validation | `beam-validate="#email-error"` |
-| `beam-watch` | Event to trigger validation: `input`, `change` | `beam-watch="input"` |
-| `beam-debounce` | Debounce delay in milliseconds | `beam-debounce="300"` |
+| Attribute       | Description                                    | Example                        |
+| --------------- | ---------------------------------------------- | ------------------------------ |
+| `beam-validate` | Target selector to update with validation      | `beam-validate="#email-error"` |
+| `beam-watch`    | Event to trigger validation: `input`, `change` | `beam-watch="input"`           |
+| `beam-debounce` | Debounce delay in milliseconds                 | `beam-debounce="300"`          |
 
 ### Input Watchers
 
-| Attribute | Description | Example |
-|-----------|-------------|---------|
-| `beam-watch` | Event to trigger action: `input`, `change` | `beam-watch="input"` |
-| `beam-debounce` | Debounce delay in milliseconds | `beam-debounce="300"` |
-| `beam-throttle` | Throttle interval in milliseconds (alternative to debounce) | `beam-throttle="100"` |
-| `beam-watch-if` | Condition that must be true to trigger | `beam-watch-if="value.length >= 3"` |
-| `beam-cast` | Cast input value: `number`, `integer`, `boolean`, `trim` | `beam-cast="number"` |
-| `beam-loading-class` | Add class to input while request is in progress | `beam-loading-class="loading"` |
-| `beam-keep` | Prevent element from being morphed during updates | `beam-keep` |
+| Attribute            | Description                                                 | Example                             |
+| -------------------- | ----------------------------------------------------------- | ----------------------------------- |
+| `beam-watch`         | Event to trigger action: `input`, `change`                  | `beam-watch="input"`                |
+| `beam-debounce`      | Debounce delay in milliseconds                              | `beam-debounce="300"`               |
+| `beam-throttle`      | Throttle interval in milliseconds (alternative to debounce) | `beam-throttle="100"`               |
+| `beam-watch-if`      | Condition that must be true to trigger                      | `beam-watch-if="value.length >= 3"` |
+| `beam-cast`          | Cast input value: `number`, `integer`, `boolean`, `trim`    | `beam-cast="number"`                |
+| `beam-loading-class` | Add class to input while request is in progress             | `beam-loading-class="loading"`      |
+| `beam-keep`          | Prevent element from being replaced during updates          | `beam-keep`                         |
 
 ### Dirty Form Tracking
 
-| Attribute | Description | Example |
-|-----------|-------------|---------|
-| `beam-dirty-track` | Enable dirty tracking on a form | `<form beam-dirty-track>` |
-| `beam-dirty-indicator` | Show element when form is dirty | `beam-dirty-indicator="#my-form"` |
-| `beam-dirty-class` | Toggle class instead of visibility | `beam-dirty-class="has-changes"` |
-| `beam-warn-unsaved` | Warn before leaving page with unsaved changes | `<form beam-warn-unsaved>` |
-| `beam-revert` | Button to revert form to original values | `beam-revert="#my-form"` |
-| `beam-show-if-dirty` | Show element when form is dirty | `beam-show-if-dirty="#my-form"` |
-| `beam-hide-if-dirty` | Hide element when form is dirty | `beam-hide-if-dirty="#my-form"` |
+| Attribute              | Description                                   | Example                           |
+| ---------------------- | --------------------------------------------- | --------------------------------- |
+| `beam-dirty-track`     | Enable dirty tracking on a form               | `<form beam-dirty-track>`         |
+| `beam-dirty-indicator` | Show element when form is dirty               | `beam-dirty-indicator="#my-form"` |
+| `beam-dirty-class`     | Toggle class instead of visibility            | `beam-dirty-class="has-changes"`  |
+| `beam-warn-unsaved`    | Warn before leaving page with unsaved changes | `<form beam-warn-unsaved>`        |
+| `beam-revert`          | Button to revert form to original values      | `beam-revert="#my-form"`          |
+| `beam-show-if-dirty`   | Show element when form is dirty               | `beam-show-if-dirty="#my-form"`   |
+| `beam-hide-if-dirty`   | Hide element when form is dirty               | `beam-hide-if-dirty="#my-form"`   |
 
 ### Conditional Form Fields
 
-| Attribute | Description | Example |
-|-----------|-------------|---------|
-| `beam-enable-if` | Enable field when condition is true | `beam-enable-if="#subscribe:checked"` |
-| `beam-disable-if` | Disable field when condition is true | `beam-disable-if="#country[value='']"` |
-| `beam-visible-if` | Show field when condition is true | `beam-visible-if="#source[value='other']"` |
-| `beam-hidden-if` | Hide field when condition is true | `beam-hidden-if="#premium:checked"` |
-| `beam-required-if` | Make field required when condition is true | `beam-required-if="#business:checked"` |
+| Attribute          | Description                                | Example                                    |
+| ------------------ | ------------------------------------------ | ------------------------------------------ |
+| `beam-enable-if`   | Enable field when condition is true        | `beam-enable-if="#subscribe:checked"`      |
+| `beam-disable-if`  | Disable field when condition is true       | `beam-disable-if="#country[value='']"`     |
+| `beam-visible-if`  | Show field when condition is true          | `beam-visible-if="#source[value='other']"` |
+| `beam-hidden-if`   | Hide field when condition is true          | `beam-hidden-if="#premium:checked"`        |
+| `beam-required-if` | Make field required when condition is true | `beam-required-if="#business:checked"`     |
 
 ### Deferred Loading
 
-| Attribute | Description | Example |
-|-----------|-------------|---------|
-| `beam-defer` | Load content when element enters viewport | `beam-defer` |
-| `beam-action` | Action to call (used with `beam-defer`) | `beam-action="loadComments"` |
+| Attribute     | Description                               | Example                      |
+| ------------- | ----------------------------------------- | ---------------------------- |
+| `beam-defer`  | Load content when element enters viewport | `beam-defer`                 |
+| `beam-action` | Action to call (used with `beam-defer`)   | `beam-action="loadComments"` |
 
 ### Polling
 
-| Attribute | Description | Example |
-|-----------|-------------|---------|
-| `beam-poll` | Enable polling on this element | `beam-poll` |
-| `beam-interval` | Poll interval in milliseconds | `beam-interval="5000"` |
-| `beam-action` | Action to call on each poll | `beam-action="getStatus"` |
+| Attribute       | Description                    | Example                   |
+| --------------- | ------------------------------ | ------------------------- |
+| `beam-poll`     | Enable polling on this element | `beam-poll`               |
+| `beam-interval` | Poll interval in milliseconds  | `beam-interval="5000"`    |
+| `beam-action`   | Action to call on each poll    | `beam-action="getStatus"` |
 
 ### Hungry Elements
 
-| Attribute | Description | Example |
-|-----------|-------------|---------|
+| Attribute     | Description                                        | Example       |
+| ------------- | -------------------------------------------------- | ------------- |
 | `beam-hungry` | Auto-update when any response contains matching ID | `beam-hungry` |
 
 ### Out-of-Band Updates
 
-| Attribute | Description | Example |
-|-----------|-------------|---------|
+| Attribute    | Description                                     | Example                         |
+| ------------ | ----------------------------------------------- | ------------------------------- |
 | `beam-touch` | Update additional elements (on server response) | `beam-touch="#sidebar,#footer"` |
 
 ### Optimistic UI
 
-| Attribute | Description | Example |
-|-----------|-------------|---------|
+| Attribute         | Description                                       | Example                                  |
+| ----------------- | ------------------------------------------------- | ---------------------------------------- |
 | `beam-optimistic` | Immediately update with this HTML before response | `beam-optimistic="<div>Saving...</div>"` |
 
 ### Preloading & Caching
 
-| Attribute | Description | Example |
-|-----------|-------------|---------|
+| Attribute      | Description                        | Example                |
+| -------------- | ---------------------------------- | ---------------------- |
 | `beam-preload` | Preload on hover: `hover`, `mount` | `beam-preload="hover"` |
-| `beam-cache` | Cache duration in seconds | `beam-cache="60"` |
+| `beam-cache`   | Cache duration in seconds          | `beam-cache="60"`      |
 
 ### Infinite Scroll
 
-| Attribute | Description | Example |
-|-----------|-------------|---------|
-| `beam-infinite` | Load more when scrolled near bottom (auto-trigger) | `beam-infinite` |
-| `beam-load-more` | Load more on click (manual trigger) | `beam-load-more` |
-| `beam-action` | Action to call for next page | `beam-action="loadMore"` |
-| `beam-item-id` | Unique ID for list items (deduplication + fresh data sync) | `beam-item-id={item.id}` |
+| Attribute        | Description                                                | Example                  |
+| ---------------- | ---------------------------------------------------------- | ------------------------ |
+| `beam-infinite`  | Load more when scrolled near bottom (auto-trigger)         | `beam-infinite`          |
+| `beam-load-more` | Load more on click (manual trigger)                        | `beam-load-more`         |
+| `beam-action`    | Action to call for next page                               | `beam-action="loadMore"` |
+| `beam-item-id`   | Unique ID for list items (deduplication + fresh data sync) | `beam-item-id={item.id}` |
 
 ### Navigation Feedback
 
-| Attribute | Description | Example |
-|-----------|-------------|---------|
-| `beam-nav` | Mark container as navigation (children get `.beam-current`) | `<nav beam-nav>` |
-| `beam-nav-exact` | Only match exact URL paths | `beam-nav-exact` |
+| Attribute        | Description                                                 | Example          |
+| ---------------- | ----------------------------------------------------------- | ---------------- |
+| `beam-nav`       | Mark container as navigation (children get `.beam-current`) | `<nav beam-nav>` |
+| `beam-nav-exact` | Only match exact URL paths                                  | `beam-nav-exact` |
 
 ### Offline Detection
 
-| Attribute | Description | Example |
-|-----------|-------------|---------|
-| `beam-offline` | Show element when offline, hide when online | `beam-offline` |
-| `beam-offline-class` | Toggle class instead of visibility | `beam-offline-class="offline-warning"` |
-| `beam-offline-disable` | Disable element when offline | `beam-offline-disable` |
+| Attribute              | Description                                 | Example                                |
+| ---------------------- | ------------------------------------------- | -------------------------------------- |
+| `beam-offline`         | Show element when offline, hide when online | `beam-offline`                         |
+| `beam-offline-class`   | Toggle class instead of visibility          | `beam-offline-class="offline-warning"` |
+| `beam-offline-disable` | Disable element when offline                | `beam-offline-disable`                 |
 
 ### Conditional Show/Hide
 
-| Attribute | Description | Example |
-|-----------|-------------|---------|
-| `beam-switch` | Watch this field and control target elements | `beam-switch=".options"` |
-| `beam-show-for` | Show when switch value matches | `beam-show-for="premium"` |
-| `beam-hide-for` | Hide when switch value matches | `beam-hide-for="free"` |
-| `beam-enable-for` | Enable when switch value matches | `beam-enable-for="admin"` |
-| `beam-disable-for` | Disable when switch value matches | `beam-disable-for="guest"` |
+| Attribute          | Description                                  | Example                    |
+| ------------------ | -------------------------------------------- | -------------------------- |
+| `beam-switch`      | Watch this field and control target elements | `beam-switch=".options"`   |
+| `beam-show-for`    | Show when switch value matches               | `beam-show-for="premium"`  |
+| `beam-hide-for`    | Hide when switch value matches               | `beam-hide-for="free"`     |
+| `beam-enable-for`  | Enable when switch value matches             | `beam-enable-for="admin"`  |
+| `beam-disable-for` | Disable when switch value matches            | `beam-disable-for="guest"` |
 
 ### Auto-submit Forms
 
-| Attribute | Description | Example |
-|-----------|-------------|---------|
-| `beam-autosubmit` | Submit form when any field changes | `beam-autosubmit` |
-| `beam-debounce` | Debounce delay in milliseconds | `beam-debounce="300"` |
+| Attribute         | Description                        | Example               |
+| ----------------- | ---------------------------------- | --------------------- |
+| `beam-autosubmit` | Submit form when any field changes | `beam-autosubmit`     |
+| `beam-debounce`   | Debounce delay in milliseconds     | `beam-debounce="300"` |
 
 ### Boost Links
 
-| Attribute | Description | Example |
-|-----------|-------------|---------|
-| `beam-boost` | Upgrade links to AJAX (on container or link) | `<main beam-boost>` |
-| `beam-boost-off` | Exclude specific links from boosting | `beam-boost-off` |
+| Attribute        | Description                                  | Example             |
+| ---------------- | -------------------------------------------- | ------------------- |
+| `beam-boost`     | Upgrade links to AJAX (on container or link) | `<main beam-boost>` |
+| `beam-boost-off` | Exclude specific links from boosting         | `beam-boost-off`    |
 
 ### Keep Elements
 
-| Attribute | Description | Example |
-|-----------|-------------|---------|
+| Attribute   | Description                         | Example             |
+| ----------- | ----------------------------------- | ------------------- |
 | `beam-keep` | Preserve element during DOM updates | `<video beam-keep>` |
 
 ### Client-Side UI State (No Server Round-Trip)
@@ -542,50 +577,50 @@ These attributes handle UI state entirely on the client, without making server r
 
 #### Toggle
 
-| Attribute | Description | Example |
-|-----------|-------------|---------|
-| `beam-toggle` | Toggle visibility of target element | `beam-toggle="#menu"` |
-| `beam-hidden` | Mark element as initially hidden | `<div beam-hidden>` |
+| Attribute         | Description                                     | Example                  |
+| ----------------- | ----------------------------------------------- | ------------------------ |
+| `beam-toggle`     | Toggle visibility of target element             | `beam-toggle="#menu"`    |
+| `beam-hidden`     | Mark element as initially hidden                | `<div beam-hidden>`      |
 | `beam-transition` | Add transition effect: `fade`, `slide`, `scale` | `beam-transition="fade"` |
 
 #### Dropdown
 
-| Attribute | Description | Example |
-|-----------|-------------|---------|
-| `beam-dropdown` | Container for dropdown (provides positioning) | `<div beam-dropdown>` |
-| `beam-dropdown-trigger` | Button that opens the dropdown | `<button beam-dropdown-trigger>` |
-| `beam-dropdown-content` | The dropdown content (add `beam-hidden`) | `<div beam-dropdown-content beam-hidden>` |
+| Attribute               | Description                                   | Example                                   |
+| ----------------------- | --------------------------------------------- | ----------------------------------------- |
+| `beam-dropdown`         | Container for dropdown (provides positioning) | `<div beam-dropdown>`                     |
+| `beam-dropdown-trigger` | Button that opens the dropdown                | `<button beam-dropdown-trigger>`          |
+| `beam-dropdown-content` | The dropdown content (add `beam-hidden`)      | `<div beam-dropdown-content beam-hidden>` |
 
 #### Collapse
 
-| Attribute | Description | Example |
-|-----------|-------------|---------|
-| `beam-collapse` | Toggle collapsed state of target | `beam-collapse="#details"` |
-| `beam-collapsed` | Mark element as initially collapsed | `<div beam-collapsed>` |
-| `beam-collapse-text` | Swap button text when toggled | `beam-collapse-text="Show less"` |
+| Attribute            | Description                         | Example                          |
+| -------------------- | ----------------------------------- | -------------------------------- |
+| `beam-collapse`      | Toggle collapsed state of target    | `beam-collapse="#details"`       |
+| `beam-collapsed`     | Mark element as initially collapsed | `<div beam-collapsed>`           |
+| `beam-collapse-text` | Swap button text when toggled       | `beam-collapse-text="Show less"` |
 
 #### Class Toggle
 
-| Attribute | Description | Example |
-|-----------|-------------|---------|
-| `beam-class-toggle` | CSS class to toggle | `beam-class-toggle="active"` |
+| Attribute           | Description                       | Example                        |
+| ------------------- | --------------------------------- | ------------------------------ |
+| `beam-class-toggle` | CSS class to toggle               | `beam-class-toggle="active"`   |
 | `beam-class-target` | Target element (defaults to self) | `beam-class-target="#sidebar"` |
 
 #### Reactive State
 
 Fine-grained reactivity for UI components (carousels, tabs, accordions) without server round-trips.
 
-| Attribute | Description | Example |
-|-----------|-------------|---------|
-| `beam-state` | Declare reactive state (JSON, key-value, or simple value) | `beam-state="tab: 0; total: 5"` |
-| `beam-id` | Name the state for cross-component access | `beam-id="cart"` |
-| `beam-state-ref` | Reference a named state from elsewhere | `beam-state-ref="cart"` |
-| `beam-text` | Bind text content to expression | `beam-text="count"` |
-| `beam-attr-*` | Bind any attribute to expression | `beam-attr-disabled="count === 0"` |
-| `beam-show` | Show/hide element based on expression | `beam-show="open"` |
-| `beam-class` | Toggle classes (simplified or JSON syntax) | `beam-class="active: tab === 0"` |
-| `beam-click` | Click handler that mutates state | `beam-click="open = !open"` |
-| `beam-model` | Two-way binding for inputs | `beam-model="firstName"` |
+| Attribute        | Description                                               | Example                            |
+| ---------------- | --------------------------------------------------------- | ---------------------------------- |
+| `beam-state`     | Declare reactive state (JSON, key-value, or simple value) | `beam-state="tab: 0; total: 5"`    |
+| `beam-id`        | Name the state for cross-component access                 | `beam-id="cart"`                   |
+| `beam-state-ref` | Reference a named state from elsewhere                    | `beam-state-ref="cart"`            |
+| `beam-text`      | Bind text content to expression                           | `beam-text="count"`                |
+| `beam-attr-*`    | Bind any attribute to expression                          | `beam-attr-disabled="count === 0"` |
+| `beam-show`      | Show/hide element based on expression                     | `beam-show="open"`                 |
+| `beam-class`     | Toggle classes (simplified or JSON syntax)                | `beam-class="active: tab === 0"`   |
+| `beam-click`     | Click handler that mutates state                          | `beam-click="open = !open"`        |
+| `beam-model`     | Two-way binding for inputs                                | `beam-model="firstName"`           |
 
 ---
 
@@ -593,12 +628,12 @@ Fine-grained reactivity for UI components (carousels, tabs, accordions) without 
 
 Control how content is inserted into the target element:
 
-| Mode | Description |
-|------|-------------|
-| `morph` | Smart DOM diffing (default) - preserves focus, animations |
-| `replace` | Replace innerHTML completely |
-| `append` | Add to the end of target |
-| `prepend` | Add to the beginning of target |
+| Mode      | Description                                               |
+| --------- | --------------------------------------------------------- |
+| `replace` | Replace target HTML (default) while preserving focus and `beam-keep` elements when possible |
+| `append`  | Add to the end of target                                  |
+| `prepend` | Add to the beginning of target                            |
+| `delete`  | Remove the target element                                 |
 
 ```html
 <!-- Append new items to a list -->
@@ -606,8 +641,8 @@ Control how content is inserted into the target element:
   Add Item
 </button>
 
-<!-- Smooth morph update -->
-<button beam-action="refresh" beam-swap="morph" beam-target="#content">
+<!-- Replace update -->
+<button beam-action="refresh" beam-swap="replace" beam-target="#content">
   Refresh
 </button>
 ```
@@ -683,19 +718,19 @@ The action receives `_validate` parameter indicating which field triggered valid
 
 ```tsx
 export function submitForm(c) {
-  const data = await c.req.parseBody()
-  const validateField = data._validate
+  const data = await c.req.parseBody();
+  const validateField = data._validate;
 
-  if (validateField === 'email') {
+  if (validateField === "email") {
     // Return just the validation feedback
-    if (data.email === 'taken@example.com') {
-      return <div class="error">Email already taken</div>
+    if (data.email === "taken@example.com") {
+      return <div class="error">Email already taken</div>;
     }
-    return <div class="success">Email available</div>
+    return <div class="success">Email available</div>;
   }
 
   // Full form submission
-  return <div>Form submitted!</div>
+  return <div>Form submitted!</div>;
 }
 ```
 
@@ -780,6 +815,7 @@ Cast input values before sending to the server:
 ```
 
 Cast types:
+
 - `number` - Parse as float
 - `integer` - Parse as integer
 - `boolean` - Convert "true"/"1"/"yes" to true
@@ -809,7 +845,7 @@ Add a class to the input while the request is in progress:
 
 ### Preventing Element Replacement
 
-Use `beam-keep` to prevent an element from being morphed/replaced during updates. This keeps the element exactly as-is, preserving its state (focus, value, etc.):
+Use `beam-keep` to prevent an element from being replaced during updates. This keeps the element exactly as-is, preserving its state (focus, value, etc.):
 
 ```html
 <input
@@ -872,7 +908,10 @@ Show an indicator when the form has unsaved changes:
 </form>
 
 <style>
-  [beam-dirty-indicator] { display: none; color: orange; }
+  [beam-dirty-indicator] {
+    display: none;
+    color: orange;
+  }
 </style>
 ```
 
@@ -885,7 +924,11 @@ Add a button to restore original values:
   <input name="username" value="johndoe" />
   <input name="email" value="john@example.com" />
 
-  <button type="button" beam-revert="#profile-form" beam-show-if-dirty="#profile-form">
+  <button
+    type="button"
+    beam-revert="#profile-form"
+    beam-show-if-dirty="#profile-form"
+  >
     Revert Changes
   </button>
   <button type="submit">Save</button>
@@ -919,9 +962,7 @@ Show/hide elements based on dirty state:
   </div>
 
   <!-- Hide when dirty -->
-  <div beam-hide-if-dirty="#settings">
-    All changes saved
-  </div>
+  <div beam-hide-if-dirty="#settings">All changes saved</div>
 </form>
 ```
 
@@ -986,6 +1027,7 @@ Enable, disable, show, or hide fields based on other field values—all client-s
 ### Condition Syntax
 
 Conditions support:
+
 - `:checked` - Checkbox/radio is checked
 - `:disabled` - Element is disabled
 - `:empty` - Input has no value
@@ -996,11 +1038,11 @@ Conditions support:
 ```html
 <!-- Enable when country is selected -->
 <select beam-disable-if="#country[value='']" name="state">
-
-<!-- Show when amount is over 100 -->
-<div beam-visible-if="#amount[value>'100']">
-  Large order discount applied!
-</div>
+  <!-- Show when amount is over 100 -->
+  <div beam-visible-if="#amount[value>'100']">
+    Large order discount applied!
+  </div>
+</select>
 ```
 
 ---
@@ -1042,21 +1084,19 @@ Elements marked with `beam-hungry` automatically update whenever any action retu
 <span id="cart-count" beam-hungry>0</span>
 
 <!-- Clicking this updates both #cart-result AND #cart-count -->
-<button beam-action="addToCart" beam-target="#cart-result">
-  Add to Cart
-</button>
+<button beam-action="addToCart" beam-target="#cart-result">Add to Cart</button>
 ```
 
 ```tsx
 export function addToCart(c) {
-  const cartCount = getCartCount() + 1
+  const cartCount = getCartCount() + 1;
   return (
     <>
       <div>Item added to cart!</div>
       {/* This updates the hungry element */}
       <span id="cart-count">{cartCount}</span>
     </>
-  )
+  );
 }
 ```
 
@@ -1074,7 +1114,7 @@ export function updateDashboard(c) {
       <div beam-touch="#sidebar">New sidebar content</div>
       <div beam-touch="#notifications">3 new notifications</div>
     </>
-  )
+  );
 }
 ```
 
@@ -1107,9 +1147,7 @@ Require user confirmation before destructive actions:
 Trigger actions on `mousedown` instead of `click` for ~100ms faster response:
 
 ```html
-<button beam-action="navigate" beam-instant>
-  Next Page
-</button>
+<button beam-action="navigate" beam-instant>Next Page</button>
 ```
 
 ---
@@ -1120,9 +1158,7 @@ Prevent double-submissions by disabling elements during requests:
 
 ```html
 <!-- Disable the button itself -->
-<button beam-action="save" beam-disable>
-  Save
-</button>
+<button beam-action="save" beam-disable>Save</button>
 
 <!-- Disable specific elements -->
 <form beam-action="submit" beam-disable="#submit-btn, .form-inputs">
@@ -1172,15 +1208,19 @@ Automatically highlight current page links:
 
 ```html
 <nav beam-nav>
-  <a href="/home">Home</a>        <!-- Gets .beam-current when on /home -->
-  <a href="/products">Products</a> <!-- Gets .beam-current when on /products/* -->
-  <a href="/about" beam-nav-exact>About</a> <!-- Only exact match -->
+  <a href="/home">Home</a>
+  <!-- Gets .beam-current when on /home -->
+  <a href="/products">Products</a>
+  <!-- Gets .beam-current when on /products/* -->
+  <a href="/about" beam-nav-exact>About</a>
+  <!-- Only exact match -->
 </nav>
 ```
 
 Links also get `.beam-active` class while loading.
 
 CSS classes:
+
 - `.beam-current` - Link matches current URL
 - `.beam-active` - Action is in progress
 
@@ -1197,9 +1237,7 @@ Show/hide content based on connection status:
 </div>
 
 <!-- Disable buttons when offline -->
-<button beam-action="save" beam-offline-disable>
-  Save
-</button>
+<button beam-action="save" beam-offline-disable>Save</button>
 ```
 
 The `body` also gets `.beam-offline` class when disconnected.
@@ -1242,7 +1280,12 @@ Toggle element visibility based on form field values (no server round-trip):
 Automatically submit forms when fields change (great for filters):
 
 ```html
-<form beam-action="filterProducts" beam-target="#products" beam-autosubmit beam-debounce="300">
+<form
+  beam-action="filterProducts"
+  beam-target="#products"
+  beam-autosubmit
+  beam-debounce="300"
+>
   <input name="search" placeholder="Search..." />
 
   <select name="category">
@@ -1271,9 +1314,12 @@ Upgrade regular links to use AJAX navigation:
 ```html
 <!-- Boost all links in a container -->
 <main beam-boost>
-  <a href="/page1">Page 1</a>  <!-- Now uses AJAX -->
-  <a href="/page2">Page 2</a>  <!-- Now uses AJAX -->
-  <a href="/external.com" beam-boost-off>External</a> <!-- Not boosted -->
+  <a href="/page1">Page 1</a>
+  <!-- Now uses AJAX -->
+  <a href="/page2">Page 2</a>
+  <!-- Now uses AJAX -->
+  <a href="/external.com" beam-boost-off>External</a>
+  <!-- Not boosted -->
 </main>
 
 <!-- Or boost individual links -->
@@ -1281,6 +1327,7 @@ Upgrade regular links to use AJAX navigation:
 ```
 
 Boosted links:
+
 - Fetch pages via AJAX
 - Update the specified target (default: `body`)
 - Push to browser history
@@ -1372,6 +1419,7 @@ Dropdowns with automatic outside-click closing and Escape key support:
 ```
 
 Features:
+
 - Click outside to close
 - Press Escape to close
 - Only one dropdown open at a time
@@ -1406,9 +1454,7 @@ Toggle CSS classes on elements:
 <div id="sidebar">Sidebar content</div>
 
 <!-- Toggle class on self -->
-<button beam-class-toggle="pressed">
-  Toggle Me
-</button>
+<button beam-class-toggle="pressed">Toggle Me</button>
 ```
 
 ### Reactive State
@@ -1418,6 +1464,7 @@ Fine-grained reactivity for UI components like carousels, tabs, accordions, and 
 #### beam-state Syntax Options
 
 **1. Simple value with beam-id** (property name comes from beam-id):
+
 ```html
 <div beam-state="false" beam-id="open">
   <button beam-click="open = !open">Toggle</button>
@@ -1425,11 +1472,14 @@ Fine-grained reactivity for UI components like carousels, tabs, accordions, and 
 </div>
 
 <div beam-state="0" beam-id="count">
-  <button beam-click="count++">Clicked <span beam-text="count"></span> times</button>
+  <button beam-click="count++">
+    Clicked <span beam-text="count"></span> times
+  </button>
 </div>
 ```
 
 **2. Key-value pairs** (semicolon-separated):
+
 ```html
 <div beam-state="tab: 0; total: 5">
   <button beam-click="tab = (tab + 1) % total">Next</button>
@@ -1442,32 +1492,39 @@ Fine-grained reactivity for UI components like carousels, tabs, accordions, and 
 ```
 
 **3. JSON** (for arrays and nested objects):
+
 ```html
-<div beam-state='{"items": [1, 2, 3], "config": {"enabled": true}}'>
-  ...
-</div>
+<div beam-state='{"items": [1, 2, 3], "config": {"enabled": true}}'>...</div>
 ```
 
 #### beam-class Syntax Options
 
 **1. Simplified syntax** (no JSON required):
+
 ```html
 <!-- Single class -->
 <button beam-class="active: tab === 0">Tab 1</button>
 
 <!-- Multiple classes (semicolon-separated) -->
-<div beam-class="text-red: hasError; text-green: !hasError; bold: important">
+<div
+  beam-class="text-red: hasError; text-green: !hasError; bold: important"
+></div>
 ```
 
 **2. Multiple classes with one condition** (quote the class names):
+
 ```html
-<div beam-class="'bg-green text-white shadow-lg': isActive; 'bg-gray text-dark': !isActive">
+<div
+  beam-class="'bg-green text-white shadow-lg': isActive; 'bg-gray text-dark': !isActive"
+></div>
 ```
 
 **3. JSON** (backward compatible):
+
 ```html
 <button beam-class="{ active: tab === 0, highlight: selected }">
-<div beam-class="{ 'text-green italic': !hasError, bold: important }">
+  <div beam-class="{ 'text-green italic': !hasError, bold: important }"></div>
+</button>
 ```
 
 #### Examples
@@ -1508,7 +1565,9 @@ Fine-grained reactivity for UI components like carousels, tabs, accordions, and 
 
 <!-- Status indicator with multiple classes -->
 <div beam-state="status: 'idle'">
-  <div beam-class="status-idle: status === 'idle'; status-loading: status === 'loading'; status-error: status === 'error'">
+  <div
+    beam-class="status-idle: status === 'idle'; status-loading: status === 'loading'; status-error: status === 'error'"
+  >
     <span beam-text="status"></span>
   </div>
 </div>
@@ -1516,7 +1575,7 @@ Fine-grained reactivity for UI components like carousels, tabs, accordions, and 
 
 #### Named State (Cross-Component)
 
-Share state between different parts of the page. Named states (with `beam-id`) persist across DOM morphs:
+Share state between different parts of the page. Named states (with `beam-id`) persist across server-driven updates:
 
 ```html
 <!-- Cart state defined once -->
@@ -1525,12 +1584,10 @@ Share state between different parts of the page. Named states (with `beam-id`) p
 </div>
 
 <!-- Add to cart button elsewhere -->
-<button beam-state-ref="cart" beam-click="count++">
-  Add to Cart
-</button>
+<button beam-state-ref="cart" beam-click="count++">Add to Cart</button>
 ```
 
-**Note:** Named states persist when the DOM is morphed by `beam-action`. This means reactive state is preserved even when server actions update the page.
+**Note:** Named states persist when the DOM is updated by `beam-action`. This means reactive state is preserved even when server actions update the page.
 
 #### JavaScript API
 
@@ -1538,18 +1595,18 @@ Access reactive state programmatically:
 
 ```javascript
 // Get named state
-const cartState = beam.getState('cart')
-cartState.count++  // Triggers reactive updates
+const cartState = beam.getState("cart");
+cartState.count++; // Triggers reactive updates
 
 // Get state by element
-const el = document.querySelector('[beam-state]')
-const state = beam.getState(el)
+const el = document.querySelector("[beam-state]");
+const state = beam.getState(el);
 
 // Batch multiple updates
 beam.batch(() => {
-  state.a = 1
-  state.b = 2
-})
+  state.a = 1;
+  state.b = 2;
+});
 ```
 
 #### Standalone Usage (No Beam Server)
@@ -1558,10 +1615,11 @@ The reactivity system can be used independently without the Beam WebSocket serve
 
 ```typescript
 // Just import reactivity - no server connection needed
-import '@benqoder/beam/reactivity'
+import "@benqoder/beam/reactivity";
 ```
 
 This is useful for:
+
 - Static sites that don't need server communication
 - Adding reactivity to existing projects
 - Using with other frameworks
@@ -1570,8 +1628,8 @@ The API is exposed on `window.beamReactivity`:
 
 ```javascript
 // When using standalone
-const state = beamReactivity.getState('my-state')
-state.count++
+const state = beamReactivity.getState("my-state");
+state.count++;
 ```
 
 ### CSS for Transitions
@@ -1580,8 +1638,12 @@ Include the Beam CSS for transition support:
 
 ```css
 /* Required base styles */
-[beam-hidden] { display: none !important; }
-[beam-collapsed] { display: none !important; }
+[beam-hidden] {
+  display: none !important;
+}
+[beam-collapsed] {
+  display: none !important;
+}
 
 /* Fade transition */
 [beam-transition="fade"] {
@@ -1595,7 +1657,9 @@ Include the Beam CSS for transition support:
 
 /* Slide transition */
 [beam-transition="slide"] {
-  transition: opacity 150ms ease-out, transform 150ms ease-out;
+  transition:
+    opacity 150ms ease-out,
+    transform 150ms ease-out;
 }
 [beam-transition="slide"][beam-hidden] {
   opacity: 0;
@@ -1608,14 +1672,15 @@ Include the Beam CSS for transition support:
 Or import the included CSS:
 
 ```typescript
-import '@benqoder/beam/styles'
+import "@benqoder/beam/styles";
 // or
-import '@benqoder/beam/beam.css'
+import "@benqoder/beam/beam.css";
 ```
 
 ### Migration from Alpine.js
 
 **Before (Alpine.js):**
+
 ```html
 <div x-data="{ open: false }">
   <button @click="open = !open">Menu</button>
@@ -1624,6 +1689,7 @@ import '@benqoder/beam/beam.css'
 ```
 
 **After (Beam):**
+
 ```html
 <div>
   <button beam-toggle="#menu">Menu</button>
@@ -1632,6 +1698,7 @@ import '@benqoder/beam/beam.css'
 ```
 
 **Before (Alpine.js dropdown):**
+
 ```html
 <div x-data="{ open: false }" @click.outside="open = false">
   <button @click="open = !open">Account</button>
@@ -1640,6 +1707,7 @@ import '@benqoder/beam/beam.css'
 ```
 
 **After (Beam):**
+
 ```html
 <div beam-dropdown>
   <button beam-dropdown-trigger>Account</button>
@@ -1656,11 +1724,11 @@ import '@benqoder/beam/beam.css'
 Creates a Beam instance with handlers:
 
 ```typescript
-import { createBeam } from '@benqoder/beam'
+import { createBeam } from "@benqoder/beam";
 
 const beam = createBeam<Env>({
   actions: { increment, decrement, openModal, openCart },
-})
+});
 ```
 
 ### render
@@ -1680,8 +1748,8 @@ const html = render(<div>Hello</div>)
 ```typescript
 beamPlugin({
   // Glob pattern for action handler files (must start with '/' for virtual modules)
-  actions: '/app/actions/*.tsx',   // default
-})
+  actions: "/app/actions/*.tsx", // default
+});
 ```
 
 ---
@@ -1726,18 +1794,18 @@ Add to your `app/vite-env.d.ts`:
 
 ```tsx
 // actions/todos.tsx
-let todos = ['Learn Beam', 'Build something']
+let todos = ["Learn Beam", "Build something"];
 
 export function addTodo(c) {
-  const text = c.req.query('text')
-  if (text) todos.push(text)
-  return <TodoList todos={todos} />
+  const text = c.req.query("text");
+  if (text) todos.push(text);
+  return <TodoList todos={todos} />;
 }
 
 export function deleteTodo(c) {
-  const index = parseInt(c.req.query('index'))
-  todos.splice(index, 1)
-  return <TodoList todos={todos} />
+  const index = parseInt(c.req.query("index"));
+  todos.splice(index, 1);
+  return <TodoList todos={todos} />;
 }
 
 function TodoList({ todos }) {
@@ -1746,13 +1814,17 @@ function TodoList({ todos }) {
       {todos.map((todo, i) => (
         <li>
           {todo}
-          <button beam-action="deleteTodo" beam-data-index={i} beam-target="#todos">
+          <button
+            beam-action="deleteTodo"
+            beam-data-index={i}
+            beam-target="#todos"
+          >
             Delete
           </button>
         </li>
       ))}
     </ul>
-  )
+  );
 }
 ```
 
@@ -1771,16 +1843,16 @@ function TodoList({ todos }) {
 ```tsx
 // actions/search.tsx
 export function search(c) {
-  const query = c.req.query('q') || ''
-  const results = searchDatabase(query)
+  const query = c.req.query("q") || "";
+  const results = searchDatabase(query);
 
   return (
     <ul>
-      {results.map(item => (
+      {results.map((item) => (
         <li>{item.name}</li>
       ))}
     </ul>
-  )
+  );
 }
 ```
 
@@ -1800,25 +1872,29 @@ export function search(c) {
 
 ```tsx
 // actions/cart.tsx
-let cart = []
+let cart = [];
 
 export function addToCart(c) {
-  const product = c.req.query('product')
-  cart.push(product)
+  const product = c.req.query("product");
+  cart.push(product);
 
   return (
     <>
       <div>Added {product} to cart!</div>
       <span id="cart-badge">{cart.length}</span>
     </>
-  )
+  );
 }
 ```
 
 ```html
 <span id="cart-badge" beam-hungry>0</span>
 
-<button beam-action="addToCart" beam-data-product="Widget" beam-target="#message">
+<button
+  beam-action="addToCart"
+  beam-data-product="Widget"
+  beam-target="#message"
+>
   Add Widget
 </button>
 <div id="message"></div>
@@ -1836,9 +1912,9 @@ Beam provides automatic session management with a simple `ctx.session` API. No b
 
 ```typescript
 beamPlugin({
-  actions: '/app/actions/*.tsx',
+  actions: "/app/actions/*.tsx",
   session: true, // Enable with defaults (cookie storage)
-})
+});
 ```
 
 2. **Add SESSION_SECRET to wrangler.toml:**
@@ -1880,13 +1956,13 @@ export default createRoute(async (c) => {
 
 ```typescript
 // Get a value (returns null if not set)
-const cart = await ctx.session.get<CartItem[]>('cart')
+const cart = await ctx.session.get<CartItem[]>("cart");
 
 // Set a value
-await ctx.session.set('cart', [{ productId: '123', qty: 1 }])
+await ctx.session.set("cart", [{ productId: "123", qty: 1 }]);
 
 // Delete a value
-await ctx.session.delete('cart')
+await ctx.session.delete("cart");
 ```
 
 ### Storage Options
@@ -1898,16 +1974,16 @@ Session data is stored in a signed cookie. Good for small data (~4KB limit).
 ```typescript
 beamPlugin({
   session: true, // Uses cookie storage
-})
+});
 
 // Or with custom options:
 beamPlugin({
   session: {
-    secretEnvKey: 'MY_SECRET',  // Default: 'SESSION_SECRET'
-    cookieName: 'my_sid',       // Default: 'beam_sid'
-    maxAge: 86400,              // Default: 1 year (in seconds)
+    secretEnvKey: "MY_SECRET", // Default: 'SESSION_SECRET'
+    cookieName: "my_sid", // Default: 'beam_sid'
+    maxAge: 86400, // Default: 1 year (in seconds)
   },
-})
+});
 ```
 
 #### KV Storage (For WebSocket Actions)
@@ -1917,16 +1993,16 @@ Cookie storage is read-only in WebSocket context. For actions that modify sessio
 ```typescript
 // vite.config.ts
 beamPlugin({
-  session: { storage: '/app/session-storage.ts' },
-})
+  session: { storage: "/app/session-storage.ts" },
+});
 ```
 
 ```typescript
 // app/session-storage.ts
-import { KVSession } from '@benqoder/beam'
+import { KVSession } from "@benqoder/beam";
 
 export default (sessionId: string, env: { KV: KVNamespace }) =>
-  new KVSession(sessionId, env.KV)
+  new KVSession(sessionId, env.KV);
 ```
 
 ```toml
@@ -1953,6 +2029,7 @@ ctx.session.set('cart')  → adapter.set()
 ```
 
 **Two components:**
+
 - **Session ID**: Always stored in a signed cookie (`beam_sid`)
 - **Session data**: Configurable storage (cookies by default, KV optional)
 
@@ -1974,6 +2051,7 @@ Beam uses **in-band authentication** to prevent Cross-Site WebSocket Hijacking (
 ### The Problem
 
 WebSocket connections in browsers:
+
 - **Always permit cross-site connections** (no CORS for WebSocket)
 - **Automatically send cookies** with the upgrade request
 - **Cannot use custom headers** for authentication
@@ -1998,36 +2076,36 @@ The auth token is tied to sessions:
 ```typescript
 // vite.config.ts
 beamPlugin({
-  actions: '/app/actions/*.tsx',
+  actions: "/app/actions/*.tsx",
   session: true, // Uses env.SESSION_SECRET
-})
+});
 ```
 
 #### 2. Use authMiddleware
 
 ```typescript
 // app/server.ts
-import { createApp } from 'honox/server'
-import { beam } from 'virtual:beam'
+import { createApp } from "honox/server";
+import { beam } from "virtual:beam";
 
 const app = createApp({
   init(app) {
-    app.use('*', beam.authMiddleware()) // Generates token
-    beam.init(app)
-  }
-})
+    app.use("*", beam.authMiddleware()); // Generates token
+    beam.init(app);
+  },
+});
 
-export default app
+export default app;
 ```
 
 #### 3. Inject Token in Layout
 
 ```tsx
 // app/routes/_renderer.tsx
-import { jsxRenderer } from 'hono/jsx-renderer'
+import { jsxRenderer } from "hono/jsx-renderer";
 
 export default jsxRenderer((c, { children }) => {
-  const token = c.get('beamAuthToken')
+  const token = c.get("beamAuthToken");
 
   return (
     <html>
@@ -2037,19 +2115,19 @@ export default jsxRenderer((c, { children }) => {
       </head>
       <body>{children}</body>
     </html>
-  )
-})
+  );
+});
 ```
 
 Or use the helper:
 
 ```tsx
-import { beamTokenMeta } from '@benqoder/beam'
-import { Raw } from 'hono/html'
+import { beamTokenMeta } from "@benqoder/beam";
+import { Raw } from "hono/html";
 
 <head>
-  <Raw html={beamTokenMeta(c.get('beamAuthToken'))} />
-</head>
+  <Raw html={beamTokenMeta(c.get("beamAuthToken"))} />
+</head>;
 ```
 
 #### 4. Set Environment Variable
@@ -2061,22 +2139,22 @@ SESSION_SECRET=your-secret-key-at-least-32-chars
 
 ### How It Works
 
-| Step | What Happens |
-|------|--------------|
-| 1. Page Load | Server generates 5-minute token, embeds in HTML |
-| 2. Client Connects | WebSocket opens, gets `PublicApi` (unauthenticated) |
-| 3. Client Authenticates | Calls `publicApi.authenticate(token)` |
-| 4. Server Validates | Verifies signature, expiration, session match |
-| 5. Server Returns | Full `BeamServer` API (authenticated) |
+| Step                    | What Happens                                        |
+| ----------------------- | --------------------------------------------------- |
+| 1. Page Load            | Server generates 5-minute token, embeds in HTML     |
+| 2. Client Connects      | WebSocket opens, gets `PublicApi` (unauthenticated) |
+| 3. Client Authenticates | Calls `publicApi.authenticate(token)`               |
+| 4. Server Validates     | Verifies signature, expiration, session match       |
+| 5. Server Returns       | Full `BeamServer` API (authenticated)               |
 
 ### Security Properties
 
-| Attack | Result |
-|--------|--------|
+| Attack               | Result                                             |
+| -------------------- | -------------------------------------------------- |
 | Cross-site WebSocket | Can connect, but `authenticate()` fails (no token) |
-| Stolen token | Expires in 5 minutes, tied to session ID |
-| Replay attack | Token is single-use per session |
-| Token tampering | HMAC-SHA256 signature verification fails |
+| Stolen token         | Expires in 5 minutes, tied to session ID           |
+| Replay attack        | Token is single-use per session                    |
+| Token tampering      | HMAC-SHA256 signature verification fails           |
 
 ### Token Details
 
@@ -2090,7 +2168,7 @@ SESSION_SECRET=your-secret-key-at-least-32-chars
 If you need to generate tokens outside the middleware:
 
 ```typescript
-const token = await beam.generateAuthToken(ctx)
+const token = await beam.generateAuthToken(ctx);
 ```
 
 ---
@@ -2101,19 +2179,25 @@ Call actions directly from JavaScript using `window.beam`:
 
 ```javascript
 // Call action with RPC only (no DOM update)
-const response = await window.beam.logout()
+const response = await window.beam.logout();
 
 // Call action and swap HTML into target
-await window.beam.getCartBadge({}, '#cart-count')
+await window.beam.getCartBadge({}, "#cart-count");
 
 // With swap mode
-await window.beam.loadMoreProducts({ page: 2 }, { target: '#products', swap: 'append' })
+await window.beam.loadMoreProducts(
+  { page: 2 },
+  { target: "#products", swap: "append" },
+);
 
 // Full options object
-await window.beam.addToCart({ productId: 123 }, {
-  target: '#cart-badge',
-  swap: 'morph'  // 'morph' | 'innerHTML' | 'append' | 'prepend'
-})
+await window.beam.addToCart(
+  { productId: 123 },
+  {
+    target: "#cart-badge",
+    swap: "replace", // 'replace' | 'append' | 'prepend'
+  },
+);
 ```
 
 ### API Signature
@@ -2132,19 +2216,20 @@ window.beam.actionName(data?, options?) → Promise<ActionResponse>
 ### Response Handling
 
 The API automatically handles:
+
 - **HTML swapping**: If `options.target` is provided, swaps HTML into the target element
 - **Script execution**: If response contains a script, executes it
 - **Redirects**: If response contains a redirect URL, navigates to it
 
 ```javascript
 // Server returns script - executed automatically
-await window.beam.showNotification({ message: 'Hello!' })
+await window.beam.showNotification({ message: "Hello!" });
 
 // Server returns redirect - navigates automatically
-await window.beam.logout()  // ctx.redirect('/login')
+await window.beam.logout(); // ctx.redirect('/login')
 
 // Server returns HTML + script - both handled
-await window.beam.addToCart({ id: 42 }, '#cart-badge')
+await window.beam.addToCart({ id: 42 }, "#cart-badge");
 ```
 
 ### Utility Methods
@@ -2169,19 +2254,20 @@ Actions can trigger client-side redirects using `ctx.redirect()`:
 // app/actions/auth.tsx
 export function logout(ctx: BeamContext<Env>) {
   // Clear session, etc.
-  return ctx.redirect('/login')
+  return ctx.redirect("/login");
 }
 
 export function requireAuth(ctx: BeamContext<Env>) {
-  const user = ctx.session.get('user')
+  const user = ctx.session.get("user");
   if (!user) {
-    return ctx.redirect('/login?next=' + encodeURIComponent(ctx.req.url))
+    return ctx.redirect("/login?next=" + encodeURIComponent(ctx.req.url));
   }
   // Continue with action...
 }
 ```
 
 The redirect is handled automatically on the client side, whether triggered via:
+
 - Button/link click (`beam-action`)
 - Form submission
 - Programmatic call (`window.beam.actionName()`)
@@ -2209,13 +2295,14 @@ When the user navigates away and clicks back, the browser loads the URL with `?p
 
 ```tsx
 // In your route handler
-const page = parseInt(c.req.query('page') || '1')
-const products = await getProducts(page)
+const page = parseInt(c.req.query("page") || "1");
+const products = await getProducts(page);
 ```
 
 ### Infinite Scroll & Load More State
 
 For infinite scroll and load more, Beam automatically preserves:
+
 - **Loaded content**: All items that were loaded
 - **Scroll position**: Where the user was on the page
 
@@ -2223,9 +2310,11 @@ This happens automatically when using `beam-infinite` or `beam-load-more`. The s
 
 #### Infinite Scroll (auto-trigger on visibility)
 
-```html
+```tsx
 <div id="product-list" class="product-grid">
-  {products.map(p => <ProductCard product={p} />)}
+  {products.map((p) => (
+    <ProductCard product={p} />
+  ))}
   {hasMore && (
     <div
       class="load-more-sentinel"
@@ -2240,9 +2329,11 @@ This happens automatically when using `beam-infinite` or `beam-load-more`. The s
 
 #### Load More Button (click to trigger)
 
-```html
+```tsx
 <div id="product-list" class="product-grid">
-  {products.map(p => <ProductCard product={p} />)}
+  {products.map((p) => (
+    <ProductCard product={p} />
+  ))}
   {hasMore && (
     <button
       class="load-more-btn"
@@ -2258,17 +2349,18 @@ This happens automatically when using `beam-infinite` or `beam-load-more`. The s
 ```
 
 Both patterns work the same way:
+
 1. User loads more content (scroll or click)
 2. User navigates away (clicks a product)
 3. User clicks the back button
 4. Content and scroll position are restored
-5. Fresh server data is morphed over cached items (using `beam-item-id`)
+5. Fresh server data is applied over cached items (using `beam-item-id`)
 
 #### Keeping Items Fresh with `beam-item-id`
 
 When restoring from cache, the server still renders fresh Page 1 data. To sync fresh data with cached items, add `beam-item-id` to your list items:
 
-```html
+```tsx
 <!-- Any list item with a unique identifier -->
 <div class="product-card" beam-item-id={product.id}>...</div>
 <div class="comment" beam-item-id={comment.id}>...</div>
@@ -2276,8 +2368,9 @@ When restoring from cache, the server still renders fresh Page 1 data. To sync f
 ```
 
 On back navigation:
+
 1. Cache is restored (all loaded items + scroll position)
-2. Fresh server items are morphed over matching cached items
+2. Fresh server items are applied over matching cached items
 3. Server data takes precedence for items in both
 
 This ensures Page 1 items always have fresh data (prices, stock, etc.) while preserving the full scroll state.
@@ -2286,10 +2379,11 @@ This ensures Page 1 items always have fresh data (prices, stock, etc.) while pre
 
 When using `beam-item-id`, Beam automatically handles duplicate items when appending or prepending content:
 
-1. **Duplicates are replaced**: If an item with the same `beam-item-id` already exists, it's morphed with fresh data
+1. **Duplicates are replaced**: If an item with the same `beam-item-id` already exists, it's updated with fresh data
 2. **No double-insertion**: The duplicate is removed from incoming HTML after updating
 
 This is useful when:
+
 - New items are inserted while the user is scrolling (causing offset shifts)
 - Real-time updates add items that might already exist
 - Race conditions between pagination requests
@@ -2309,12 +2403,14 @@ The action should return the new items plus the next trigger (sentinel or button
 ```tsx
 // app/actions/loadMore.tsx
 export async function loadMoreProducts(ctx, { page }) {
-  const items = await getItems(page)
-  const hasMore = await hasMoreItems(page)
+  const items = await getItems(page);
+  const hasMore = await hasMoreItems(page);
 
   return (
     <>
-      {items.map(item => <ProductCard product={item} />)}
+      {items.map((item) => (
+        <ProductCard product={item} />
+      ))}
       {hasMore ? (
         <button
           beam-load-more
@@ -2328,7 +2424,7 @@ export async function loadMoreProducts(ctx, { page }) {
         <p>No more items</p>
       )}
     </>
-  )
+  );
 }
 ```
 
@@ -2337,7 +2433,7 @@ export async function loadMoreProducts(ctx, { page }) {
 To manually clear the saved scroll state:
 
 ```javascript
-window.beam.clearScrollState()
+window.beam.clearScrollState();
 ```
 
 This is useful when you want to force a fresh load, such as after a filter change or form submission.
@@ -2347,6 +2443,7 @@ This is useful when you want to force a fresh load, such as after a filter chang
 ## Browser Support
 
 Beam requires modern browsers with WebSocket support:
+
 - Chrome 16+
 - Firefox 11+
 - Safari 7+

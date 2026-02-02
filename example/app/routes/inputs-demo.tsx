@@ -7,7 +7,7 @@ export default createRoute(async (c) => {
   return c.html(
     <Layout title="Beam Inputs Demo" authToken={authToken}>
       <h1>Beam Inputs &amp; Forms Demo</h1>
-      <p class="text-muted">Testing input handling - aiming for Unpoly-like UX with superpowers</p>
+      <p class="text-muted">Testing input handling - aiming for great UX (focus/caret/keep) with server-driven updates</p>
 
       {/* ============ LIVE SEARCH ============ */}
       <div class="demo-section">
@@ -617,7 +617,7 @@ export default createRoute(async (c) => {
       <div class="demo-section">
         <h2>19. Beam-Keep Test (beam-keep)</h2>
         <p class="text-muted">
-          Tests that <code>beam-keep</code> prevents an element from being morphed during updates.
+          Tests that <code>beam-keep</code> prevents an element from being replaced during updates.
           <br/>
           <strong>Expected:</strong> Only the element WITHOUT beam-keep should update. The beam-keep element stays unchanged.
         </p>

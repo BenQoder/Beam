@@ -115,21 +115,21 @@ export async function hideTest(_ctx: BeamContext<Env>, _params: Record<string, u
   )
 }
 
-// ============ REACTIVE STATE MORPH TEST ============
-// This tests that reactive state with beam-id persists across DOM morphs
-export async function morphReactiveDemo(_ctx: BeamContext<Env>, _params: Record<string, unknown>): Promise<string> {
+// ============ REACTIVE STATE UPDATE TEST ============
+// This tests that reactive state with beam-id persists across server-driven updates
+export async function updateReactiveDemo(_ctx: BeamContext<Env>, _params: Record<string, unknown>): Promise<string> {
   const time = new Date().toLocaleTimeString()
   // Return new HTML with same beam-id - state should persist!
   return render(
-    <div id="morph-target" beam-state='{"count": 0, "message": "Initial"}' beam-id="persist-demo" class="morph-box">
-      <h4>Persistent State (Morphed at {time})</h4>
+    <div id="update-target" beam-state='{"count": 0, "message": "Initial"}' beam-id="persist-demo" class="update-box">
+      <h4>Persistent State (Updated at {time})</h4>
       <div class="counter-inline">
         <button beam-click="count--" class="btn-small-counter">-</button>
         <span class="count-display" beam-text="count"></span>
         <button beam-click="count++" class="btn-small-counter">+</button>
       </div>
-      <p class="morph-message">Message: <span beam-text="message"></span></p>
-      <p class="morph-hint">Container was morphed, but your count value should still be the same!</p>
+      <p class="update-message">Message: <span beam-text="message"></span></p>
+      <p class="update-hint">Container was updated, but your count value should still be the same!</p>
     </div>
   )
 }

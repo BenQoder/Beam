@@ -598,40 +598,40 @@ export default createRoute((c) => {
 <div beam-state-ref="game" beam-class="level-low: score < 30; level-high: score >= 70">Level</div>`}</pre>
       </div>
 
-      {/* State Persistence After Morph */}
+      {/* State Persistence After Updates */}
       <div class="demo-section">
-        <h2>11. State Persistence After Morph</h2>
-        <p class="text-muted">Named states (with <code>beam-id</code>) persist when the DOM is morphed by <code>beam-action</code>.</p>
+        <h2>11. State Persistence After Updates</h2>
+        <p class="text-muted">Named states (with <code>beam-id</code>) persist when the DOM is updated by <code>beam-action</code>.</p>
 
-        <div class="morph-demo">
-          {/* State with beam-id - will persist across morphs */}
-          <div id="morph-target" beam-state='{"count": 0, "message": "Initial"}' beam-id="persist-demo" class="morph-box">
+        <div class="update-demo">
+          {/* State with beam-id - will persist across updates */}
+          <div id="update-target" beam-state='{"count": 0, "message": "Initial"}' beam-id="persist-demo" class="update-box">
             <h4>Persistent State</h4>
             <div class="counter-inline">
               <button beam-click="count--" class="btn-small-counter">-</button>
               <span class="count-display" beam-text="count"></span>
               <button beam-click="count++" class="btn-small-counter">+</button>
             </div>
-            <p class="morph-message">Message: <span beam-text="message"></span></p>
-            <p class="morph-hint">Increment the counter, then click "Morph Container" - state persists!</p>
+            <p class="update-message">Message: <span beam-text="message"></span></p>
+            <p class="update-hint">Increment the counter, then click "Update Container" - state persists!</p>
           </div>
 
-          {/* Button that triggers morph */}
-          <div class="morph-actions">
-            <button beam-action="morphReactiveDemo" beam-target="#morph-target" class="btn-morph">
-              Morph Container (server update)
+          {/* Button that triggers update */}
+          <div class="update-actions">
+            <button beam-action="updateReactiveDemo" beam-target="#update-target" class="btn-update">
+              Update Container (server update)
             </button>
             <p class="text-muted">This replaces the container HTML but preserves the reactive state.</p>
           </div>
         </div>
 
-        <pre class="code-preview">{`<!-- Named state persists across morphs -->
+        <pre class="code-preview">{`<!-- Named state persists across updates -->
 <div id="target" beam-state='{"count": 0}' beam-id="my-state">
   <span beam-text="count"></span>
   <button beam-click="count++">+</button>
 </div>
 
-<!-- When this action morphs #target, the count value is preserved -->
+<!-- When this action updates #target, the count value is preserved -->
 <button beam-action="updateContent" beam-target="#target">
   Update Content
 </button>`}</pre>
@@ -1187,19 +1187,19 @@ export default createRoute((c) => {
           color: #065f46;
         }
 
-        /* Morph Demo */
-        .morph-demo {
+        /* Update Demo */
+        .update-demo {
           display: flex;
           flex-direction: column;
           gap: 1rem;
         }
-        .morph-box {
+        .update-box {
           background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
           border: 2px solid #0ea5e9;
           padding: 1.5rem;
           border-radius: 8px;
         }
-        .morph-box h4 {
+        .update-box h4 {
           margin: 0 0 1rem;
           color: #0369a1;
         }
@@ -1228,21 +1228,21 @@ export default createRoute((c) => {
           min-width: 40px;
           text-align: center;
         }
-        .morph-message {
+        .update-message {
           margin: 0.5rem 0;
           color: #0369a1;
         }
-        .morph-hint {
+        .update-hint {
           font-size: 0.85rem;
           color: #64748b;
           margin: 0;
         }
-        .morph-actions {
+        .update-actions {
           display: flex;
           align-items: center;
           gap: 1rem;
         }
-        .btn-morph {
+        .btn-update {
           padding: 0.75rem 1.5rem;
           background: #8b5cf6;
           color: white;
@@ -1251,7 +1251,7 @@ export default createRoute((c) => {
           cursor: pointer;
           font-weight: 500;
         }
-        .btn-morph:hover {
+        .btn-update:hover {
           background: #7c3aed;
         }
 

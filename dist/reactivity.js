@@ -386,10 +386,10 @@ function setupReactiveScope(el) {
     if (id && id.includes('-')) {
         console.warn(`[beam] beam-id="${id}" contains dashes which won't work in expressions. Use camelCase instead (e.g., "${id.replace(/-([a-z])/g, (_, c) => c.toUpperCase())}")`);
     }
-    // Check if named state already exists (preserve state across morphs)
+    // Check if named state already exists (preserve state across updates)
     let state;
     if (id && reactiveNamedStates.has(id)) {
-        // Reuse existing named state - preserves state after DOM morph
+        // Reuse existing named state - preserves state after server-driven DOM updates
         state = reactiveNamedStates.get(id);
     }
     else {

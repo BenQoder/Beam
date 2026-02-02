@@ -419,10 +419,10 @@ function setupReactiveScope(el: HTMLElement): void {
     )
   }
 
-  // Check if named state already exists (preserve state across morphs)
+  // Check if named state already exists (preserve state across updates)
   let state: object
   if (id && reactiveNamedStates.has(id)) {
-    // Reuse existing named state - preserves state after DOM morph
+    // Reuse existing named state - preserves state after server-driven DOM updates
     state = reactiveNamedStates.get(id)!
   } else {
     // Create new state from attribute

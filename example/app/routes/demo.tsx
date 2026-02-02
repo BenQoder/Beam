@@ -196,9 +196,9 @@ export default createRoute(async (c) => {
           <button beam-action="addItem" beam-swap="prepend" beam-target="#swap-list">
             Prepend Item
           </button>
-          <button beam-action="replaceList" beam-swap="morph" beam-target="#swap-list">
-            Replace (Morph)
-          </button>
+            <button beam-action="replaceList" beam-swap="replace" beam-target="#swap-list">
+              Replace
+            </button>
         </div>
       </div>
 
@@ -1158,7 +1158,10 @@ export default createRoute(async (c) => {
       {/* Example 7: Auto-detect by id, beam-id, beam-item-id */}
       <div class="demo-section">
         <h4 style="margin-top: 1.5rem;">Example 7: Auto-detect (id, beam-id, beam-item-id)</h4>
-        <p class="text-muted">No explicit targets needed — finds elements by <code>id</code>, <code>beam-id</code>, or <code>beam-item-id</code> on root element.</p>
+        <p class="text-muted">
+          No explicit targets needed — finds elements by <code>id</code>, <code>beam-id</code>, or <code>beam-item-id</code> on the root element.
+          If more than one is present, Beam selects a single target using the priority order below.
+        </p>
         <div class="multi-render-grid">
           <div id="auto-by-id" class="demo-box">By id</div>
           <div beam-id="auto-by-beam-id" class="demo-box">By beam-id</div>
