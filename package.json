@@ -1,6 +1,6 @@
 {
   "name": "@benqoder/beam",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "type": "module",
   "publishConfig": {
     "registry": "https://registry.npmjs.org",
