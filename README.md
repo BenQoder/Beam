@@ -579,18 +579,18 @@ Beam supports a single client-side UI model: reactive state + declarative bindin
 
 Fine-grained reactivity for UI components (carousels, tabs, accordions) without server round-trips.
 
-| Attribute        | Description                                               | Example                            |
-| ---------------- | --------------------------------------------------------- | ---------------------------------- |
-| `beam-state`     | Declare reactive state (JSON, key-value, or simple value) | `beam-state="tab: 0; total: 5"`    |
-| `beam-id`        | Name the state for cross-component access                 | `beam-id="cart"`                   |
-| `beam-state-ref` | Reference a named state from elsewhere                    | `beam-state-ref="cart"`            |
-| `beam-text`      | Bind text content to expression                           | `beam-text="count"`                |
-| `beam-attr-*`    | Bind any attribute to expression                          | `beam-attr-disabled="count === 0"` |
-| `beam-show`      | Show/hide element based on expression                     | `beam-show="open"`                 |
-| `beam-class`     | Toggle classes (simplified or JSON syntax)                | `beam-class="active: tab === 0"`   |
-| `beam-click`     | Click handler that mutates state                          | `beam-click="open = !open"`        |
-| `beam-state-toggle` | Toggle (or set) a state property (sugar)               | `beam-state-toggle="open"`         |
-| `beam-model`     | Two-way binding for inputs                                | `beam-model="firstName"`           |
+| Attribute           | Description                                               | Example                            |
+| ------------------- | --------------------------------------------------------- | ---------------------------------- |
+| `beam-state`        | Declare reactive state (JSON, key-value, or simple value) | `beam-state="tab: 0; total: 5"`    |
+| `beam-id`           | Name the state for cross-component access                 | `beam-id="cart"`                   |
+| `beam-state-ref`    | Reference a named state from elsewhere                    | `beam-state-ref="cart"`            |
+| `beam-text`         | Bind text content to expression                           | `beam-text="count"`                |
+| `beam-attr-*`       | Bind any attribute to expression                          | `beam-attr-disabled="count === 0"` |
+| `beam-show`         | Show/hide element based on expression                     | `beam-show="open"`                 |
+| `beam-class`        | Toggle classes (simplified or JSON syntax)                | `beam-class="active: tab === 0"`   |
+| `beam-click`        | Click handler that mutates state                          | `beam-click="open = !open"`        |
+| `beam-state-toggle` | Toggle (or set) a state property (sugar)                  | `beam-state-toggle="open"`         |
+| `beam-model`        | Two-way binding for inputs                                | `beam-model="firstName"`           |
 
 ---
 
