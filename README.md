@@ -584,6 +584,7 @@ Fine-grained reactivity for UI components (carousels, tabs, accordions) without 
 | `beam-state`        | Declare reactive state (JSON, key-value, or simple value) | `beam-state="tab: 0; total: 5"`    |
 | `beam-id`           | Name the state for cross-component access                 | `beam-id="cart"`                   |
 | `beam-state-ref`    | Reference a named state from elsewhere                    | `beam-state-ref="cart"`            |
+| `beam-init`         | Run JS expression once after state is initialized         | `beam-init="setInterval(() => { index = (index+1) % total }, 3000)"` |
 | `beam-text`         | Bind text content to expression                           | `beam-text="count"`                |
 | `beam-attr-*`       | Bind any attribute to expression                          | `beam-attr-disabled="count === 0"` |
 | `beam-show`         | Show/hide element based on expression                     | `beam-show="open"`                 |
@@ -1438,10 +1439,27 @@ Fine-grained reactivity for UI components like carousels, tabs, accordions, and 
   <div beam-show="tab === 2">Content for Tab 3</div>
 </div>
 
-<!-- Carousel -->
+<!-- Carousel (manual) -->
 <div beam-state="slide: 0; total: 5">
   <button beam-click="slide = (slide - 1 + total) % total">← Prev</button>
   <span beam-text="slide + 1"></span> / <span beam-text="total"></span>
+  <button beam-click="slide = (slide + 1) % total">Next →</button>
+</div>
+
+<!-- Auto-play carousel (beam-init starts the interval after state is ready) -->
+<div
+  beam-state="slide: 0; total: 5"
+  beam-init="setInterval(() => { slide = (slide + 1) % total }, 3000)"
+>
+  <div class="overflow-hidden">
+    <div
+      class="flex transition-transform duration-500"
+      beam-attr-style="'transform: translateX(-' + (slide * 100) + '%)'"
+    >
+      <!-- slides here, each min-w-full -->
+    </div>
+  </div>
+  <button beam-click="slide = (slide - 1 + total) % total">← Prev</button>
   <button beam-click="slide = (slide + 1) % total">Next →</button>
 </div>
 
@@ -1461,6 +1479,32 @@ Fine-grained reactivity for UI components like carousels, tabs, accordions, and 
   </div>
 </div>
 ```
+
+#### beam-init — Run Code on State Initialization
+
+`beam-init` runs a JavaScript expression **once** after the state scope is fully initialized. Use it for `setInterval` (auto-play), `setTimeout`, or any setup that needs access to the reactive state.
+
+```html
+<!-- Auto-play carousel -->
+<div
+  beam-state="slide: 0; total: 4"
+  beam-init="setInterval(() => { slide = (slide + 1) % total }, 3000)"
+>
+  ...
+</div>
+
+<!-- Derived initial value -->
+<div
+  beam-state="count: 0; doubled: 0"
+  beam-init="doubled = count * 2"
+>
+  <span beam-text="doubled"></span>
+</div>
+```
+
+**Scoping:** `beam-init` must be on the same element as `beam-state` (or on an element inside a scope). The expression runs with the same reactive state context as all other directives in the scope.
+
+**Note:** `beam-init` only works inside a `beam-state` scope — it has no effect on elements without a state ancestor.
 
 #### Named State (Cross-Component)
 

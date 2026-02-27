@@ -364,6 +364,16 @@ function processReactiveBindings(root: HTMLElement, _state: object): void {
     el.addEventListener('input', updateState)
     el.addEventListener('change', updateState)
   })
+
+  // beam-init: run expression once for child elements inside this scope.
+  // The state container's own beam-init is handled in setupReactiveScope after this function.
+  root.querySelectorAll<HTMLElement>('[beam-init]').forEach((el) => {
+    if (!isInReactiveScope(el, root)) return
+    if (el.hasAttribute('beam-init-run')) return
+    el.setAttribute('beam-init-run', '')
+    const expr = el.getAttribute('beam-init')!
+    evalReactiveExpr(expr, getReactiveState(el))
+  })
 }
 
 // --- Class Expression Parsing ---
@@ -496,10 +506,12 @@ function setupReactiveScope(el: HTMLElement): void {
   reactiveElStates.set(el, state)
   processReactiveBindings(el, state)
 
-  // beam-init: run expression once after state scope is fully initialized.
+  // beam-init on the container element itself (not picked up by processReactiveBindings
+  // since querySelectorAll('[beam-init]') only finds descendants, not the root).
   // Useful for setInterval (auto-play), setTimeout, or computing derived values.
   const initExpr = el.getAttribute('beam-init')
-  if (initExpr) {
+  if (initExpr && !el.hasAttribute('beam-init-run')) {
+    el.setAttribute('beam-init-run', '')
     evalReactiveExpr(initExpr, state)
   }
 }
