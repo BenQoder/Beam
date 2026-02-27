@@ -1,6 +1,6 @@
 {
   "name": "@benqoder/beam",
-  "version": "0.5.3",
+  "version": "0.5.4",
   "type": "module",
   "publishConfig": {
     "registry": "https://registry.npmjs.org",
@@ -22,6 +22,10 @@
     "./reactivity": {
       "types": "./dist/reactivity.d.ts",
       "import": "./dist/reactivity.js"
+    },
+    "./directives": {
+      "types": "./dist/directives.d.ts",
+      "import": "./dist/directives.js"
     },
     "./vite": {
       "types": "./dist/vite.d.ts",

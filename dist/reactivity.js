@@ -461,6 +461,12 @@ function setupReactiveScope(el) {
     }
     reactiveElStates.set(el, state);
     processReactiveBindings(el, state);
+    // beam-init: run expression once after state scope is fully initialized.
+    // Useful for setInterval (auto-play), setTimeout, or computing derived values.
+    const initExpr = el.getAttribute('beam-init');
+    if (initExpr) {
+        evalReactiveExpr(initExpr, state);
+    }
 }
 // --- Setup standalone ref elements (elements with beam-state-ref outside any beam-state scope) ---
 function setupRefElements() {
