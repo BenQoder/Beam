@@ -634,6 +634,7 @@ function initReactivity(): void {
     document.querySelectorAll<HTMLElement>('[beam-state]:not([beam-state-init])').forEach((el) => {
       el.setAttribute('beam-state-init', '')
       setupReactiveScope(el)
+      el.removeAttribute('beam-cloak')
     })
     // Also setup any new ref elements
     setupRefElements()
@@ -644,6 +645,7 @@ function initReactivity(): void {
   document.querySelectorAll<HTMLElement>('[beam-state]').forEach((el) => {
     el.setAttribute('beam-state-init', '')
     setupReactiveScope(el)
+    el.removeAttribute('beam-cloak')
   })
 
   // Setup standalone ref elements

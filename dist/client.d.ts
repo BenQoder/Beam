@@ -18,7 +18,7 @@ interface ActionResponse {
     };
 }
 interface BeamServer {
-    call(action: string, data?: Record<string, unknown>): Promise<ActionResponse>;
+    call(action: string, data?: Record<string, unknown>): ReadableStream<ActionResponse>;
     registerCallback(callback: (event: string, data: unknown) => void): Promise<void>;
 }
 type BeamServerStub = RpcStub<BeamServer>;

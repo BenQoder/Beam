@@ -13,7 +13,7 @@ export default createRoute((c) => {
           <div class="auth-bar-content">
             <span>Welcome, <strong>{user.name as string}</strong></span>
             <span class={`badge badge-${user.role}`}>{user.role as string}</span>
-            <form action="/logout" method="POST" style="display: inline;">
+            <form action="/logout" method="post" style="display: inline;">
               <button type="submit" class="btn-link">Sign Out</button>
             </form>
           </div>

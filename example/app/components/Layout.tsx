@@ -9,7 +9,7 @@ type Props = {
 }
 
 export function Layout({ title = 'My App', children, cartCount = 0, authToken }: Props) {
-  const isDev = import.meta.env?.DEV ?? false
+  const isDev = (import.meta as any).env?.DEV ?? false
   const stylesHref = isDev ? '/app/styles.css' : '/static/styles.css'
   const clientSrc = isDev ? '/app/client.ts' : '/static/client.js'
 

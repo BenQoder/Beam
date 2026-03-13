@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import type { MiddlewareHandler } from 'hono'
+import type { Env as HonoEnv, MiddlewareHandler } from 'hono'
 import { getSignedCookie, setSignedCookie } from 'hono/cookie'
 import { RpcTarget, newWorkersRpcResponse } from 'capnweb'
 import type {
@@ -283,6 +283,10 @@ function createBeamContext<TEnv>(base: {
   }
 }
 
+function isAsyncGenerator(value: unknown): value is AsyncGenerator<unknown> {
+  return value != null && typeof (value as any)[Symbol.asyncIterator] === 'function'
+}
+
 /**
  * Beam RPC Server - extends RpcTarget for capnweb integration
  *
@@ -306,19 +310,37 @@ class BeamServer<TEnv extends object> extends RpcTarget {
   }
 
   /**
-   * Call an action handler
+   * Call an action handler, returning a ReadableStream of ActionResponses.
+   * Supports both regular handlers (single response) and async generators (multiple responses).
+   * cap'n web 0.6+ transfers ReadableStream natively with flow control and multiplexing.
    */
-  async call(action: string, data: Record<string, unknown> = {}): Promise<ActionResponse> {
+  call(action: string, data: Record<string, unknown> = {}): ReadableStream<ActionResponse> {
     const handler = this.actions[action]
     if (!handler) {
       throw new Error(`Unknown action: ${action}`)
     }
-    const result = await handler(this.ctx, data)
-    // Normalize string responses to ActionResponse format
-    if (typeof result === 'string') {
-      return { html: result }
-    }
-    return result
+
+    const ctx = this.ctx
+    return new ReadableStream<ActionResponse>({
+      async start(controller) {
+        try {
+          const result = handler(ctx, data)
+          const normalize = (v: ActionResponse | string): ActionResponse =>
+            typeof v === 'string' ? { html: v } : v
+
+          if (isAsyncGenerator(result)) {
+            for await (const chunk of result) {
+              controller.enqueue(normalize(await chunk))
+            }
+          } else {
+            controller.enqueue(normalize(await result))
+          }
+          controller.close()
+        } catch (err) {
+          controller.error(err)
+        }
+      },
+    })
   }
 
   /**
@@ -558,7 +580,7 @@ export function createBeam<TEnv extends object = object>(
      * })
      * ```
      */
-    init(app: Hono<{ Bindings: TEnv }>, options?: { endpoint?: string }) {
+    init<E extends HonoEnv>(app: Hono<E>, options?: { endpoint?: string }) {
       const endpoint = options?.endpoint ?? '/beam'
 
       app.get(endpoint, async (c) => {
@@ -580,7 +602,7 @@ export function createBeam<TEnv extends object = object>(
         const server = new PublicBeamServer(
           secret,
           sessionConfig,
-          c.env,
+          c.env as TEnv,
           c.req.raw,
           actions as Record<string, ActionHandler<TEnv>>,
           auth

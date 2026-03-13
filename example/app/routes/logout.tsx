@@ -1,7 +1,7 @@
 import { createRoute } from 'honox/factory'
 
 // Helper to parse cookies
-function parseCookies(cookieHeader: string | null): Record<string, string> {
+function parseCookies(cookieHeader: string | null | undefined): Record<string, string> {
   if (!cookieHeader) return {}
   return Object.fromEntries(
     cookieHeader.split(';').map((c) => {

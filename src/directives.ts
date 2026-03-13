@@ -58,6 +58,15 @@ export const BEAM_REACTIVITY_DIRECTIVES: BeamDirective[] = [
         category: 'state',
     },
     {
+        name: 'beam-cloak',
+        description:
+            'Hides an element until beam reactivity has fully initialized its scope. ' +
+            'Prevents a flash of un-processed content (e.g. beam-show elements briefly visible). ' +
+            'Place on the same element as beam-state. Removed automatically after setup.',
+        example: '<div beam-state="open: false" beam-cloak>\n  <div beam-show="open">Hidden until ready</div>\n</div>',
+        category: 'display',
+    },
+    {
         name: 'beam-init',
         description:
             'Runs a JavaScript expression once after the state scope is fully initialized. ' +

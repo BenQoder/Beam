@@ -52,9 +52,11 @@ declare class BeamServer<TEnv extends object> extends RpcTarget {
     private actions;
     constructor(ctx: BeamContext<TEnv>, actions: Record<string, ActionHandler<TEnv>>);
     /**
-     * Call an action handler
+     * Call an action handler, returning a ReadableStream of ActionResponses.
+     * Supports both regular handlers (single response) and async generators (multiple responses).
+     * cap'n web 0.6+ transfers ReadableStream natively with flow control and multiplexing.
      */
-    call(action: string, data?: Record<string, unknown>): Promise<ActionResponse>;
+    call(action: string, data?: Record<string, unknown>): ReadableStream<ActionResponse>;
     /**
      * Register a client callback for server-initiated updates
      * This enables bidirectional communication - server can push to client

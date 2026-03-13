@@ -29,7 +29,7 @@ export default createRoute((c) => {
             <div class="auth-error">{decodeURIComponent(error)}</div>
           )}
 
-          <form method="POST" action="/login" class="auth-form">
+          <form method="post" action="/login" class="auth-form">
             <div class="form-group">
               <label for="username">Username</label>
               <input

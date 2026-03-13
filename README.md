@@ -33,8 +33,11 @@ A lightweight, declarative UI framework for building interactive web application
 - **Collapse** - Expand/collapse with text swap (no server)
 - **Class Toggle** - Toggle CSS classes on elements (no server)
 - **Reactive State** - Fine-grained reactivity for UI components (tabs, accordions, carousels)
+- **Cloak** - Hide elements until reactivity initializes (no flash of unprocessed content)
+- **Auto-Reconnect** - Automatically reconnects on WebSocket disconnect with configurable interval
 - **Multi-Render** - Update multiple targets in a single action response
 - **Async Components** - Full support for HonoX async components in `ctx.render()`
+- **Streaming Actions** - Async generator handlers push incremental updates over WebSocket (skeleton → content, live progress, AI-style text)
 
 ## Installation
 
@@ -361,6 +364,105 @@ Async components are awaited automatically - no manual `Promise.resolve()` or he
 
 ---
 
+### Streaming Actions
+
+Turn any action into a streaming action by making it an **async generator** (`async function*`). Each `yield` pushes an update to the browser immediately — no waiting for the full response.
+
+```tsx
+export async function* loadProfile(ctx: BeamContext<Env>, { id }: Record<string, unknown>) {
+  // First yield: show skeleton immediately
+  yield ctx.render(<div id="profile">Loading…</div>)
+
+  // Simulate slow API call
+  await delay(1800)
+
+  const user = await db.getUser(id as string)
+
+  // Second yield: replace with real content
+  yield ctx.render(
+    <div id="profile">
+      <h3>{user.name}</h3>
+      <p>{user.role}</p>
+    </div>
+  )
+}
+```
+
+Use it in HTML exactly like a regular action — no special attribute needed:
+
+```html
+<button beam-action="loadProfile" beam-include="id">Load Profile</button>
+<div id="profile"></div>
+```
+
+#### Patterns
+
+**Skeleton → Content** — yield a skeleton immediately so the user sees feedback, then yield the real content once the data is ready:
+
+```tsx
+export async function* loadProfile(ctx: BeamContext<Env>, { id }: Record<string, unknown>) {
+  yield ctx.render(<SkeletonCard id="result" />)
+  const user = await fetchUser(id)
+  yield ctx.render(<UserCard id="result" user={user} />)
+}
+```
+
+**Multi-step Progress** — yield after each step completes to show a live progress list:
+
+```tsx
+export async function* runPipeline(ctx: BeamContext<Env>, _: Record<string, unknown>) {
+  const steps = ['Validating', 'Fetching', 'Processing', 'Saving']
+  const done: string[] = []
+
+  for (const step of steps) {
+    yield ctx.render(<Pipeline done={done} current={step} pending={steps.slice(done.length + 1)} id="pipeline" />)
+    await runStep(step)
+    done.push(step)
+  }
+
+  yield ctx.render(<Pipeline done={done} complete id="pipeline" />)
+}
+```
+
+**AI-style Text Streaming** — accumulate text and re-render on each chunk for a typewriter effect:
+
+```tsx
+export async function* streamText(ctx: BeamContext<Env>, _: Record<string, unknown>) {
+  let text = ''
+  for (const word of words) {
+    text += (text ? ' ' : '') + word
+    await delay(120)
+    yield ctx.render(<p id="output">{text}<span class="cursor">▌</span></p>)
+  }
+  yield ctx.render(<p id="output">{text}</p>) // remove cursor
+}
+```
+
+**Streaming into Modals and Drawers** — yield `ctx.modal()` or `ctx.drawer()` calls. The first yield opens the overlay; subsequent yields update its content:
+
+```tsx
+export async function* openProfileModal(ctx: BeamContext<Env>, { id }: Record<string, unknown>) {
+  yield ctx.modal(<SkeletonProfile />, { size: 'md' }) // opens modal with skeleton
+
+  const user = await fetchUser(id)
+
+  yield ctx.modal(<UserProfile user={user} />, { size: 'md' }) // swaps in real content
+}
+```
+
+```html
+<button beam-modal="openProfileModal" beam-include="id">View Profile</button>
+```
+
+#### How It Works
+
+- A regular action handler returns a single value → one DOM update.
+- An async generator handler yields multiple values → one DOM update per yield, streamed over the WebSocket as each chunk is ready.
+- The client processes chunks in order; each chunk is a full `ActionResponse` (the same object a regular action returns).
+- No special HTML attributes are needed — the server detects async generators automatically.
+
+---
+
 ## Attribute Reference
 
 ### Actions
@@ -541,6 +643,13 @@ return ctx.drawer(render(<MyDrawer />), { position: "left", size: "medium" });
 | `beam-offline-class`   | Toggle class instead of visibility          | `beam-offline-class="offline-warning"` |
 | `beam-offline-disable` | Disable element when offline                | `beam-offline-disable`                 |
 
+### Auto-Reconnect
+
+| Element / Attribute                                              | Description                                       |
+| ---------------------------------------------------------------- | ------------------------------------------------- |
+| `<meta name="beam-reconnect-interval" content="5000">`          | Fixed retry interval (ms) after initial backoff   |
+| `beam-disconnected`                                              | Show element while disconnected, hide on reconnect |
+
 ### Conditional Show/Hide
 
 | Attribute          | Description                                  | Example                    |
@@ -585,6 +694,7 @@ Fine-grained reactivity for UI components (carousels, tabs, accordions) without 
 | `beam-id`           | Name the state for cross-component access                 | `beam-id="cart"`                   |
 | `beam-state-ref`    | Reference a named state from elsewhere                    | `beam-state-ref="cart"`            |
 | `beam-init`         | Run JS expression once after state is initialized         | `beam-init="setInterval(() => { index = (index+1) % total }, 3000)"` |
+| `beam-cloak`        | Hide element until its reactive scope is ready            | `<div beam-state="open: false" beam-cloak>` |
 | `beam-text`         | Bind text content to expression                           | `beam-text="count"`                |
 | `beam-attr-*`       | Bind any attribute to expression                          | `beam-attr-disabled="count === 0"` |
 | `beam-show`         | Show/hide element based on expression                     | `beam-show="open"`                 |
@@ -1215,6 +1325,59 @@ The `body` also gets `.beam-offline` class when disconnected.
 
 ---
 
+## Auto-Reconnect
+
+Beam automatically reconnects when the WebSocket drops (e.g. server restart, network blip). No configuration required — it works out of the box.
+
+### Reconnect Schedule
+
+| Attempt | Delay |
+| ------- | ----- |
+| 1st     | 1s    |
+| 2nd     | 3s    |
+| 3rd     | 5s    |
+| 4th+    | 5s (configurable) |
+
+After the first three stepped attempts, Beam retries indefinitely at a fixed interval until the connection is restored.
+
+### Configuring the Interval
+
+Override the fixed interval with a `<meta>` tag in your `<head>`:
+
+```html
+<!-- Retry every 10 seconds after the initial backoff steps -->
+<meta name="beam-reconnect-interval" content="10000">
+```
+
+The value is in milliseconds. Values below 1000ms are ignored (minimum 1s).
+
+### Disconnect Indicator
+
+Show UI while disconnected using `beam-disconnected`:
+
+```html
+<div beam-disconnected style="display:none" class="banner">
+  Reconnecting...
+</div>
+```
+
+The element is shown automatically on disconnect and hidden on reconnect. The `body` also receives the `.beam-disconnected` class while offline.
+
+### Events
+
+| Event                  | Fires when                          |
+| ---------------------- | ----------------------------------- |
+| `beam:disconnected`    | WebSocket connection drops          |
+| `beam:reconnected`     | Connection successfully restored    |
+
+```javascript
+window.addEventListener('beam:reconnected', () => {
+  console.log('Back online!')
+})
+```
+
+---
+
 ## Conditional Show/Hide
 
 Toggle element visibility based on form field values (no server round-trip):
@@ -1506,6 +1669,29 @@ Fine-grained reactivity for UI components like carousels, tabs, accordions, and 
 
 **Note:** `beam-init` only works inside a `beam-state` scope — it has no effect on elements without a state ancestor.
 
+#### beam-cloak — Prevent Flash of Unprocessed Content
+
+`beam-cloak` hides an element until its reactive scope has fully initialized. Without it, elements with `beam-show` may briefly appear before Beam processes them.
+
+Add it to the same element as `beam-state`. Beam removes the attribute automatically after setup.
+
+```html
+<!-- Without beam-cloak: the "Dropdown" content may flash visible on load -->
+<!-- With beam-cloak: hidden until reactivity is ready, then shown correctly -->
+<div beam-state="open: false" beam-cloak>
+  <button beam-state-toggle="open">Toggle</button>
+  <div beam-show="open">Dropdown content</div>
+</div>
+```
+
+Beam ships a CSS rule that does the hiding:
+
+```css
+[beam-cloak] { display: none !important; }
+```
+
+This rule is included in `@benqoder/beam/styles`. If you are not importing the beam stylesheet, add it yourself.
+
 #### Named State (Cross-Component)
 
 Share state between different parts of the page. Named states (with `beam-id`) persist across server-driven updates:
@@ -1589,11 +1775,13 @@ import "@benqoder/beam/beam.css";
 **After (Beam):**
 
 ```html
-<div beam-state='{"open": false}'>
+<div beam-state='{"open": false}' beam-cloak>
   <button type="button" beam-state-toggle="open">Menu</button>
   <div beam-show="open">Content</div>
 </div>
 ```
+
+> `beam-cloak` is the Beam equivalent of `x-cloak` — it hides the element until reactivity has initialized, preventing a flash of visible content.
 
 **Before (Alpine.js dropdown):**
 

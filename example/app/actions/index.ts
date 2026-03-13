@@ -1,6 +1,7 @@
 import type { ActionHandler } from '@benqoder/beam'
 import type { Env } from '../types'
 
+import { loadProfile, runPipeline, streamText, refreshDashboardStream, openProfileModal, openActivityDrawer } from './streaming'
 import { addToCart } from './addToCart'
 import { removeFromCart } from './removeFromCart'
 import { createProduct } from './createProduct'
@@ -49,6 +50,13 @@ import {
 } from './inputs'
 
 export const actions: Record<string, ActionHandler<Env>> = {
+  // Streaming demos
+  loadProfile,
+  runPipeline,
+  streamText,
+  refreshDashboardStream,
+  openProfileModal,
+  openActivityDrawer,
   addToCart,
   removeFromCart,
   createProduct,

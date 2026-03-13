@@ -24,13 +24,18 @@ function getAuthToken() {
     const meta = document.querySelector('meta[name="beam-token"]');
     return meta?.getAttribute('content') ?? '';
 }
+// Usage: <meta name="beam-reconnect-interval" content="5000">
+function getReconnectInterval() {
+    const meta = document.querySelector('meta[name="beam-reconnect-interval"]');
+    const val = parseInt(meta?.getAttribute('content') || '', 10);
+    return isNaN(val) || val < 1000 ? 5000 : val;
+}
 let isOnline = navigator.onLine;
 let rpcSession = null;
 let connectingPromise = null;
 let wsConnected = false;
 let reconnectAttempts = 0;
-const MAX_RECONNECT_ATTEMPTS = 5;
-const RECONNECT_DELAY_BASE = 1000;
+const RECONNECT_BACKOFF_STEPS = [1000, 3000, 5000]; // 1s, 3s, 5s, then fixed interval
 // Client callback handler for server-initiated updates
 function handleServerEvent(event, data) {
     // Dispatch custom event for app to handle
@@ -59,29 +64,25 @@ function handleWsDisconnect(error) {
     document.querySelectorAll('[beam-disconnected]').forEach((el) => {
         el.style.display = '';
     });
-    // Auto-reconnect with exponential backoff
-    if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
-        const delay = RECONNECT_DELAY_BASE * Math.pow(2, reconnectAttempts);
-        reconnectAttempts++;
-        console.log(`[beam] Reconnecting in ${delay}ms (${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`);
-        setTimeout(() => {
-            connect().then(() => {
-                console.log('[beam] Reconnected');
-                document.body.classList.remove('beam-disconnected');
-                document.querySelectorAll('[beam-disconnected]').forEach((el) => {
-                    el.style.display = 'none';
-                });
-                window.dispatchEvent(new CustomEvent('beam:reconnected'));
-            }).catch((err) => {
-                console.error('[beam] Reconnect failed:', err);
+    // Auto-reconnect: stepped backoff (1s, 3s, 5s), then fixed interval forever
+    const delay = reconnectAttempts < RECONNECT_BACKOFF_STEPS.length
+        ? RECONNECT_BACKOFF_STEPS[reconnectAttempts]
+        : getReconnectInterval();
+    reconnectAttempts++;
+    console.log(`[beam] Reconnecting in ${delay}ms (attempt ${reconnectAttempts})`);
+    setTimeout(() => {
+        connect().then(() => {
+            console.log('[beam] Reconnected');
+            document.body.classList.remove('beam-disconnected');
+            document.querySelectorAll('[beam-disconnected]').forEach((el) => {
+                el.style.display = 'none';
             });
-        }, delay);
-    }
-    else {
-        console.error('[beam] Max reconnect attempts reached');
-        showToast('Connection lost. Please refresh the page.', 'error');
-        window.dispatchEvent(new CustomEvent('beam:reconnect-failed'));
-    }
+            window.dispatchEvent(new CustomEvent('beam:reconnected'));
+        }).catch((err) => {
+            console.error('[beam] Reconnect failed:', err);
+            handleWsDisconnect(err);
+        });
+    }, delay);
 }
 function connect() {
     if (connectingPromise) {
@@ -850,6 +851,28 @@ function parseOobSwaps(html) {
     return { main: temp.innerHTML, oob };
 }
 // ============ RPC WRAPPER ============
+/**
+ * Apply a single ActionResponse chunk to the DOM.
+ * Returns true if the response was a redirect (caller should stop processing).
+ */
+function applyResponse(response, frontendTarget, frontendSwap, trigger) {
+    if (response.redirect) {
+        location.href = response.redirect;
+        return true;
+    }
+    if (response.modal) {
+        const modalData = typeof response.modal === 'string' ? { html: response.modal } : response.modal;
+        openModal(modalData.html, modalData.size || 'medium', modalData.spacing);
+    }
+    if (response.drawer) {
+        const drawerData = typeof response.drawer === 'string' ? { html: response.drawer } : response.drawer;
+        openDrawer(drawerData.html, drawerData.position || 'right', drawerData.size || 'medium', drawerData.spacing);
+    }
+    handleHtmlResponse(response, frontendTarget, frontendSwap, trigger);
+    if (response.script)
+        executeScript(response.script);
+    return false;
+}
 async function rpc(action, data, el) {
     const frontendTarget = el.getAttribute('beam-target');
     const frontendSwap = el.getAttribute('beam-swap') || 'replace';
@@ -857,32 +880,25 @@ async function rpc(action, data, el) {
     const placeholder = showPlaceholder(el);
     setLoading(el, true, action, data);
     try {
-        const response = await api.call(action, data);
-        // Handle redirect (if present) - takes priority
-        if (response.redirect) {
-            location.href = response.redirect;
-            return;
+        const stream = await api.call(action, data);
+        const reader = stream.getReader();
+        let redirected = false;
+        try {
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done)
+                    break;
+                if (applyResponse(value, frontendTarget, frontendSwap, el)) {
+                    redirected = true;
+                    break;
+                }
+            }
         }
-        // Handle modal (if present)
-        if (response.modal) {
-            const modalData = typeof response.modal === 'string'
-                ? { html: response.modal } : response.modal;
-            openModal(modalData.html, modalData.size || 'medium', modalData.spacing);
+        finally {
+            reader.releaseLock();
         }
-        // Handle drawer (if present)
-        if (response.drawer) {
-            const drawerData = typeof response.drawer === 'string'
-                ? { html: response.drawer } : response.drawer;
-            openDrawer(drawerData.html, drawerData.position || 'right', drawerData.size || 'medium', drawerData.spacing);
-        }
-        // Handle HTML (if present) - supports single string or array
-        handleHtmlResponse(response, frontendTarget, frontendSwap, el);
-        // Execute script (if present)
-        if (response.script) {
-            executeScript(response.script);
-        }
-        // Handle history
-        handleHistory(el);
+        if (!redirected)
+            handleHistory(el);
     }
     catch (err) {
         opt.rollback();
@@ -990,22 +1006,28 @@ document.addEventListener('click', async (e) => {
         }
         setLoading(trigger, true, action, params);
         try {
-            const response = await api.call(action, params);
-            // Handle the response - if it returns modal, use that, otherwise use html
-            if (response.modal) {
-                const modalData = typeof response.modal === 'string'
-                    ? { html: response.modal } : response.modal;
-                openModal(modalData.html, modalData.size || size, modalData.spacing);
+            const stream = await api.call(action, params);
+            const reader = stream.getReader();
+            try {
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done)
+                        break;
+                    if (value.modal) {
+                        const modalData = typeof value.modal === 'string' ? { html: value.modal } : value.modal;
+                        openModal(modalData.html, modalData.size || size, modalData.spacing);
+                    }
+                    else if (value.html) {
+                        const htmlStr = Array.isArray(value.html) ? value.html[0] : value.html;
+                        if (htmlStr)
+                            openModal(htmlStr, size);
+                    }
+                    if (value.script)
+                        executeScript(value.script);
+                }
             }
-            else if (response.html) {
-                // For modals, use first item if array, otherwise use as-is
-                const htmlStr = Array.isArray(response.html) ? response.html[0] : response.html;
-                if (htmlStr)
-                    openModal(htmlStr, size);
-            }
-            // Execute script if present
-            if (response.script) {
-                executeScript(response.script);
+            finally {
+                reader.releaseLock();
             }
         }
         catch (err) {
@@ -1042,22 +1064,28 @@ document.addEventListener('click', async (e) => {
         }
         setLoading(trigger, true, action, params);
         try {
-            const response = await api.call(action, params);
-            // Handle the response - if it returns drawer, use that, otherwise use html
-            if (response.drawer) {
-                const drawerData = typeof response.drawer === 'string'
-                    ? { html: response.drawer } : response.drawer;
-                openDrawer(drawerData.html, drawerData.position || position, drawerData.size || size, drawerData.spacing);
+            const stream = await api.call(action, params);
+            const reader = stream.getReader();
+            try {
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done)
+                        break;
+                    if (value.drawer) {
+                        const drawerData = typeof value.drawer === 'string' ? { html: value.drawer } : value.drawer;
+                        openDrawer(drawerData.html, drawerData.position || position, drawerData.size || size, drawerData.spacing);
+                    }
+                    else if (value.html) {
+                        const htmlStr = Array.isArray(value.html) ? value.html[0] : value.html;
+                        if (htmlStr)
+                            openDrawer(htmlStr, position, size);
+                    }
+                    if (value.script)
+                        executeScript(value.script);
+                }
             }
-            else if (response.html) {
-                // For drawers, use first item if array, otherwise use as-is
-                const htmlStr = Array.isArray(response.html) ? response.html[0] : response.html;
-                if (htmlStr)
-                    openDrawer(htmlStr, position, size);
-            }
-            // Execute script if present
-            if (response.script) {
-                executeScript(response.script);
+            finally {
+                reader.releaseLock();
             }
         }
         catch (err) {
@@ -1571,23 +1599,27 @@ const infiniteObserver = new IntersectionObserver(async (entries) => {
         sentinel.classList.add('loading');
         setLoading(sentinel, true, action, params);
         try {
-            const response = await api.call(action, params);
-            if (response.html) {
-                // For infinite scroll, always use the specified target (not auto-detect from HTML)
-                const target = $(targetSelector);
-                if (target) {
-                    // Handle single html string for infinite scroll (array not typically used here)
-                    const htmlStr = Array.isArray(response.html) ? response.html.join('') : response.html;
-                    swap(target, htmlStr, swapMode, sentinel);
+            const stream = await api.call(action, params);
+            const reader = stream.getReader();
+            try {
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done)
+                        break;
+                    if (value.html) {
+                        const target = $(targetSelector);
+                        if (target) {
+                            const htmlStr = Array.isArray(value.html) ? value.html.join('') : value.html;
+                            swap(target, htmlStr, swapMode, sentinel);
+                        }
+                        requestAnimationFrame(() => { saveScrollState(targetSelector, action); });
+                    }
+                    if (value.script)
+                        executeScript(value.script);
                 }
-                // Save scroll state after content is loaded
-                requestAnimationFrame(() => {
-                    saveScrollState(targetSelector, action);
-                });
             }
-            // Execute script if present
-            if (response.script) {
-                executeScript(response.script);
+            finally {
+                reader.releaseLock();
             }
         }
         catch (err) {
@@ -1637,25 +1669,28 @@ document.addEventListener('click', async (e) => {
     trigger.classList.add('loading');
     setLoading(trigger, true, action, params);
     try {
-        const response = await api.call(action, params);
-        if (response.html) {
-            // For load more, always use the specified target (not auto-detect from HTML)
-            const targetEl = $(targetSelector);
-            if (targetEl) {
-                // Handle single html string for load more (array not typically used here)
-                const htmlStr = Array.isArray(response.html) ? response.html.join('') : response.html;
-                swap(targetEl, htmlStr, swapMode, trigger);
+        const stream = await api.call(action, params);
+        const reader = stream.getReader();
+        try {
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done)
+                    break;
+                if (value.html) {
+                    const targetEl = $(targetSelector);
+                    if (targetEl) {
+                        const htmlStr = Array.isArray(value.html) ? value.html.join('') : value.html;
+                        swap(targetEl, htmlStr, swapMode, trigger);
+                    }
+                    requestAnimationFrame(() => { saveScrollState(targetSelector, action); });
+                }
+                if (value.script)
+                    executeScript(value.script);
             }
-            // Save scroll state after content is loaded
-            requestAnimationFrame(() => {
-                saveScrollState(targetSelector, action);
-            });
         }
-        // Execute script if present
-        if (response.script) {
-            executeScript(response.script);
+        finally {
+            reader.releaseLock();
         }
-        // Handle history
         handleHistory(trigger);
     }
     catch (err) {
@@ -1716,23 +1751,46 @@ function parseCacheDuration(duration) {
             return value * 1000;
     }
 }
+async function collectStream(stream) {
+    const reader = stream.getReader();
+    const responses = [];
+    try {
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done)
+                break;
+            responses.push(value);
+        }
+    }
+    finally {
+        reader.releaseLock();
+    }
+    return responses;
+}
+function arrayAsStream(responses) {
+    return new ReadableStream({
+        start(controller) {
+            for (const r of responses)
+                controller.enqueue(r);
+            controller.close();
+        },
+    });
+}
 async function fetchWithCache(action, params, cacheDuration) {
     const key = getCacheKey(action, params);
-    // Check cache
     const cached = cache.get(key);
     if (cached && cached.expires > Date.now()) {
-        return cached.response;
+        return arrayAsStream(cached.responses);
     }
-    // Fetch fresh
-    const response = await api.call(action, params);
-    // Store in cache if duration specified
+    const stream = await api.call(action, params);
+    const responses = await collectStream(stream);
     if (cacheDuration) {
         const duration = parseCacheDuration(cacheDuration);
         if (duration > 0) {
-            cache.set(key, { response, expires: Date.now() + duration });
+            cache.set(key, { responses, expires: Date.now() + duration });
         }
     }
-    return response;
+    return arrayAsStream(responses);
 }
 async function preload(el) {
     const action = el.getAttribute('beam-action');
@@ -1740,14 +1798,13 @@ async function preload(el) {
         return;
     const params = getParams(el);
     const key = getCacheKey(action, params);
-    // Skip if already cached or preloading
     if (cache.has(key) || preloading.has(key))
         return;
     preloading.add(key);
     try {
-        const response = await api.call(action, params);
-        // Cache for 30 seconds by default for preloaded content
-        cache.set(key, { response, expires: Date.now() + 30000 });
+        const stream = await api.call(action, params);
+        const responses = await collectStream(stream);
+        cache.set(key, { responses, expires: Date.now() + 30000 });
     }
     catch {
         // Silently fail preload
@@ -1823,22 +1880,29 @@ document.addEventListener('click', async (e) => {
     const placeholder = showPlaceholder(link);
     setLoading(link, true, action, params);
     try {
-        const response = cached && cached.expires > Date.now() ? cached.response : await fetchWithCache(action, params, cacheDuration || undefined);
-        // Handle redirect (if present) - takes priority
-        if (response.redirect) {
-            location.href = response.redirect;
-            return;
+        const stream = cached && cached.expires > Date.now()
+            ? arrayAsStream(cached.responses)
+            : await fetchWithCache(action, params, cacheDuration || undefined);
+        const reader = stream.getReader();
+        let redirected = false;
+        try {
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done)
+                    break;
+                if (applyResponse(value, targetSelector, swapMode, link)) {
+                    redirected = true;
+                    break;
+                }
+            }
         }
-        // Handle HTML (if present) - supports single string or array
-        handleHtmlResponse(response, targetSelector, swapMode, link);
-        // Execute script (if present)
-        if (response.script) {
-            executeScript(response.script);
+        finally {
+            reader.releaseLock();
         }
-        // Handle history
-        handleHistory(link);
-        // Update navigation
-        updateNavigation();
+        if (!redirected) {
+            handleHistory(link);
+            updateNavigation();
+        }
     }
     catch (err) {
         placeholder.restore();
@@ -1874,38 +1938,30 @@ document.addEventListener('submit', async (e) => {
     const placeholder = showPlaceholder(form);
     setLoading(form, true, action, data);
     try {
-        const response = await api.call(action, data);
-        // Handle redirect (if present) - takes priority
-        if (response.redirect) {
-            location.href = response.redirect;
-            return;
+        const stream = await api.call(action, data);
+        const reader = stream.getReader();
+        let redirected = false;
+        try {
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done)
+                    break;
+                if (applyResponse(value, targetSelector, swapMode)) {
+                    redirected = true;
+                    break;
+                }
+            }
         }
-        // Handle modal (if present)
-        if (response.modal) {
-            const modalData = typeof response.modal === 'string'
-                ? { html: response.modal } : response.modal;
-            openModal(modalData.html, modalData.size || 'medium', modalData.spacing);
+        finally {
+            reader.releaseLock();
         }
-        // Handle drawer (if present)
-        if (response.drawer) {
-            const drawerData = typeof response.drawer === 'string'
-                ? { html: response.drawer } : response.drawer;
-            openDrawer(drawerData.html, drawerData.position || 'right', drawerData.size || 'medium', drawerData.spacing);
+        if (!redirected) {
+            if (form.hasAttribute('beam-reset'))
+                form.reset();
+            if (form.hasAttribute('beam-close'))
+                closeModal();
+            handleHistory(form);
         }
-        // Handle HTML (if present) - supports single string or array
-        handleHtmlResponse(response, targetSelector, swapMode);
-        // Execute script (if present)
-        if (response.script) {
-            executeScript(response.script);
-        }
-        if (form.hasAttribute('beam-reset')) {
-            form.reset();
-        }
-        if (form.hasAttribute('beam-close')) {
-            closeModal();
-        }
-        // Handle history
-        handleHistory(form);
     }
     catch (err) {
         placeholder.restore();
@@ -1938,19 +1994,27 @@ function setupValidation(el) {
             const formData = Object.fromEntries(new FormData(form));
             const data = { ...formData, _validate: fieldName };
             try {
-                const response = await api.call(action, data);
-                if (response.html) {
-                    const target = $(targetSelector);
-                    if (target) {
-                        // For validation, use first item if array, otherwise use as-is
-                        const htmlStr = Array.isArray(response.html) ? response.html[0] : response.html;
-                        if (htmlStr)
-                            swap(target, htmlStr, 'replace');
+                const stream = await api.call(action, data);
+                const reader = stream.getReader();
+                try {
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done)
+                            break;
+                        if (value.html) {
+                            const target = $(targetSelector);
+                            if (target) {
+                                const htmlStr = Array.isArray(value.html) ? value.html[0] : value.html;
+                                if (htmlStr)
+                                    swap(target, htmlStr, 'replace');
+                            }
+                        }
+                        if (value.script)
+                            executeScript(value.script);
                     }
                 }
-                // Execute script (if present)
-                if (response.script) {
-                    executeScript(response.script);
+                finally {
+                    reader.releaseLock();
                 }
             }
             catch (err) {
@@ -2095,38 +2159,43 @@ function setupInputWatcher(el) {
         // Mark touched
         htmlEl.setAttribute('beam-touched', '');
         try {
-            const response = await api.call(action, params);
-            if (response.html && targetSelector) {
-                const targets = $$(targetSelector);
-                const htmlArray = Array.isArray(response.html) ? response.html : [response.html];
-                targets.forEach((target, i) => {
-                    const html = htmlArray[i] || htmlArray[0];
-                    if (html) {
-                        swap(target, html, swapMode);
+            const stream = await api.call(action, params);
+            const reader = stream.getReader();
+            try {
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done)
+                        break;
+                    if (value.html && targetSelector) {
+                        const targets = $$(targetSelector);
+                        const htmlArray = Array.isArray(value.html) ? value.html : [value.html];
+                        targets.forEach((target, i) => {
+                            const html = htmlArray[i] || htmlArray[0];
+                            if (html)
+                                swap(target, html, swapMode);
+                        });
                     }
-                });
-            }
-            // Process OOB updates (beam-touch templates)
-            if (response.html) {
-                const htmlStr = Array.isArray(response.html) ? response.html.join('') : response.html;
-                const { oob } = parseOobSwaps(htmlStr);
-                for (const { selector, content, swapMode: oobSwapMode } of oob) {
-                    const oobTarget = $(selector);
-                    if (oobTarget) {
-                        swap(oobTarget, content, oobSwapMode || 'replace');
+                    if (value.html) {
+                        const htmlStr = Array.isArray(value.html) ? value.html.join('') : value.html;
+                        const { oob } = parseOobSwaps(htmlStr);
+                        for (const { selector, content, swapMode: oobSwapMode } of oob) {
+                            const oobTarget = $(selector);
+                            if (oobTarget)
+                                swap(oobTarget, content, oobSwapMode || 'replace');
+                        }
                     }
+                    if (value.script)
+                        executeScript(value.script);
                 }
             }
-            // Execute script if present
-            if (response.script) {
-                executeScript(response.script);
+            finally {
+                reader.releaseLock();
             }
         }
         catch (err) {
             console.error('Input watcher error:', err);
         }
         finally {
-            // Remove loading class
             if (loadingClass)
                 htmlEl.classList.remove(loadingClass);
         }
@@ -2193,19 +2262,27 @@ const deferObserver = new IntersectionObserver(async (entries) => {
         const swapMode = el.getAttribute('beam-swap') || 'replace';
         setLoading(el, true, action, params);
         try {
-            const response = await api.call(action, params);
-            if (response.html) {
-                const target = targetSelector ? $(targetSelector) : el;
-                if (target) {
-                    // For deferred loading, use first item if array, otherwise use as-is
-                    const htmlStr = Array.isArray(response.html) ? response.html[0] : response.html;
-                    if (htmlStr)
-                        swap(target, htmlStr, swapMode);
+            const stream = await api.call(action, params);
+            const reader = stream.getReader();
+            try {
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done)
+                        break;
+                    if (value.html) {
+                        const target = targetSelector ? $(targetSelector) : el;
+                        if (target) {
+                            const htmlStr = Array.isArray(value.html) ? value.html[0] : value.html;
+                            if (htmlStr)
+                                swap(target, htmlStr, swapMode);
+                        }
+                    }
+                    if (value.script)
+                        executeScript(value.script);
                 }
             }
-            // Execute script (if present)
-            if (response.script) {
-                executeScript(response.script);
+            finally {
+                reader.releaseLock();
             }
         }
         catch (err) {
@@ -2252,19 +2329,27 @@ function startPolling(el) {
         const targetSelector = el.getAttribute('beam-target');
         const swapMode = el.getAttribute('beam-swap') || 'replace';
         try {
-            const response = await api.call(action, params);
-            if (response.html) {
-                const target = targetSelector ? $(targetSelector) : el;
-                if (target) {
-                    // For polling, use first item if array, otherwise use as-is
-                    const htmlStr = Array.isArray(response.html) ? response.html[0] : response.html;
-                    if (htmlStr)
-                        swap(target, htmlStr, swapMode);
+            const stream = await api.call(action, params);
+            const reader = stream.getReader();
+            try {
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done)
+                        break;
+                    if (value.html) {
+                        const target = targetSelector ? $(targetSelector) : el;
+                        if (target) {
+                            const htmlStr = Array.isArray(value.html) ? value.html[0] : value.html;
+                            if (htmlStr)
+                                swap(target, htmlStr, swapMode);
+                        }
+                    }
+                    if (value.script)
+                        executeScript(value.script);
                 }
             }
-            // Execute script (if present)
-            if (response.script) {
-                executeScript(response.script);
+            finally {
+                reader.releaseLock();
             }
         }
         catch (err) {
@@ -2674,42 +2759,26 @@ window.beam = new Proxy(beamUtils, {
         }
         // Return a dynamic action caller for any other property
         return async (data = {}, options) => {
-            const rawResponse = await api.call(prop, data);
-            // Normalize response: string -> {html: string}, object -> as-is
-            const response = typeof rawResponse === 'string'
-                ? { html: rawResponse }
-                : rawResponse;
-            // Handle redirect (takes priority)
-            if (response.redirect) {
-                location.href = response.redirect;
-                return response;
+            const opts = typeof options === 'string' ? { target: options } : (options || {});
+            const stream = await api.call(prop, data);
+            const reader = stream.getReader();
+            let last = {};
+            try {
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done)
+                        break;
+                    last = value;
+                    const targetSelector = value.target || opts.target || null;
+                    const swapMode = value.swap || opts.swap || 'replace';
+                    if (applyResponse(value, targetSelector, swapMode))
+                        break;
+                }
             }
-            // Handle modal (if present)
-            if (response.modal) {
-                const modalData = typeof response.modal === 'string'
-                    ? { html: response.modal } : response.modal;
-                openModal(modalData.html, modalData.size || 'medium', modalData.spacing);
+            finally {
+                reader.releaseLock();
             }
-            // Handle drawer (if present)
-            if (response.drawer) {
-                const drawerData = typeof response.drawer === 'string'
-                    ? { html: response.drawer } : response.drawer;
-                openDrawer(drawerData.html, drawerData.position || 'right', drawerData.size || 'medium', drawerData.spacing);
-            }
-            // Normalize options: string is shorthand for { target: string }
-            const opts = typeof options === 'string'
-                ? { target: options }
-                : (options || {});
-            // Server target/swap override frontend options
-            const targetSelector = response.target || opts.target || null;
-            const swapMode = response.swap || opts.swap || 'replace';
-            // Handle HTML swap - supports single string or array
-            handleHtmlResponse(response, targetSelector, swapMode);
-            // Execute script if present
-            if (response.script) {
-                executeScript(response.script);
-            }
-            return response;
+            return last;
         };
     }
 });

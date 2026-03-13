@@ -229,6 +229,9 @@ function createBeamContext(base) {
         },
     };
 }
+function isAsyncGenerator(value) {
+    return value != null && typeof value[Symbol.asyncIterator] === 'function';
+}
 /**
  * Beam RPC Server - extends RpcTarget for capnweb integration
  *
@@ -247,19 +250,36 @@ class BeamServer extends RpcTarget {
         this.actions = actions;
     }
     /**
-     * Call an action handler
+     * Call an action handler, returning a ReadableStream of ActionResponses.
+     * Supports both regular handlers (single response) and async generators (multiple responses).
+     * cap'n web 0.6+ transfers ReadableStream natively with flow control and multiplexing.
      */
-    async call(action, data = {}) {
+    call(action, data = {}) {
         const handler = this.actions[action];
         if (!handler) {
             throw new Error(`Unknown action: ${action}`);
         }
-        const result = await handler(this.ctx, data);
-        // Normalize string responses to ActionResponse format
-        if (typeof result === 'string') {
-            return { html: result };
-        }
-        return result;
+        const ctx = this.ctx;
+        return new ReadableStream({
+            async start(controller) {
+                try {
+                    const result = handler(ctx, data);
+                    const normalize = (v) => typeof v === 'string' ? { html: v } : v;
+                    if (isAsyncGenerator(result)) {
+                        for await (const chunk of result) {
+                            controller.enqueue(normalize(await chunk));
+                        }
+                    }
+                    else {
+                        controller.enqueue(normalize(await result));
+                    }
+                    controller.close();
+                }
+                catch (err) {
+                    controller.error(err);
+                }
+            },
+        });
     }
     /**
      * Register a client callback for server-initiated updates

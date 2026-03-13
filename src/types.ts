@@ -1,4 +1,4 @@
-import type { Hono, MiddlewareHandler } from 'hono'
+import type { Env as HonoEnv, Hono, MiddlewareHandler } from 'hono'
 
 /**
  * User type - customize per app via module augmentation
@@ -151,12 +151,26 @@ export interface ActionResponse {
 }
 
 /**
- * Type for action handlers - receives context and data, returns ActionResponse
+ * Type for action handlers - receives context and data, returns ActionResponse.
+ * Supports async generators for streaming multiple responses (e.g. skeleton → result).
+ *
+ * @example
+ * ```ts
+ * async function* loadData(ctx, data) {
+ *   yield ctx.render(<Skeleton />)
+ *   const result = await fetchData()
+ *   yield ctx.render(<Results data={result} />)
+ * }
+ * ```
  */
 export type ActionHandler<TEnv = object> = (
   ctx: BeamContext<TEnv>,
   data: Record<string, unknown>
-) => Promise<ActionResponse> | ActionResponse
+) =>
+  | Promise<ActionResponse | string>
+  | ActionResponse
+  | string
+  | AsyncGenerator<ActionResponse | string | Promise<ActionResponse | string>>
 
 /**
  * Factory function to create a session storage adapter.
@@ -226,7 +240,7 @@ export interface BeamInstance<TEnv extends object = object> {
   /** Auth resolver (if provided) */
   auth: AuthResolver<TEnv> | undefined
   /** Init function for HonoX createApp({ init(app) { beam.init(app, options) } }) */
-  init: (app: Hono<{ Bindings: TEnv }>, options?: BeamInitOptions) => void
+  init: <E extends HonoEnv>(app: Hono<E>, options?: BeamInitOptions) => void
   /** Middleware that resolves auth and sets beamUser/beamContext in Hono context */
   authMiddleware: () => MiddlewareHandler<{ Bindings: TEnv; Variables: BeamVariables<TEnv> }>
   /**

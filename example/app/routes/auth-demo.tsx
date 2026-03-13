@@ -24,7 +24,7 @@ export default createRoute((c) => {
                   <p class="user-email">{user.email as string}</p>
                   <span class={`badge badge-${user.role}`}>{user.role as string}</span>
                 </div>
-                <form action="/logout" method="POST" style="margin-left: auto;">
+                <form action="/logout" method="post" style="margin-left: auto;">
                   <button type="submit" class="btn-logout">Sign Out</button>
                 </form>
               </div>

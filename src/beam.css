@@ -1,3 +1,9 @@
+/* === CLOAK === */
+/* Hide elements until beam reactivity has initialized them.
+   Usage: <div beam-state="open: false" beam-cloak>...</div>
+   beam-cloak is removed automatically after the scope is processed. */
+[beam-cloak] { display: none !important; }
+
 /* === SWAP TRANSITIONS (for server-driven updates) === */
 /* Usage: <div beam-swap-transition="fade">...</div>
    Beam briefly adds .beam-swap-enter after swap and removes it next frame. */
