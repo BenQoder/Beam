@@ -14,6 +14,7 @@ export type {
   ActionResponse,
   ModalOptions,
   DrawerOptions,
+  NamedStateUpdates,
   BeamConfig,
   BeamInstance,
   BeamInitOptions,

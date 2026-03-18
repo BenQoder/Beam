@@ -85,6 +85,10 @@ function runReactiveEffect(e) {
 }
 // --- Reactive Proxy (deep) ---
 const reactiveProxyCache = new WeakMap();
+const reactiveNamedStateKinds = new Map();
+function isPlainObject(value) {
+    return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
 function createReactiveProxy(obj) {
     // Return cached proxy if exists
     if (reactiveProxyCache.has(obj)) {
@@ -436,6 +440,32 @@ function parseStateValue(raw, beamId) {
     }
     return result;
 }
+function detectNamedStateKind(raw) {
+    return parseSimpleValue(raw.trim()) !== undefined ? 'simple' : 'object';
+}
+function updateNamedState(id, value) {
+    const current = reactiveNamedStates.get(id);
+    if (!current) {
+        console.warn(`[beam] State "${id}" not found on page, skipping state update`);
+        return false;
+    }
+    const state = current;
+    const kind = reactiveNamedStateKinds.get(id) ?? 'object';
+    if (kind === 'object' && isPlainObject(value)) {
+        Object.entries(value).forEach(([key, next]) => {
+            state[key] = next;
+        });
+        return true;
+    }
+    if (kind === 'object') {
+        Object.keys(state).forEach((key) => {
+            state[key] = undefined;
+        });
+        reactiveNamedStateKinds.set(id, 'simple');
+    }
+    state[id] = value;
+    return true;
+}
 // --- Setup Reactive Scope ---
 function setupReactiveScope(el) {
     const stateAttr = el.getAttribute('beam-state');
@@ -468,8 +498,10 @@ function setupReactiveScope(el) {
         // Register named state if beam-id is present
         if (id) {
             reactiveNamedStates.set(id, state);
+            reactiveNamedStateKinds.set(id, detectNamedStateKind(stateAttr));
         }
     }
+    // Register the scope before wiring descendants so initial effects can resolve state.
     reactiveElStates.set(el, state);
     processReactiveBindings(el, state);
     // beam-init on the container element itself (not picked up by processReactiveBindings
@@ -482,9 +514,16 @@ function setupReactiveScope(el) {
     }
 }
 // --- Setup standalone ref elements (elements with beam-state-ref outside any beam-state scope) ---
-function setupRefElements() {
-    // Find all elements with beam-state-ref that are NOT inside a beam-state scope
-    document.querySelectorAll('[beam-state-ref]').forEach((el) => {
+function getScopedElements(root, selector) {
+    const elements = Array.from(root.querySelectorAll(selector));
+    if (root instanceof HTMLElement && root.matches(selector)) {
+        elements.unshift(root);
+    }
+    return elements;
+}
+function setupRefElements(root = document) {
+    // Find all elements with beam-state-ref that are NOT inside any beam-state scope
+    getScopedElements(root, '[beam-state-ref]').forEach((el) => {
         // Skip if inside a beam-state scope (will be handled by that scope)
         if (el.closest('[beam-state]'))
             return;
@@ -591,27 +630,23 @@ function setupRefElements() {
         }
     });
 }
-// --- Initialize ---
-function initReactivity() {
-    // MutationObserver for dynamic elements
-    const reactiveStateObserver = new MutationObserver(() => {
-        document.querySelectorAll('[beam-state]:not([beam-state-init])').forEach((el) => {
-            el.setAttribute('beam-state-init', '');
-            setupReactiveScope(el);
-            el.removeAttribute('beam-cloak');
-        });
-        // Also setup any new ref elements
-        setupRefElements();
-    });
-    reactiveStateObserver.observe(document.body, { childList: true, subtree: true });
-    // Init existing elements
-    document.querySelectorAll('[beam-state]').forEach((el) => {
+function scanReactivity(root = document) {
+    getScopedElements(root, '[beam-state]:not([beam-state-init])').forEach((el) => {
         el.setAttribute('beam-state-init', '');
         setupReactiveScope(el);
         el.removeAttribute('beam-cloak');
     });
-    // Setup standalone ref elements
-    setupRefElements();
+    setupRefElements(root);
+}
+// --- Initialize ---
+function initReactivity() {
+    // MutationObserver for dynamic elements
+    const reactiveStateObserver = new MutationObserver(() => {
+        scanReactivity(document);
+    });
+    reactiveStateObserver.observe(document.body, { childList: true, subtree: true });
+    // Init existing elements
+    scanReactivity(document);
 }
 // --- Public API ---
 export const beamReactivity = {
@@ -629,9 +664,17 @@ export const beamReactivity = {
         flushReactiveEffects();
     },
     /**
+     * Apply a server-driven update to a named state created with beam-id.
+     */
+    updateState: (id, value) => updateNamedState(id, value),
+    /**
      * Manually initialize reactivity (called automatically on import)
      */
     init: initReactivity,
+    /**
+     * Scan a DOM subtree for newly inserted reactive elements.
+     */
+    scan: (root) => scanReactivity(root ?? document),
 };
 // Auto-initialize when DOM is ready
 if (typeof document !== 'undefined') {

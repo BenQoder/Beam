@@ -112,6 +112,22 @@ export async function* streamText(ctx: BeamContext<Env>, _params: Record<string,
   )
 }
 
+// ============ STREAMING STATE ============
+// Yield named state updates without replacing DOM
+
+export async function* streamStateProgress(ctx: BeamContext<Env>, _params: Record<string, unknown>) {
+  yield ctx.state('streamingStatus', { phase: 'starting', progress: 0 })
+  await delay(300)
+
+  yield ctx.state('streamingStatus', { phase: 'loading data', progress: 35 })
+  await delay(300)
+
+  yield ctx.state('streamingStatus', { phase: 'processing', progress: 70 })
+  await delay(300)
+
+  yield ctx.state('streamingStatus', { phase: 'done', progress: 100 })
+}
+
 // ============ DASHBOARD REFRESH ============
 // Load multiple widgets one at a time
 

@@ -33,6 +33,10 @@ export interface RenderOptions {
   swap?: string
 }
 
+export interface NamedStateUpdates {
+  [id: string]: unknown
+}
+
 /**
  * Context passed to all handlers
  */
@@ -41,6 +45,15 @@ export interface BeamContext<TEnv = object> {
   user: BeamUser | null // null = guest
   request: Request // original request for headers/cookies
   session: BeamSession // session storage (uses KV)
+
+  /**
+   * Update one or more named reactive states on the client.
+   * Targets existing beam-id scopes that may also be referenced by beam-state-ref.
+   * @example ctx.state('cart', { items: 3, total: 29.99 })
+   * @example ctx.state({ cart: { items: 3 }, sharedCount: 12 })
+   */
+  state(id: string, value: unknown): ActionResponse
+  state(updates: NamedStateUpdates): ActionResponse
 
   /**
    * Return JavaScript to execute on the client (no DOM update)
@@ -136,6 +149,8 @@ export interface DrawerOptions {
 export interface ActionResponse {
   /** HTML to render (optional) - single string or array of HTML strings for multi-target rendering */
   html?: string | string[]
+  /** Named reactive state updates keyed by beam-id */
+  state?: NamedStateUpdates
   /** JavaScript to execute on client (optional) */
   script?: string
   /** URL to redirect to (optional) */

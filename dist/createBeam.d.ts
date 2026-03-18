@@ -1,5 +1,13 @@
 import { RpcTarget } from 'capnweb';
-import type { ActionHandler, ActionResponse, BeamConfig, BeamInstance, BeamContext, BeamSession, SessionConfig } from './types';
+import type { ActionHandler, ActionResponse, BeamConfig, BeamInstance, BeamContext, BeamSession, SessionConfig, AuthTokenPayload } from './types';
+/**
+ * Sign an auth token payload using HMAC-SHA256
+ */
+declare function signToken(payload: AuthTokenPayload, secret: string): Promise<string>;
+/**
+ * Verify and decode an auth token
+ */
+declare function verifyToken(token: string, secret: string): Promise<AuthTokenPayload | null>;
 /**
  * Session implementation using KV storage.
  * Exported for users who need custom storage adapter.
@@ -39,6 +47,28 @@ export declare class CookieSession implements BeamSession {
     getData(): Record<string, unknown>;
 }
 /**
+ * Parse cookies from raw request (for WebSocket context)
+ */
+declare function parseCookies(request: Request): Record<string, string>;
+/**
+ * Parse session ID from raw request cookies (for WebSocket context)
+ */
+declare function parseSessionFromRequest(request: Request, cookieName: string): string | null;
+/**
+ * Parse session data from raw request cookies (for WebSocket context)
+ */
+declare function parseSessionDataFromRequest(request: Request): Record<string, unknown>;
+/**
+ * Create a BeamContext with script(), render(), modal(), drawer() helpers
+ */
+declare function createBeamContext<TEnv>(base: {
+    env: TEnv;
+    user: import('./types').BeamUser | null;
+    request: Request;
+    session: BeamSession;
+}): BeamContext<TEnv>;
+declare function isAsyncGenerator(value: unknown): value is AsyncGenerator<unknown>;
+/**
  * Beam RPC Server - extends RpcTarget for capnweb integration
  *
  * This enables:
@@ -50,6 +80,7 @@ export declare class CookieSession implements BeamSession {
 declare class BeamServer<TEnv extends object> extends RpcTarget {
     private ctx;
     private actions;
+    private clientCallback;
     constructor(ctx: BeamContext<TEnv>, actions: Record<string, ActionHandler<TEnv>>);
     /**
      * Call an action handler, returning a ReadableStream of ActionResponses.
@@ -135,5 +166,14 @@ declare class PublicBeamServer<TEnv extends object> extends RpcTarget {
  * ```
  */
 export declare function beamTokenMeta(token: string): string;
+export declare const __beamCreateBeamInternals: {
+    signToken: typeof signToken;
+    verifyToken: typeof verifyToken;
+    parseCookies: typeof parseCookies;
+    parseSessionFromRequest: typeof parseSessionFromRequest;
+    parseSessionDataFromRequest: typeof parseSessionDataFromRequest;
+    createBeamContext: typeof createBeamContext;
+    isAsyncGenerator: typeof isAsyncGenerator;
+};
 export { BeamServer, PublicBeamServer };
 //# sourceMappingURL=createBeam.d.ts.map

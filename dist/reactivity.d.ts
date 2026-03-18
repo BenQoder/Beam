@@ -11,9 +11,17 @@ export declare const beamReactivity: {
      */
     batch: (fn: () => void) => void;
     /**
+     * Apply a server-driven update to a named state created with beam-id.
+     */
+    updateState: (id: string, value: unknown) => boolean;
+    /**
      * Manually initialize reactivity (called automatically on import)
      */
     init: typeof initReactivity;
+    /**
+     * Scan a DOM subtree for newly inserted reactive elements.
+     */
+    scan: (root?: ParentNode) => void;
 };
 export default beamReactivity;
 //# sourceMappingURL=reactivity.d.ts.map

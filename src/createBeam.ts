@@ -240,6 +240,12 @@ function createBeamContext<TEnv>(base: {
 }): BeamContext<TEnv> {
   return {
     ...base,
+    state: (idOrUpdates: string | Record<string, unknown>, value?: unknown): ActionResponse => {
+      const state = typeof idOrUpdates === 'string'
+        ? { [idOrUpdates]: value }
+        : idOrUpdates
+      return { state }
+    },
     script: (code: string): ActionResponse => ({ script: code }),
     render: (
       content: string | Promise<string> | (string | Promise<string>)[],
@@ -299,6 +305,7 @@ function isAsyncGenerator(value: unknown): value is AsyncGenerator<unknown> {
 class BeamServer<TEnv extends object> extends RpcTarget {
   private ctx: BeamContext<TEnv>
   private actions: Record<string, ActionHandler<TEnv>>
+  private clientCallback: ((event: string, data: unknown) => void | Promise<void>) | null = null
 
   constructor(
     ctx: BeamContext<TEnv>,
@@ -349,18 +356,29 @@ class BeamServer<TEnv extends object> extends RpcTarget {
    */
   registerCallback(callback: (event: string, data: unknown) => void): void {
     // Store callback for later use by actions that need to push updates
-    ;(this as any)._clientCallback = callback
+    this.clientCallback = callback
   }
 
   /**
    * Notify connected client (if callback registered)
    */
   async notify(event: string, data: unknown): Promise<void> {
-    const callback = (this as any)._clientCallback
+    const callback = this.clientCallback
     if (callback) {
       await callback(event, data)
     }
   }
+}
+
+function resolveSecret<TEnv extends object>(
+  env: TEnv,
+  sessionConfig: SessionConfig<TEnv> | undefined
+): string | undefined {
+  if (!sessionConfig) return undefined
+  if (sessionConfig.secretEnvKey) {
+    return (env as Record<string, unknown>)[sessionConfig.secretEnvKey] as string | undefined
+  }
+  return sessionConfig.secret
 }
 
 /**
@@ -430,9 +448,7 @@ export function createBeam<TEnv extends object = object>(
 
         if (sessionConfig) {
           // Resolve secret from env if secretEnvKey provided, otherwise use static secret
-          const secret = sessionConfig.secretEnvKey
-            ? ((c.env as any)[sessionConfig.secretEnvKey] as string)
-            : sessionConfig.secret
+          const secret = resolveSecret(c.env, sessionConfig)
           if (!secret) {
             throw new Error(
               sessionConfig.secretEnvKey
@@ -489,9 +505,7 @@ export function createBeam<TEnv extends object = object>(
         })
 
         // Generate auth token for in-band WebSocket authentication
-        const secret = sessionConfig?.secretEnvKey
-          ? ((c.env as any)[sessionConfig.secretEnvKey] as string)
-          : sessionConfig?.secret
+        const secret = resolveSecret(c.env, sessionConfig)
         let authToken = ''
         if (secret && sessionId) {
           const tokenPayload: AuthTokenPayload = {
@@ -510,9 +524,10 @@ export function createBeam<TEnv extends object = object>(
 
         // If using cookie session and data was modified, save it back to cookie
         if (cookieSession && cookieSession.isDirty() && sessionConfig) {
-          const secret = sessionConfig.secretEnvKey
-            ? ((c.env as any)[sessionConfig.secretEnvKey] as string)
-            : sessionConfig.secret
+          const secret = resolveSecret(c.env, sessionConfig)
+          if (!secret) {
+            throw new Error('Session secret is required')
+          }
           const dataString = JSON.stringify(cookieSession.getData())
           await setSignedCookie(c, SESSION_DATA_COOKIE, dataString, secret, {
             maxAge,
@@ -539,9 +554,7 @@ export function createBeam<TEnv extends object = object>(
         throw new Error('Session config is required for auth token generation')
       }
 
-      const secret = sessionConfig.secretEnvKey
-        ? ((ctx.env as any)[sessionConfig.secretEnvKey] as string)
-        : sessionConfig.secret
+      const secret = resolveSecret(ctx.env, sessionConfig)
 
       if (!secret) {
         throw new Error('Session secret is required for auth token generation')
@@ -590,9 +603,7 @@ export function createBeam<TEnv extends object = object>(
         }
 
         // Get the session secret for token verification
-        const secret = sessionConfig?.secretEnvKey
-          ? ((c.env as any)[sessionConfig.secretEnvKey] as string)
-          : sessionConfig?.secret
+        const secret = resolveSecret(c.env as TEnv, sessionConfig)
 
         if (!secret) {
           return c.text('Session secret is required for secure WebSocket connections', 500)
@@ -724,6 +735,16 @@ export function beamTokenMeta(token: string): string {
   // Escape any quotes in the token for safe HTML embedding
   const escapedToken = token.replace(/"/g, '&quot;')
   return `<meta name="beam-token" content="${escapedToken}">`
+}
+
+export const __beamCreateBeamInternals = {
+  signToken,
+  verifyToken,
+  parseCookies,
+  parseSessionFromRequest,
+  parseSessionDataFromRequest,
+  createBeamContext,
+  isAsyncGenerator,
 }
 
 // Export BeamServer for advanced usage (e.g., extending with custom methods)

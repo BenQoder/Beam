@@ -124,9 +124,33 @@ export default createRoute(async (c) => {
         </div>
       </div>
 
-      {/* Demo 5: Streaming Modal */}
+      {/* Demo 5: Streaming State */}
       <div class="demo-section">
-        <h2>5. Streaming Modal</h2>
+        <h2>5. Streaming State Updates</h2>
+        <p class="text-muted">
+          Yield <code>ctx.state(...)</code> chunks to update an existing named state without swapping any DOM.
+        </p>
+
+        <div beam-state="phase: 'idle'; progress: 0" beam-id="streamingStatus" class="pipeline">
+          <div class="pipeline-step running">
+            Phase: <strong beam-text="phase"></strong>
+          </div>
+          <div class="pipeline-step done">
+            Progress: <strong beam-text="progress + '%'"></strong>
+          </div>
+          <div beam-state-ref="streamingStatus" class="pipeline-step pending" beam-text="'Mirror: ' + phase + ' (' + progress + '%)'"></div>
+        </div>
+
+        <div class="demo-actions" style="margin-top: 12px;">
+          <button beam-action="streamStateProgress">
+            Stream State Progress
+          </button>
+        </div>
+      </div>
+
+      {/* Demo 6: Streaming Modal */}
+      <div class="demo-section">
+        <h2>6. Streaming Modal</h2>
         <p class="text-muted">Modal opens instantly with a skeleton, then streams in real content.</p>
 
         <div class="demo-actions">
@@ -136,9 +160,9 @@ export default createRoute(async (c) => {
         </div>
       </div>
 
-      {/* Demo 6: Streaming Drawer */}
+      {/* Demo 7: Streaming Drawer */}
       <div class="demo-section">
-        <h2>6. Streaming Drawer</h2>
+        <h2>7. Streaming Drawer</h2>
         <p class="text-muted">Drawer opens immediately with skeletons, then populates activity items one by one.</p>
 
         <div class="demo-actions">

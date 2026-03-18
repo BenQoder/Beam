@@ -31,6 +31,7 @@ function getAuthToken(): string {
 // Action response type (mirrors server-side)
 interface ActionResponse {
   html?: string | string[]
+  state?: Record<string, unknown>
   script?: string
   redirect?: string
   target?: string  // Can be comma-separated: "#a, #b, #c"
@@ -53,6 +54,21 @@ interface PublicBeamServer {
 // RPC stub types
 type BeamServerStub = RpcStub<BeamServer>
 type PublicBeamServerStub = RpcStub<PublicBeamServer>
+type RpcBrokenAware = {
+  onRpcBroken?: (handler: (error: unknown) => void) => void
+}
+type LegacyWindowExports = {
+  showToast: typeof showToast
+  closeModal: typeof closeModal
+  closeDrawer: typeof closeDrawer
+  clearCache: typeof clearCache
+}
+type CssGlobal = {
+  escape?: (value: string) => string
+}
+type AlpineGlobal = {
+  initTree?: (target: HTMLElement) => void
+}
 
 // Usage: <meta name="beam-reconnect-interval" content="5000">
 function getReconnectInterval(): number {
@@ -148,19 +164,17 @@ function connect(): Promise<BeamServerStub> {
 
       // Authenticate to get the full BeamServer API
       // This is the capnweb in-band authentication pattern
-      // @ts-ignore - capnweb stub methods are dynamically typed
-      const authenticatedSession = await publicSession.authenticate(token) as BeamServerStub
+      const authenticatedSession = await publicSession.authenticate(token) as unknown as BeamServerStub
 
       // Register client callback for bidirectional communication
-      // @ts-ignore - capnweb stub methods are dynamically typed
       authenticatedSession.registerCallback?.(handleServerEvent)?.catch?.(() => {
         // Server may not support callbacks, that's ok
       })
 
       // Handle connection broken (WebSocket disconnect)
-      // @ts-ignore - onRpcBroken is available on capnweb stubs
-      if (typeof authenticatedSession.onRpcBroken === 'function') {
-        authenticatedSession.onRpcBroken(handleWsDisconnect)
+      const breakableSession = authenticatedSession as unknown as BeamServerStub & RpcBrokenAware
+      if (typeof breakableSession.onRpcBroken === 'function') {
+        breakableSession.onRpcBroken(handleWsDisconnect)
       }
 
       rpcSession = authenticatedSession
@@ -200,8 +214,7 @@ function executeScript(code: string): void {
 const api = {
   async call(action: string, data: Record<string, unknown> = {}): Promise<ReadableStream<ActionResponse>> {
     const session = await ensureConnected()
-    // @ts-ignore - capnweb stub methods are dynamically typed
-    return session.call(action, data)
+    return session.call(action, data) as unknown as ReadableStream<ActionResponse>
   },
 
   // Direct access to RPC session for advanced usage (promise pipelining, etc.)
@@ -224,6 +237,35 @@ function $$(selector: string): NodeListOf<Element> {
 }
 
 type HtmlApplyStyle = 'innerHTML' | 'outerHTML'
+type IdentityOptions = {
+  allowNameFallback?: boolean
+  root?: QueryRoot
+}
+
+function getElementIdentitySelector(el: Element | null, options: IdentityOptions = {}): string | null {
+  if (!el) return null
+
+  const beamId = el.getAttribute('beam-id')
+  if (beamId) return `[beam-id="${escapeCss(beamId)}"]`
+
+  const beamItemId = el.getAttribute('beam-item-id')
+  if (beamItemId) return `[beam-item-id="${escapeCss(beamItemId)}"]`
+
+  if (el instanceof HTMLElement && el.id) {
+    return `#${escapeCss(el.id)}`
+  }
+
+  if (options.allowNameFallback && (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement)) {
+    const name = el.getAttribute('name')
+    if (name) {
+      const selector = `${el.tagName.toLowerCase()}[name="${escapeCss(name)}"]`
+      const root = options.root || document
+      return countSelectorMatches(root, selector) === 1 ? selector : null
+    }
+  }
+
+  return null
+}
 
 function normalizeHtmlForTarget(target: Element, html: string): string {
   const temp = document.createElement('div')
@@ -264,57 +306,13 @@ function applyHtml(
   // - Reinserts elements marked with [beam-keep] (matched by identity)
   // - Restores focused input caret/selection when possible
 
-  const escapeCssLocal = (value: string): string => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const cssEscape = (window as any).CSS?.escape as ((v: string) => string) | undefined
-    if (cssEscape) return cssEscape(value)
-    return value.replace(/[^a-zA-Z0-9_-]/g, '\\$&')
-  }
-
-  const getIdentitySelector = (el: Element): string | null => {
-    const beamId = el.getAttribute('beam-id')
-    if (beamId) return `[beam-id="${escapeCssLocal(beamId)}"]`
-
-    const beamItemId = el.getAttribute('beam-item-id')
-    if (beamItemId) return `[beam-item-id="${escapeCssLocal(beamItemId)}"]`
-
-    if (el instanceof HTMLElement && el.id) {
-      return `#${escapeCssLocal(el.id)}`
-    }
-
-    if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement) {
-      const name = el.getAttribute('name')
-      if (name) return `${el.tagName.toLowerCase()}[name="${escapeCssLocal(name)}"]`
-    }
-
-    return null
-  }
-
-  const preserved: Array<{ selector: string; el: Element }> = []
-  const shouldPreserve = (el: Element): boolean => {
-    if (el.hasAttribute('beam-keep')) return true
-    for (const selector of keepSelectors) {
-      try {
-        if (el.matches(selector)) return true
-      } catch {
-        // Ignore invalid selectors
-      }
-    }
-    return false
-  }
-
-  target.querySelectorAll('*').forEach((el) => {
-    if (!shouldPreserve(el)) return
-    const selector = getIdentitySelector(el)
-    if (!selector) return
-    preserved.push({ selector, el })
-  })
+  const preserved = collectPreservedNodes(target, keepSelectors)
 
   const active = document.activeElement
   const activeState = (() => {
     if (!(active instanceof HTMLElement)) return null
     if (!target.contains(active)) return null
-    const selector = getIdentitySelector(active)
+    const selector = getPreserveSelector(active, target)
     if (!selector) return null
     if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) {
       return {
@@ -343,12 +341,7 @@ function applyHtml(
   }
 
   // Reinsert preserved nodes where placeholders exist
-  for (const { selector, el } of preserved) {
-    const placeholder = nextTarget.querySelector(selector)
-    if (!placeholder) continue
-    if (placeholder === el) continue
-    placeholder.replaceWith(el)
-  }
+  restorePreservedNodes(nextTarget, preserved)
 
   // Restore focus + caret when possible
   if (activeState) {
@@ -367,6 +360,8 @@ function applyHtml(
       }
     }
   }
+
+  beamReactivity.scan(nextTarget as unknown as ParentNode)
 }
 
 function getParams(el: HTMLElement): Record<string, unknown> {
@@ -648,40 +643,43 @@ function showPlaceholder(el: HTMLElement): PlaceholderHandle {
 
 function escapeCss(value: string): string {
   // CSS.escape is not available in some older browsers
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const cssEscape = (window as any).CSS?.escape as ((v: string) => string) | undefined
+  const cssEscape = (window as Window & { CSS?: CssGlobal }).CSS?.escape
   if (cssEscape) return cssEscape(value)
   return value.replace(/[^a-zA-Z0-9_-]/g, '\\$&')
 }
 
 type PreservedNode = { selector: string; el: Element }
+type QueryRoot = Pick<Document | Element, 'querySelectorAll'>
 
-function getPreserveSelector(el: Element): string | null {
-  const beamId = el.getAttribute('beam-id')
-  if (beamId) return `[beam-id="${escapeCss(beamId)}"]`
-
-  const beamItemId = el.getAttribute('beam-item-id')
-  if (beamItemId) return `[beam-item-id="${escapeCss(beamItemId)}"]`
-
-  if (el instanceof HTMLElement && el.id) {
-    return `#${escapeCss(el.id)}`
+function countSelectorMatches(root: QueryRoot, selector: string): number {
+  try {
+    return root.querySelectorAll(selector).length
+  } catch {
+    return 0
   }
-
-  // For form controls, fall back to name+tag (helps keep Alpine state on inputs)
-  if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement) {
-    const name = el.getAttribute('name')
-    if (name) {
-      return `${el.tagName.toLowerCase()}[name="${escapeCss(name)}"]`
-    }
-  }
-
-  return null
 }
 
-function collectPreservedNodes(target: Element): PreservedNode[] {
+function getPreserveSelector(el: Element, root: QueryRoot = document): string | null {
+  return getElementIdentitySelector(el, { allowNameFallback: true, root })
+}
+
+function collectPreservedNodes(target: Element, keepSelectors: string[] = []): PreservedNode[] {
   const nodes: PreservedNode[] = []
-  target.querySelectorAll('[beam-keep]').forEach((el) => {
-    const selector = getPreserveSelector(el)
+  const shouldPreserve = (el: Element): boolean => {
+    if (el.hasAttribute('beam-keep')) return true
+    for (const selector of keepSelectors) {
+      try {
+        if (el.matches(selector)) return true
+      } catch {
+        // Ignore invalid selectors
+      }
+    }
+    return false
+  }
+
+  target.querySelectorAll('*').forEach((el) => {
+    if (!shouldPreserve(el)) return
+    const selector = getPreserveSelector(el, target)
     if (!selector) return
     nodes.push({ selector, el })
   })
@@ -711,7 +709,7 @@ function captureActiveElementState(target: Element): ActiveElementState {
   if (!(active instanceof HTMLElement)) return null
   if (!target.contains(active)) return null
 
-  const selector = getPreserveSelector(active)
+  const selector = getPreserveSelector(active, target)
   if (!selector) return null
 
   if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) {
@@ -791,8 +789,7 @@ function initAlpine(target: Element): void {
   // If Alpine is on the page, initialize any newly added DOM.
   // This does not preserve state for *replaced* nodes, but it keeps
   // state for nodes preserved via [beam-keep].
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const alpine = (window as any).Alpine
+  const alpine = (window as Window & { Alpine?: AlpineGlobal }).Alpine
   if (alpine?.initTree && target instanceof HTMLElement) {
     try {
       alpine.initTree(target)
@@ -823,7 +820,7 @@ function dedupeItems(target: Element, html: string): string {
     const id = el.getAttribute('beam-item-id')
     if (id && existingIds.has(id)) {
       // Update existing item with fresh data
-      const existing = target.querySelector(`[beam-item-id="${id}"]`)
+      const existing = target.querySelector(`[beam-item-id="${escapeCss(id)}"]`)
       if (existing) {
         applyHtml(existing, el.outerHTML, { style: 'outerHTML' })
       }
@@ -919,18 +916,11 @@ function handleHtmlResponse(
 
     let autoTargetSelector: string | null = null
     if (!explicitTarget) {
-      // Priority 2: auto-detect by beam-id / beam-item-id on root element
+      // Priority 2: auto-detect by beam-id / beam-item-id / id / name on root element
       const temp = document.createElement('div')
       temp.innerHTML = htmlItem.trim()
       const rootEl = temp.firstElementChild
-      const beamId = rootEl?.getAttribute('beam-id')
-      const beamItemId = rootEl?.getAttribute('beam-item-id')
-
-      autoTargetSelector = beamId
-        ? `[beam-id="${escapeCss(beamId)}"]`
-        : beamItemId
-          ? `[beam-item-id="${escapeCss(beamItemId)}"]`
-          : null
+      autoTargetSelector = getElementIdentitySelector(rootEl)
     }
 
     // Priority 3: Frontend target as fallback (only if no server or auto target was found and not excluded)
@@ -986,6 +976,14 @@ function parseOobSwaps(html: string): { main: string; oob: Array<{ selector: str
   return { main: temp.innerHTML, oob }
 }
 
+function applyStateResponse(stateUpdates: Record<string, unknown>): void {
+  beamReactivity.batch(() => {
+    Object.entries(stateUpdates).forEach(([id, value]) => {
+      beamReactivity.updateState(id, value)
+    })
+  })
+}
+
 // ============ RPC WRAPPER ============
 
 /**
@@ -1009,6 +1007,9 @@ function applyResponse(
   if (response.drawer) {
     const drawerData = typeof response.drawer === 'string' ? { html: response.drawer } : response.drawer
     openDrawer(drawerData.html, drawerData.position || 'right', drawerData.size || 'medium', drawerData.spacing)
+  }
+  if (response.state) {
+    applyStateResponse(response.state)
   }
   handleHtmlResponse(response, frontendTarget, frontendSwap, trigger)
   if (response.script) executeScript(response.script)
@@ -1738,7 +1739,8 @@ function restoreScrollState(): boolean {
     // Match elements by beam-item-id attribute
     freshContainer.querySelectorAll('[beam-item-id]').forEach((freshEl) => {
       const itemId = freshEl.getAttribute('beam-item-id')
-      const cachedEl = target.querySelector(`[beam-item-id="${itemId}"]`)
+      if (!itemId) return
+      const cachedEl = target.querySelector(`[beam-item-id="${escapeCss(itemId)}"]`)
       if (cachedEl) {
         applyHtml(cachedEl, freshEl.outerHTML, { style: 'outerHTML' })
       }
@@ -2352,8 +2354,8 @@ function checkWatchCondition(el: HTMLElement, value: unknown): boolean {
   if (!condition) return true
 
   try {
-    // Create a function that evaluates the condition with 'value' and 'this' context
-    const fn = new Function('value', `with(this) { return ${condition} }`)
+    // Evaluate with element properties in scope, but keep the watched value authoritative.
+    const fn = new Function('__beamValue', `with(this) { const value = __beamValue; return ${condition} }`)
     return Boolean(fn.call(el, value))
   } catch (e) {
     console.warn('[beam] Invalid beam-watch-if condition:', condition, e)
@@ -2662,11 +2664,11 @@ function processHungryElements(html: string): void {
 
   // Find hungry elements on the page
   document.querySelectorAll<HTMLElement>('[beam-hungry]').forEach((hungry) => {
-    const id = hungry.id
-    if (!id) return
+    const selector = getElementIdentitySelector(hungry)
+    if (!selector) return
 
-    // Look for matching element in response
-    const fresh = temp.querySelector(`#${id}`)
+    // Look for matching element in response by beam-id / beam-item-id / id.
+    const fresh = temp.querySelector(selector)
     if (fresh) {
       swap(hungry, fresh.innerHTML, 'replace')
     }
@@ -3071,6 +3073,37 @@ const beamUtils = {
   ...beamReactivity,
 }
 
+export const __beamClientInternals = {
+  api,
+  applyHtml,
+  swap,
+  handleHtmlResponse,
+  parseOobSwaps,
+  applyStateResponse,
+  applyResponse,
+  handleHistory,
+  openModal,
+  closeModal,
+  openDrawer,
+  closeDrawer,
+  setupSwitch,
+  setupAutosubmit,
+  getScrollStateKey,
+  saveScrollState,
+  restoreScrollState,
+  clearCache,
+  processHungryElements,
+  castValue,
+  checkWatchCondition,
+  createThrottle,
+  setupInputWatcher,
+  startPolling,
+  stopPolling,
+  setupValidation,
+  setupDirtyTracking,
+  isFormDirty,
+}
+
 // Type for the dynamic action caller
 type ActionCaller = (data?: Record<string, unknown>, options?: string | CallOptions) => Promise<ActionResponse>
 
@@ -3087,7 +3120,7 @@ window.beam = new Proxy(beamUtils, {
   get(target, prop: string) {
     // Return existing utility methods
     if (prop in target) {
-      return (target as any)[prop]
+      return target[prop as keyof typeof beamUtils]
     }
 
     // Return a dynamic action caller for any other property
@@ -3113,11 +3146,14 @@ window.beam = new Proxy(beamUtils, {
   }
 }) as typeof beamUtils & { [action: string]: ActionCaller }
 
-  // Legacy exports for backwards compatibility
-  ; (window as any).showToast = showToast
-  ; (window as any).closeModal = closeModal
-  ; (window as any).closeDrawer = closeDrawer
-  ; (window as any).clearCache = clearCache
+// Legacy exports for backwards compatibility
+const legacyWindow = window as Window & Partial<LegacyWindowExports>
+legacyWindow.showToast = showToast
+legacyWindow.closeModal = closeModal
+legacyWindow.closeDrawer = closeDrawer
+legacyWindow.clearCache = clearCache
 
 // Initialize capnweb RPC connection
-connect().catch(console.error)
+if (!(globalThis as { __BEAM_DISABLE_AUTO_CONNECT__?: boolean }).__BEAM_DISABLE_AUTO_CONNECT__) {
+  connect().catch(console.error)
+}

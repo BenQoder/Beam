@@ -33,6 +33,7 @@ A lightweight, declarative UI framework for building interactive web application
 - **Collapse** - Expand/collapse with text swap (no server)
 - **Class Toggle** - Toggle CSS classes on elements (no server)
 - **Reactive State** - Fine-grained reactivity for UI components (tabs, accordions, carousels)
+- **Server State Updates** - Update named client state from server actions without swapping DOM
 - **Cloak** - Hide elements until reactivity initializes (no flash of unprocessed content)
 - **Auto-Reconnect** - Automatically reconnects on WebSocket disconnect with configurable interval
 - **Multi-Render** - Update multiple targets in a single action response
@@ -273,7 +274,7 @@ export function refreshDashboard(ctx: BeamContext<Env>) {
 
 ```tsx
 export function refreshDashboard(ctx: BeamContext<Env>) {
-  // Client automatically finds elements by beam-id or beam-item-id
+  // Client automatically finds elements by stable identity
   return ctx.render([
     <div beam-id="stats">Visits: {visits}</div>,
     <div beam-id="users">Users: {users}</div>,
@@ -306,7 +307,9 @@ export function updateDashboard(ctx: BeamContext<Env>) {
 Notes:
 
 - `beam-target` accepts any valid CSS selector (e.g. `#id`, `.class`, `[attr=value]`). Using `#id` targets is still fully supported.
-- Auto-targeting (step 2) intentionally does **not** use plain `id="..."` anymore; it uses only `beam-id` / `beam-item-id`.
+- Auto-targeting (step 2) uses stable element identity from the returned HTML root: `beam-id`, `beam-item-id`, or `id`.
+- Auto-targeting intentionally does **not** use input `name` values, because they are often not unique enough for safe DOM replacement.
+- Prefer `beam-id` for named UI regions and `beam-item-id` for repeated/list items. Use plain `id` when that already matches your markup structure.
 - When an explicit target is used and the server returns a single root element that has the same `beam-id`/`beam-item-id` as the target, Beam unwraps it and swaps only the target’s inner content. This prevents accidentally nesting the component inside itself.
 
 **Exclusion:** Use `!selector` to explicitly skip an item:
@@ -940,6 +943,21 @@ Use `beam-keep` to prevent an element from being replaced during updates. This k
 
 Since the input isn't replaced, focus and cursor position are naturally preserved.
 
+Beam matches kept elements by stable identity in this order:
+
+- `beam-id`
+- `beam-item-id`
+- `id`
+- unique form control `name` as a best-effort fallback
+
+For the most reliable behavior, give kept elements a `beam-id`, `beam-item-id`, or `id`. If multiple inputs share the same `name`, Beam will not preserve by `name` alone.
+
+Use cases:
+
+- `beam-id`: shared UI regions like badges, panels, counters, and named state scopes
+- `beam-item-id`: repeated records in feeds, tables, carts, and paginated lists
+- `id`: one-off DOM anchors when the element already has a stable page-level ID
+
 ### Auto-Save on Blur
 
 Trigger action when the user leaves the field:
@@ -1158,13 +1176,13 @@ Polling automatically stops when the element is removed from the DOM.
 
 ## Hungry Elements
 
-Elements marked with `beam-hungry` automatically update whenever any action returns HTML with a matching ID:
+Elements marked with `beam-hungry` automatically update whenever any action returns HTML with matching stable identity:
 
 ```html
-<!-- This badge updates when any action returns #cart-count -->
-<span id="cart-count" beam-hungry>0</span>
+<!-- This badge updates when any action returns beam-id="cart-count" -->
+<span beam-id="cart-count" beam-hungry>0</span>
 
-<!-- Clicking this updates both #cart-result AND #cart-count -->
+<!-- Clicking this updates both #cart-result AND the hungry badge -->
 <button beam-action="addToCart" beam-target="#cart-result">Add to Cart</button>
 ```
 
@@ -1175,11 +1193,19 @@ export function addToCart(c) {
     <>
       <div>Item added to cart!</div>
       {/* This updates the hungry element */}
-      <span id="cart-count">{cartCount}</span>
+      <span beam-id="cart-count">{cartCount}</span>
     </>
   );
 }
 ```
+
+Hungry matching checks identity in this order:
+
+- `beam-id`
+- `beam-item-id`
+- `id`
+
+For shared UI regions, prefer `beam-id`. For repeated records, prefer `beam-item-id`.
 
 ---
 
@@ -1708,6 +1734,54 @@ Share state between different parts of the page. Named states (with `beam-id`) p
 
 **Note:** Named states persist when the DOM is updated by `beam-action`. This means reactive state is preserved even when server actions update the page.
 
+#### Server-Driven Named State Updates
+
+Server actions can update existing named state directly, without returning HTML. This is useful when the UI already has a `beam-state` scope and you only want to change its data.
+
+Use `ctx.state(id, value)` for a single state update:
+
+```tsx
+export function refreshCart(ctx: BeamContext<Env>) {
+  return ctx.state("cart", {
+    count: 3,
+    total: 29.99,
+  });
+}
+```
+
+Use `ctx.state({ ... })` to update multiple named states in one response:
+
+```tsx
+export function syncDashboard(ctx: BeamContext<Env>) {
+  return ctx.state({
+    cart: { count: 3, total: 29.99 },
+    notifications: 7,
+  });
+}
+```
+
+```html
+<div beam-state="count: 0; total: 0" beam-id="cart">
+  Cart: <span beam-text="count"></span> items
+  Total: $<span beam-text="total.toFixed(2)"></span>
+</div>
+
+<div beam-state="0" beam-id="notifications">
+  Notifications: <span beam-text="notifications"></span>
+</div>
+
+<button beam-action="refreshCart">Refresh Cart</button>
+<button beam-action="syncDashboard">Sync Everything</button>
+```
+
+Behavior:
+
+- Updates target existing named states by `beam-id`
+- Object payloads shallow-merge into object state
+- Primitive payloads replace simple named values
+- Elements using `beam-state-ref` update automatically
+- Missing state IDs are ignored with a console warning
+
 #### JavaScript API
 
 Access reactive state programmatically:
@@ -1726,6 +1800,9 @@ beam.batch(() => {
   state.a = 1;
   state.b = 2;
 });
+
+// Apply a named state update programmatically
+beam.updateState("cart", { count: 4, total: 39.99 });
 ```
 
 #### Standalone Usage (No Beam Server)
@@ -2447,11 +2524,13 @@ Both patterns work the same way:
 When restoring from cache, the server still renders fresh Page 1 data. To sync fresh data with cached items, add `beam-item-id` to your list items:
 
 ```tsx
-<!-- Any list item with a unique identifier -->
+<!-- Any repeated list item with a stable unique identifier -->
 <div class="product-card" beam-item-id={product.id}>...</div>
 <div class="comment" beam-item-id={comment.id}>...</div>
 <article beam-item-id={post.slug}>...</article>
 ```
+
+Use `beam-item-id` for repeated records instead of plain `id`. It is purpose-built for deduplication, cache restore, and append/prepend freshness.
 
 On back navigation:
 

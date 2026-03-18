@@ -104,6 +104,11 @@ function runReactiveEffect(e: ReactiveEffect): void {
 
 // --- Reactive Proxy (deep) ---
 const reactiveProxyCache = new WeakMap<object, object>()
+const reactiveNamedStateKinds = new Map<string, 'simple' | 'object'>()
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
 
 function createReactiveProxy<T extends object>(obj: T): T {
   // Return cached proxy if exists
@@ -465,6 +470,38 @@ function parseStateValue(raw: string, beamId: string | null): object {
   return result
 }
 
+function detectNamedStateKind(raw: string): 'simple' | 'object' {
+  return parseSimpleValue(raw.trim()) !== undefined ? 'simple' : 'object'
+}
+
+function updateNamedState(id: string, value: unknown): boolean {
+  const current = reactiveNamedStates.get(id)
+  if (!current) {
+    console.warn(`[beam] State "${id}" not found on page, skipping state update`)
+    return false
+  }
+
+  const state = current as Record<string, unknown>
+  const kind = reactiveNamedStateKinds.get(id) ?? 'object'
+
+  if (kind === 'object' && isPlainObject(value)) {
+    Object.entries(value).forEach(([key, next]) => {
+      state[key] = next
+    })
+    return true
+  }
+
+  if (kind === 'object') {
+    Object.keys(state).forEach((key) => {
+      state[key] = undefined
+    })
+    reactiveNamedStateKinds.set(id, 'simple')
+  }
+
+  state[id] = value
+  return true
+}
+
 // --- Setup Reactive Scope ---
 function setupReactiveScope(el: HTMLElement): void {
   const stateAttr = el.getAttribute('beam-state')
@@ -500,9 +537,11 @@ function setupReactiveScope(el: HTMLElement): void {
     // Register named state if beam-id is present
     if (id) {
       reactiveNamedStates.set(id, state)
+      reactiveNamedStateKinds.set(id, detectNamedStateKind(stateAttr))
     }
   }
 
+  // Register the scope before wiring descendants so initial effects can resolve state.
   reactiveElStates.set(el, state)
   processReactiveBindings(el, state)
 
@@ -517,9 +556,17 @@ function setupReactiveScope(el: HTMLElement): void {
 }
 
 // --- Setup standalone ref elements (elements with beam-state-ref outside any beam-state scope) ---
-function setupRefElements(): void {
-  // Find all elements with beam-state-ref that are NOT inside a beam-state scope
-  document.querySelectorAll<HTMLElement>('[beam-state-ref]').forEach((el) => {
+function getScopedElements(root: ParentNode, selector: string): HTMLElement[] {
+  const elements = Array.from(root.querySelectorAll<HTMLElement>(selector))
+  if (root instanceof HTMLElement && root.matches(selector)) {
+    elements.unshift(root)
+  }
+  return elements
+}
+
+function setupRefElements(root: ParentNode = document): void {
+  // Find all elements with beam-state-ref that are NOT inside any beam-state scope
+  getScopedElements(root, '[beam-state-ref]').forEach((el) => {
     // Skip if inside a beam-state scope (will be handled by that scope)
     if (el.closest('[beam-state]')) return
     // Skip if already initialized
@@ -627,29 +674,26 @@ function setupRefElements(): void {
   })
 }
 
-// --- Initialize ---
-function initReactivity(): void {
-  // MutationObserver for dynamic elements
-  const reactiveStateObserver = new MutationObserver(() => {
-    document.querySelectorAll<HTMLElement>('[beam-state]:not([beam-state-init])').forEach((el) => {
-      el.setAttribute('beam-state-init', '')
-      setupReactiveScope(el)
-      el.removeAttribute('beam-cloak')
-    })
-    // Also setup any new ref elements
-    setupRefElements()
-  })
-  reactiveStateObserver.observe(document.body, { childList: true, subtree: true })
-
-  // Init existing elements
-  document.querySelectorAll<HTMLElement>('[beam-state]').forEach((el) => {
+function scanReactivity(root: ParentNode = document): void {
+  getScopedElements(root, '[beam-state]:not([beam-state-init])').forEach((el) => {
     el.setAttribute('beam-state-init', '')
     setupReactiveScope(el)
     el.removeAttribute('beam-cloak')
   })
 
-  // Setup standalone ref elements
-  setupRefElements()
+  setupRefElements(root)
+}
+
+// --- Initialize ---
+function initReactivity(): void {
+  // MutationObserver for dynamic elements
+  const reactiveStateObserver = new MutationObserver(() => {
+    scanReactivity(document)
+  })
+  reactiveStateObserver.observe(document.body, { childList: true, subtree: true })
+
+  // Init existing elements
+  scanReactivity(document)
 }
 
 // --- Public API ---
@@ -671,9 +715,19 @@ export const beamReactivity = {
   },
 
   /**
+   * Apply a server-driven update to a named state created with beam-id.
+   */
+  updateState: (id: string, value: unknown): boolean => updateNamedState(id, value),
+
+  /**
    * Manually initialize reactivity (called automatically on import)
    */
   init: initReactivity,
+
+  /**
+   * Scan a DOM subtree for newly inserted reactive elements.
+   */
+  scan: (root?: ParentNode): void => scanReactivity(root ?? document),
 }
 
 // Auto-initialize when DOM is ready

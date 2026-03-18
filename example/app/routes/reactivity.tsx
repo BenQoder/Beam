@@ -616,10 +616,29 @@ export default createRoute((c) => {
             <p class="update-hint">Increment the counter, then click "Update Container" - state persists!</p>
           </div>
 
+          <div beam-state="0" beam-id="serverClicks" class="syntax-box compact">
+            <h4>Primitive State</h4>
+            <div class="counter-inline">
+              <span class="count-display" beam-text="serverClicks"></span>
+            </div>
+            <p class="update-message">
+              Mirror: <span beam-state-ref="serverClicks" beam-text="serverClicks"></span>
+            </p>
+          </div>
+
           {/* Button that triggers update */}
           <div class="update-actions">
             <button beam-action="updateReactiveDemo" beam-target="#update-target" class="btn-update">
               Update Container (server update)
+            </button>
+            <button beam-action="updateReactiveState" class="btn-update">
+              Update Message Only (state only)
+            </button>
+            <button beam-action="updatePrimitiveState" beam-data-value="5" class="btn-update">
+              Set Primitive to 5
+            </button>
+            <button beam-action="syncMultipleStates" class="btn-update">
+              Sync Multiple States
             </button>
             <p class="text-muted">This replaces the container HTML but preserves the reactive state.</p>
           </div>
@@ -635,6 +654,21 @@ export default createRoute((c) => {
 <button beam-action="updateContent" beam-target="#target">
   Update Content
 </button>`}</pre>
+
+        <pre class="code-preview">{`// Update one named state
+export function updateMessage(ctx) {
+  return ctx.state('persist-demo', {
+    message: 'Updated from server',
+  })
+}
+
+// Update multiple named states at once
+export function syncState(ctx) {
+  return ctx.state({
+    'persist-demo': { count: 42, message: 'Synced' },
+    serverClicks: 9,
+  })
+}`}</pre>
       </div>
 
       {/* Pure HTML Usage */}

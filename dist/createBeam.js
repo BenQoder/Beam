@@ -184,6 +184,12 @@ async function toHtml(content) {
 function createBeamContext(base) {
     return {
         ...base,
+        state: (idOrUpdates, value) => {
+            const state = typeof idOrUpdates === 'string'
+                ? { [idOrUpdates]: value }
+                : idOrUpdates;
+            return { state };
+        },
         script: (code) => ({ script: code }),
         render: (content, options) => {
             // Helper to build response without undefined values
@@ -244,6 +250,7 @@ function isAsyncGenerator(value) {
 class BeamServer extends RpcTarget {
     ctx;
     actions;
+    clientCallback = null;
     constructor(ctx, actions) {
         super();
         this.ctx = ctx;
@@ -287,18 +294,25 @@ class BeamServer extends RpcTarget {
      */
     registerCallback(callback) {
         // Store callback for later use by actions that need to push updates
-        ;
-        this._clientCallback = callback;
+        this.clientCallback = callback;
     }
     /**
      * Notify connected client (if callback registered)
      */
     async notify(event, data) {
-        const callback = this._clientCallback;
+        const callback = this.clientCallback;
         if (callback) {
             await callback(event, data);
         }
     }
+}
+function resolveSecret(env, sessionConfig) {
+    if (!sessionConfig)
+        return undefined;
+    if (sessionConfig.secretEnvKey) {
+        return env[sessionConfig.secretEnvKey];
+    }
+    return sessionConfig.secret;
 }
 /**
  * Creates a Beam instance configured with actions.
@@ -360,9 +374,7 @@ export function createBeam(config) {
                 let cookieSession = null;
                 if (sessionConfig) {
                     // Resolve secret from env if secretEnvKey provided, otherwise use static secret
-                    const secret = sessionConfig.secretEnvKey
-                        ? c.env[sessionConfig.secretEnvKey]
-                        : sessionConfig.secret;
+                    const secret = resolveSecret(c.env, sessionConfig);
                     if (!secret) {
                         throw new Error(sessionConfig.secretEnvKey
                             ? `Session secret not found in env.${sessionConfig.secretEnvKey}`
@@ -416,9 +428,7 @@ export function createBeam(config) {
                     session,
                 });
                 // Generate auth token for in-band WebSocket authentication
-                const secret = sessionConfig?.secretEnvKey
-                    ? c.env[sessionConfig.secretEnvKey]
-                    : sessionConfig?.secret;
+                const secret = resolveSecret(c.env, sessionConfig);
                 let authToken = '';
                 if (secret && sessionId) {
                     const tokenPayload = {
@@ -434,9 +444,10 @@ export function createBeam(config) {
                 await next();
                 // If using cookie session and data was modified, save it back to cookie
                 if (cookieSession && cookieSession.isDirty() && sessionConfig) {
-                    const secret = sessionConfig.secretEnvKey
-                        ? c.env[sessionConfig.secretEnvKey]
-                        : sessionConfig.secret;
+                    const secret = resolveSecret(c.env, sessionConfig);
+                    if (!secret) {
+                        throw new Error('Session secret is required');
+                    }
                     const dataString = JSON.stringify(cookieSession.getData());
                     await setSignedCookie(c, SESSION_DATA_COOKIE, dataString, secret, {
                         maxAge,
@@ -461,9 +472,7 @@ export function createBeam(config) {
             if (!sessionConfig) {
                 throw new Error('Session config is required for auth token generation');
             }
-            const secret = sessionConfig.secretEnvKey
-                ? ctx.env[sessionConfig.secretEnvKey]
-                : sessionConfig.secret;
+            const secret = resolveSecret(ctx.env, sessionConfig);
             if (!secret) {
                 throw new Error('Session secret is required for auth token generation');
             }
@@ -505,9 +514,7 @@ export function createBeam(config) {
                     return c.text('Expected WebSocket', 426);
                 }
                 // Get the session secret for token verification
-                const secret = sessionConfig?.secretEnvKey
-                    ? c.env[sessionConfig.secretEnvKey]
-                    : sessionConfig?.secret;
+                const secret = resolveSecret(c.env, sessionConfig);
                 if (!secret) {
                     return c.text('Session secret is required for secure WebSocket connections', 500);
                 }
@@ -616,5 +623,14 @@ export function beamTokenMeta(token) {
     const escapedToken = token.replace(/"/g, '&quot;');
     return `<meta name="beam-token" content="${escapedToken}">`;
 }
+export const __beamCreateBeamInternals = {
+    signToken,
+    verifyToken,
+    parseCookies,
+    parseSessionFromRequest,
+    parseSessionDataFromRequest,
+    createBeamContext,
+    isAsyncGenerator,
+};
 // Export BeamServer for advanced usage (e.g., extending with custom methods)
 export { BeamServer, PublicBeamServer };

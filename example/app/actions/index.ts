@@ -1,7 +1,7 @@
 import type { ActionHandler } from '@benqoder/beam'
 import type { Env } from '../types'
 
-import { loadProfile, runPipeline, streamText, refreshDashboardStream, openProfileModal, openActivityDrawer } from './streaming'
+import { loadProfile, runPipeline, streamText, streamStateProgress, refreshDashboardStream, openProfileModal, openActivityDrawer } from './streaming'
 import { addToCart } from './addToCart'
 import { removeFromCart } from './removeFromCart'
 import { createProduct } from './createProduct'
@@ -20,6 +20,9 @@ import {
   toggleTest,
   hideTest,
   updateReactiveDemo,
+  updateReactiveState,
+  updatePrimitiveState,
+  syncMultipleStates,
   addItem,
   replaceList,
   oobUpdate,
@@ -54,6 +57,7 @@ export const actions: Record<string, ActionHandler<Env>> = {
   loadProfile,
   runPipeline,
   streamText,
+  streamStateProgress,
   refreshDashboardStream,
   openProfileModal,
   openActivityDrawer,
@@ -75,6 +79,9 @@ export const actions: Record<string, ActionHandler<Env>> = {
   toggleTest,
   hideTest,
   updateReactiveDemo,
+  updateReactiveState,
+  updatePrimitiveState,
+  syncMultipleStates,
   addItem,
   replaceList,
   oobUpdate,

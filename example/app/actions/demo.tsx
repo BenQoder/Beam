@@ -134,6 +134,27 @@ export async function updateReactiveDemo(_ctx: BeamContext<Env>, _params: Record
   )
 }
 
+export function updateReactiveState(ctx: BeamContext<Env>, _params: Record<string, unknown>) {
+  return ctx.state('persist-demo', {
+    message: `Updated by server at ${new Date().toLocaleTimeString()}`,
+  })
+}
+
+export function updatePrimitiveState(ctx: BeamContext<Env>, { value }: Record<string, unknown>) {
+  return ctx.state('serverClicks', Number(value ?? 0))
+}
+
+export function syncMultipleStates(ctx: BeamContext<Env>, _params: Record<string, unknown>) {
+  const time = new Date().toLocaleTimeString()
+  return ctx.state({
+    'persist-demo': {
+      count: 42,
+      message: `Synced from server at ${time}`,
+    },
+    serverClicks: 9,
+  })
+}
+
 export async function addItem(_ctx: BeamContext<Env>, _params: Record<string, unknown>): Promise<string> {
   itemIdCounter++
   return render(

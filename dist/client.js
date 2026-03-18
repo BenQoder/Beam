@@ -105,17 +105,15 @@ function connect() {
             const publicSession = newWebSocketRpcSession(url);
             // Authenticate to get the full BeamServer API
             // This is the capnweb in-band authentication pattern
-            // @ts-ignore - capnweb stub methods are dynamically typed
             const authenticatedSession = await publicSession.authenticate(token);
             // Register client callback for bidirectional communication
-            // @ts-ignore - capnweb stub methods are dynamically typed
             authenticatedSession.registerCallback?.(handleServerEvent)?.catch?.(() => {
                 // Server may not support callbacks, that's ok
             });
             // Handle connection broken (WebSocket disconnect)
-            // @ts-ignore - onRpcBroken is available on capnweb stubs
-            if (typeof authenticatedSession.onRpcBroken === 'function') {
-                authenticatedSession.onRpcBroken(handleWsDisconnect);
+            const breakableSession = authenticatedSession;
+            if (typeof breakableSession.onRpcBroken === 'function') {
+                breakableSession.onRpcBroken(handleWsDisconnect);
             }
             rpcSession = authenticatedSession;
             connectingPromise = null;
@@ -152,7 +150,6 @@ function executeScript(code) {
 const api = {
     async call(action, data = {}) {
         const session = await ensureConnected();
-        // @ts-ignore - capnweb stub methods are dynamically typed
         return session.call(action, data);
     },
     // Direct access to RPC session for advanced usage (promise pipelining, etc.)
@@ -168,6 +165,28 @@ function $(selector) {
 }
 function $$(selector) {
     return document.querySelectorAll(selector);
+}
+function getElementIdentitySelector(el, options = {}) {
+    if (!el)
+        return null;
+    const beamId = el.getAttribute('beam-id');
+    if (beamId)
+        return `[beam-id="${escapeCss(beamId)}"]`;
+    const beamItemId = el.getAttribute('beam-item-id');
+    if (beamItemId)
+        return `[beam-item-id="${escapeCss(beamItemId)}"]`;
+    if (el instanceof HTMLElement && el.id) {
+        return `#${escapeCss(el.id)}`;
+    }
+    if (options.allowNameFallback && (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement)) {
+        const name = el.getAttribute('name');
+        if (name) {
+            const selector = `${el.tagName.toLowerCase()}[name="${escapeCss(name)}"]`;
+            const root = options.root || document;
+            return countSelectorMatches(root, selector) === 1 ? selector : null;
+        }
+    }
+    return null;
 }
 function normalizeHtmlForTarget(target, html) {
     const temp = document.createElement('div');
@@ -201,60 +220,14 @@ function applyHtml(target, html, options) {
     // - Replaces innerHTML/outerHTML (no DOM diff)
     // - Reinserts elements marked with [beam-keep] (matched by identity)
     // - Restores focused input caret/selection when possible
-    const escapeCssLocal = (value) => {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const cssEscape = window.CSS?.escape;
-        if (cssEscape)
-            return cssEscape(value);
-        return value.replace(/[^a-zA-Z0-9_-]/g, '\\$&');
-    };
-    const getIdentitySelector = (el) => {
-        const beamId = el.getAttribute('beam-id');
-        if (beamId)
-            return `[beam-id="${escapeCssLocal(beamId)}"]`;
-        const beamItemId = el.getAttribute('beam-item-id');
-        if (beamItemId)
-            return `[beam-item-id="${escapeCssLocal(beamItemId)}"]`;
-        if (el instanceof HTMLElement && el.id) {
-            return `#${escapeCssLocal(el.id)}`;
-        }
-        if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement) {
-            const name = el.getAttribute('name');
-            if (name)
-                return `${el.tagName.toLowerCase()}[name="${escapeCssLocal(name)}"]`;
-        }
-        return null;
-    };
-    const preserved = [];
-    const shouldPreserve = (el) => {
-        if (el.hasAttribute('beam-keep'))
-            return true;
-        for (const selector of keepSelectors) {
-            try {
-                if (el.matches(selector))
-                    return true;
-            }
-            catch {
-                // Ignore invalid selectors
-            }
-        }
-        return false;
-    };
-    target.querySelectorAll('*').forEach((el) => {
-        if (!shouldPreserve(el))
-            return;
-        const selector = getIdentitySelector(el);
-        if (!selector)
-            return;
-        preserved.push({ selector, el });
-    });
+    const preserved = collectPreservedNodes(target, keepSelectors);
     const active = document.activeElement;
     const activeState = (() => {
         if (!(active instanceof HTMLElement))
             return null;
         if (!target.contains(active))
             return null;
-        const selector = getIdentitySelector(active);
+        const selector = getPreserveSelector(active, target);
         if (!selector)
             return null;
         if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) {
@@ -283,14 +256,7 @@ function applyHtml(target, html, options) {
         nextTarget = replacement;
     }
     // Reinsert preserved nodes where placeholders exist
-    for (const { selector, el } of preserved) {
-        const placeholder = nextTarget.querySelector(selector);
-        if (!placeholder)
-            continue;
-        if (placeholder === el)
-            continue;
-        placeholder.replaceWith(el);
-    }
+    restorePreservedNodes(nextTarget, preserved);
     // Restore focus + caret when possible
     if (activeState) {
         const el = nextTarget.querySelector(activeState.selector);
@@ -310,6 +276,7 @@ function applyHtml(target, html, options) {
             }
         }
     }
+    beamReactivity.scan(nextTarget);
 }
 function getParams(el) {
     // Start with beam-params JSON if present
@@ -559,35 +526,42 @@ function showPlaceholder(el) {
 // ============ SWAP STRATEGIES ============
 function escapeCss(value) {
     // CSS.escape is not available in some older browsers
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const cssEscape = window.CSS?.escape;
     if (cssEscape)
         return cssEscape(value);
     return value.replace(/[^a-zA-Z0-9_-]/g, '\\$&');
 }
-function getPreserveSelector(el) {
-    const beamId = el.getAttribute('beam-id');
-    if (beamId)
-        return `[beam-id="${escapeCss(beamId)}"]`;
-    const beamItemId = el.getAttribute('beam-item-id');
-    if (beamItemId)
-        return `[beam-item-id="${escapeCss(beamItemId)}"]`;
-    if (el instanceof HTMLElement && el.id) {
-        return `#${escapeCss(el.id)}`;
+function countSelectorMatches(root, selector) {
+    try {
+        return root.querySelectorAll(selector).length;
     }
-    // For form controls, fall back to name+tag (helps keep Alpine state on inputs)
-    if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement) {
-        const name = el.getAttribute('name');
-        if (name) {
-            return `${el.tagName.toLowerCase()}[name="${escapeCss(name)}"]`;
-        }
+    catch {
+        return 0;
     }
-    return null;
 }
-function collectPreservedNodes(target) {
+function getPreserveSelector(el, root = document) {
+    return getElementIdentitySelector(el, { allowNameFallback: true, root });
+}
+function collectPreservedNodes(target, keepSelectors = []) {
     const nodes = [];
-    target.querySelectorAll('[beam-keep]').forEach((el) => {
-        const selector = getPreserveSelector(el);
+    const shouldPreserve = (el) => {
+        if (el.hasAttribute('beam-keep'))
+            return true;
+        for (const selector of keepSelectors) {
+            try {
+                if (el.matches(selector))
+                    return true;
+            }
+            catch {
+                // Ignore invalid selectors
+            }
+        }
+        return false;
+    };
+    target.querySelectorAll('*').forEach((el) => {
+        if (!shouldPreserve(el))
+            return;
+        const selector = getPreserveSelector(el, target);
         if (!selector)
             return;
         nodes.push({ selector, el });
@@ -611,7 +585,7 @@ function captureActiveElementState(target) {
         return null;
     if (!target.contains(active))
         return null;
-    const selector = getPreserveSelector(active);
+    const selector = getPreserveSelector(active, target);
     if (!selector)
         return null;
     if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) {
@@ -683,7 +657,6 @@ function initAlpine(target) {
     // If Alpine is on the page, initialize any newly added DOM.
     // This does not preserve state for *replaced* nodes, but it keeps
     // state for nodes preserved via [beam-keep].
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const alpine = window.Alpine;
     if (alpine?.initTree && target instanceof HTMLElement) {
         try {
@@ -714,7 +687,7 @@ function dedupeItems(target, html) {
         const id = el.getAttribute('beam-item-id');
         if (id && existingIds.has(id)) {
             // Update existing item with fresh data
-            const existing = target.querySelector(`[beam-item-id="${id}"]`);
+            const existing = target.querySelector(`[beam-item-id="${escapeCss(id)}"]`);
             if (existing) {
                 applyHtml(existing, el.outerHTML, { style: 'outerHTML' });
             }
@@ -794,17 +767,11 @@ function handleHtmlResponse(response, frontendTarget, frontendSwap, trigger) {
         let explicitTarget = serverTarget;
         let autoTargetSelector = null;
         if (!explicitTarget) {
-            // Priority 2: auto-detect by beam-id / beam-item-id on root element
+            // Priority 2: auto-detect by beam-id / beam-item-id / id / name on root element
             const temp = document.createElement('div');
             temp.innerHTML = htmlItem.trim();
             const rootEl = temp.firstElementChild;
-            const beamId = rootEl?.getAttribute('beam-id');
-            const beamItemId = rootEl?.getAttribute('beam-item-id');
-            autoTargetSelector = beamId
-                ? `[beam-id="${escapeCss(beamId)}"]`
-                : beamItemId
-                    ? `[beam-item-id="${escapeCss(beamItemId)}"]`
-                    : null;
+            autoTargetSelector = getElementIdentitySelector(rootEl);
         }
         // Priority 3: Frontend target as fallback (only if no server or auto target was found and not excluded)
         if (!explicitTarget && !autoTargetSelector && frontendTarget && !excluded.has(frontendTarget)) {
@@ -858,6 +825,13 @@ function parseOobSwaps(html) {
     });
     return { main: temp.innerHTML, oob };
 }
+function applyStateResponse(stateUpdates) {
+    beamReactivity.batch(() => {
+        Object.entries(stateUpdates).forEach(([id, value]) => {
+            beamReactivity.updateState(id, value);
+        });
+    });
+}
 // ============ RPC WRAPPER ============
 /**
  * Apply a single ActionResponse chunk to the DOM.
@@ -875,6 +849,9 @@ function applyResponse(response, frontendTarget, frontendSwap, trigger) {
     if (response.drawer) {
         const drawerData = typeof response.drawer === 'string' ? { html: response.drawer } : response.drawer;
         openDrawer(drawerData.html, drawerData.position || 'right', drawerData.size || 'medium', drawerData.spacing);
+    }
+    if (response.state) {
+        applyStateResponse(response.state);
     }
     handleHtmlResponse(response, frontendTarget, frontendSwap, trigger);
     if (response.script)
@@ -1524,7 +1501,9 @@ function restoreScrollState() {
         // Match elements by beam-item-id attribute
         freshContainer.querySelectorAll('[beam-item-id]').forEach((freshEl) => {
             const itemId = freshEl.getAttribute('beam-item-id');
-            const cachedEl = target.querySelector(`[beam-item-id="${itemId}"]`);
+            if (!itemId)
+                return;
+            const cachedEl = target.querySelector(`[beam-item-id="${escapeCss(itemId)}"]`);
             if (cachedEl) {
                 applyHtml(cachedEl, freshEl.outerHTML, { style: 'outerHTML' });
             }
@@ -2092,8 +2071,8 @@ function checkWatchCondition(el, value) {
     if (!condition)
         return true;
     try {
-        // Create a function that evaluates the condition with 'value' and 'this' context
-        const fn = new Function('value', `with(this) { return ${condition} }`);
+        // Evaluate with element properties in scope, but keep the watched value authoritative.
+        const fn = new Function('__beamValue', `with(this) { const value = __beamValue; return ${condition} }`);
         return Boolean(fn.call(el, value));
     }
     catch (e) {
@@ -2168,18 +2147,18 @@ function setupInputWatcher(el) {
         htmlEl.setAttribute('beam-touched', '');
         try {
             const stream = await api.call(action, params);
-        const reader = stream.getReader();
-        try {
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done)
-                    break;
-                applyResponse(value, targetSelector, swapMode, htmlEl);
+            const reader = stream.getReader();
+            try {
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done)
+                        break;
+                    applyResponse(value, targetSelector, swapMode, htmlEl);
+                }
             }
-        }
-        finally {
-            reader.releaseLock();
-        }
+            finally {
+                reader.releaseLock();
+            }
         }
         catch (err) {
             console.error('Input watcher error:', err);
@@ -2380,11 +2359,11 @@ function processHungryElements(html) {
     temp.innerHTML = html;
     // Find hungry elements on the page
     document.querySelectorAll('[beam-hungry]').forEach((hungry) => {
-        const id = hungry.id;
-        if (!id)
+        const selector = getElementIdentitySelector(hungry);
+        if (!selector)
             return;
-        // Look for matching element in response
-        const fresh = temp.querySelector(`#${id}`);
+        // Look for matching element in response by beam-id / beam-item-id / id.
+        const fresh = temp.querySelector(selector);
         if (fresh) {
             swap(hungry, fresh.innerHTML, 'replace');
         }
@@ -2739,6 +2718,36 @@ const beamUtils = {
     // Reactive state API (from reactivity.ts)
     ...beamReactivity,
 };
+export const __beamClientInternals = {
+    api,
+    applyHtml,
+    swap,
+    handleHtmlResponse,
+    parseOobSwaps,
+    applyStateResponse,
+    applyResponse,
+    handleHistory,
+    openModal,
+    closeModal,
+    openDrawer,
+    closeDrawer,
+    setupSwitch,
+    setupAutosubmit,
+    getScrollStateKey,
+    saveScrollState,
+    restoreScrollState,
+    clearCache,
+    processHungryElements,
+    castValue,
+    checkWatchCondition,
+    createThrottle,
+    setupInputWatcher,
+    startPolling,
+    stopPolling,
+    setupValidation,
+    setupDirtyTracking,
+    isFormDirty,
+};
 // Create a Proxy that handles both utility methods and dynamic action calls
 window.beam = new Proxy(beamUtils, {
     get(target, prop) {
@@ -2771,9 +2780,13 @@ window.beam = new Proxy(beamUtils, {
         };
     }
 });
-window.showToast = showToast;
-window.closeModal = closeModal;
-window.closeDrawer = closeDrawer;
-window.clearCache = clearCache;
+// Legacy exports for backwards compatibility
+const legacyWindow = window;
+legacyWindow.showToast = showToast;
+legacyWindow.closeModal = closeModal;
+legacyWindow.closeDrawer = closeDrawer;
+legacyWindow.clearCache = clearCache;
 // Initialize capnweb RPC connection
-connect().catch(console.error);
+if (!globalThis.__BEAM_DISABLE_AUTO_CONNECT__) {
+    connect().catch(console.error);
+}
