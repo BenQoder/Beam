@@ -917,8 +917,24 @@ function handleHtmlResponse(
     // Priority 1: Server target (by index)
     let explicitTarget = serverTarget
 
-    // Priority 2: Frontend target as fallback (only if no server target and not excluded)
-    if (!explicitTarget && frontendTarget && !excluded.has(frontendTarget)) {
+    let autoTargetSelector: string | null = null
+    if (!explicitTarget) {
+      // Priority 2: auto-detect by beam-id / beam-item-id on root element
+      const temp = document.createElement('div')
+      temp.innerHTML = htmlItem.trim()
+      const rootEl = temp.firstElementChild
+      const beamId = rootEl?.getAttribute('beam-id')
+      const beamItemId = rootEl?.getAttribute('beam-item-id')
+
+      autoTargetSelector = beamId
+        ? `[beam-id="${escapeCss(beamId)}"]`
+        : beamItemId
+          ? `[beam-item-id="${escapeCss(beamItemId)}"]`
+          : null
+    }
+
+    // Priority 3: Frontend target as fallback (only if no server or auto target was found and not excluded)
+    if (!explicitTarget && !autoTargetSelector && frontendTarget && !excluded.has(frontendTarget)) {
       explicitTarget = frontendTarget
     }
 
@@ -930,35 +946,24 @@ function handleHtmlResponse(
       } else {
         console.warn(`[beam] Target "${explicitTarget}" not found on page, skipping`)
       }
+    } else if (autoTargetSelector && !excluded.has(autoTargetSelector)) {
+      const target = $(autoTargetSelector)
+      if (target) {
+        applyHtml(target, htmlItem.trim(), { style: 'outerHTML' })
+      } else {
+        console.warn(`[beam] Target "${autoTargetSelector}" (from HTML) not found on page, skipping`)
+      }
     } else {
-      // Priority 3: auto-detect by id / beam-id / beam-item-id on root element
-      // Each identifier works on its own. If multiple are present, we use a deterministic
-      // priority order so only *one* target is selected.
-      const temp = document.createElement('div')
-      temp.innerHTML = htmlItem.trim()
-      const rootEl = temp.firstElementChild
-
-      const id = rootEl instanceof HTMLElement ? rootEl.id : ''
-      const beamId = rootEl?.getAttribute('beam-id')
-      const beamItemId = rootEl?.getAttribute('beam-item-id')
-
-      const selector = id
-        ? `#${escapeCss(id)}`
-        : beamId
-          ? `[beam-id="${escapeCss(beamId)}"]`
-          : beamItemId
-            ? `[beam-item-id="${escapeCss(beamItemId)}"]`
-            : null
-
-      if (selector && !excluded.has(selector)) {
-        const target = $(selector)
+      // If no beam-id/beam-item-id target is found, allow the triggering element's frontend target as the last fallback.
+      if (frontendTarget && !excluded.has(frontendTarget)) {
+        const target = $(frontendTarget)
         if (target) {
-          applyHtml(target, htmlItem.trim(), { style: 'outerHTML' })
+          swap(target, htmlItem, swapMode, trigger)
         } else {
-          console.warn(`[beam] Target "${selector}" (from HTML) not found on page, skipping`)
+          console.warn(`[beam] Target "${frontendTarget}" not found on page, skipping`)
         }
       }
-      // If no id/beam-id/beam-item-id found or excluded, skip silently
+      // If no target found or all candidates are excluded, skip silently.
     }
   })
 }
@@ -2438,23 +2443,7 @@ function setupInputWatcher(el: Element): void {
         while (true) {
           const { done, value } = await reader.read()
           if (done) break
-          if (value.html && targetSelector) {
-            const targets = $$(targetSelector)
-            const htmlArray = Array.isArray(value.html) ? value.html : [value.html]
-            targets.forEach((target, i) => {
-              const html = htmlArray[i] || htmlArray[0]
-              if (html) swap(target, html, swapMode)
-            })
-          }
-          if (value.html) {
-            const htmlStr = Array.isArray(value.html) ? value.html.join('') : value.html
-            const { oob } = parseOobSwaps(htmlStr)
-            for (const { selector, content, swapMode: oobSwapMode } of oob) {
-              const oobTarget = $(selector)
-              if (oobTarget) swap(oobTarget, content, oobSwapMode || 'replace')
-            }
-          }
-          if (value.script) executeScript(value.script)
+          applyResponse(value, targetSelector, swapMode, htmlEl)
         }
       } finally {
         reader.releaseLock()
