@@ -24,8 +24,8 @@ A lightweight, declarative UI framework for building interactive web application
 - **Navigation Feedback** - Auto-highlight current page links
 - **Conditional Show/Hide** - Toggle visibility based on form values
 - **Auto-submit Forms** - Submit on field change
-- **Boost Links** - Upgrade regular links to AJAX
-- **History Management** - Push/replace browser history
+- **Beam Visits** - Upgrade normal SSR links into Beam-powered visits
+- **History Management** - Push/replace browser history for actions and visits
 - **Placeholders** - Show loading content in target
 - **Keep Elements** - Preserve elements during updates
 - **Toggle** - Client-side show/hide with transitions (no server)
@@ -35,7 +35,7 @@ A lightweight, declarative UI framework for building interactive web application
 - **Reactive State** - Fine-grained reactivity for UI components (tabs, accordions, carousels)
 - **Server State Updates** - Update named client state from server actions without swapping DOM
 - **Cloak** - Hide elements until reactivity initializes (no flash of unprocessed content)
-- **Auto-Reconnect** - Automatically reconnects on WebSocket disconnect with configurable interval
+- **Lazy Connections** - Beam connects only when needed by default
 - **Multi-Render** - Update multiple targets in a single action response
 - **Async Components** - Full support for HonoX async components in `ctx.render()`
 - **Streaming Actions** - Async generator handlers push incremental updates over WebSocket (skeleton → content, live progress, AI-style text)
@@ -652,6 +652,7 @@ return ctx.drawer(render(<MyDrawer />), { position: "left", size: "medium" });
 | ---------------------------------------------------------------- | ------------------------------------------------- |
 | `<meta name="beam-reconnect-interval" content="5000">`          | Fixed retry interval (ms) after initial backoff   |
 | `beam-disconnected`                                              | Show element while disconnected, hide on reconnect |
+| `<meta name="beam-auto-connect" content="true">`                 | Explicitly opt into eager Beam connection         |
 
 ### Conditional Show/Hide
 
@@ -672,10 +673,13 @@ return ctx.drawer(render(<MyDrawer />), { position: "left", size: "medium" });
 
 ### Boost Links
 
-| Attribute        | Description                                  | Example             |
-| ---------------- | -------------------------------------------- | ------------------- |
-| `beam-boost`     | Upgrade links to AJAX (on container or link) | `<main beam-boost>` |
-| `beam-boost-off` | Exclude specific links from boosting         | `beam-boost-off`    |
+| Attribute        | Description                                                     | Example                  |
+| ---------------- | --------------------------------------------------------------- | ------------------------ |
+| `beam-boost`     | Upgrade descendant same-origin links into Beam SSR visits       | `<main beam-boost>`      |
+| `beam-boost-off` | Exclude specific links from Beam visits                         | `beam-boost-off`         |
+| `beam-visit`     | Explicitly mark a link as a Beam visit                          | `<a beam-visit href>`    |
+| `beam-patch`     | Visit with patch-style scroll semantics                         | `<a beam-patch href>`    |
+| `beam-navigate`  | Visit with navigation-style scroll semantics                    | `<a beam-navigate href>` |
 
 ### Keep Elements
 
@@ -1467,32 +1471,53 @@ Automatically submit forms when fields change (great for filters):
 
 ---
 
-## Boost Links
+## Beam Visits
 
-Upgrade regular links to use AJAX navigation:
+Upgrade regular SSR links into Beam-powered visits while keeping normal navigation as the fallback:
 
 ```html
-<!-- Boost all links in a container -->
+<!-- Boost all eligible links in a container -->
 <main beam-boost>
   <a href="/page1">Page 1</a>
-  <!-- Now uses AJAX -->
+  <!-- Uses Beam visit -->
   <a href="/page2">Page 2</a>
-  <!-- Now uses AJAX -->
-  <a href="/external.com" beam-boost-off>External</a>
-  <!-- Not boosted -->
+  <!-- Uses Beam visit -->
+  <a href="https://external.com">External</a>
+  <!-- Automatically left alone -->
+  <a href="/download/report.pdf" beam-boost-off>Download</a>
+  <!-- Explicitly opt out -->
 </main>
 
-<!-- Or boost individual links -->
-<a href="/about" beam-boost beam-target="#content">About</a>
+<!-- Or opt in per link -->
+<a href="/about" beam-visit beam-target="#content">About</a>
+<a href="/products?page=2" beam-patch beam-target="#content">Next Page</a>
+<a href="/login" beam-navigate beam-target="#content">Login</a>
 ```
 
-Boosted links:
+Visited links:
 
-- Fetch pages via AJAX
-- Update the specified target (default: `body`)
-- Push to browser history
-- Update page title
-- Fall back to normal navigation on error
+- render the real SSR route internally through Beam
+- update the specified target (default: the nearest `[beam-boost]` shell, otherwise `body`)
+- update browser history and page title
+- prefetch on hover/touch intent
+- fall back to normal hard navigation when Beam cannot safely apply the visit
+
+Beam automatically bypasses visits for:
+
+- external links
+- download links
+- links with `target="_blank"`
+- modifier-click / middle-click navigation
+- links marked with `beam-boost-off`
+
+Current scope:
+
+- links are fully supported
+- forms are intentionally not part of the visit lifecycle yet
+
+Fallback behavior:
+
+- if the route returns a redirect, non-HTML response, asset mismatch, opt-out signal, or cookie-writing response, Beam falls back to normal browser navigation so session/auth behavior stays correct
 
 ---
 
