@@ -18,11 +18,36 @@ interface ActionResponse {
         spacing?: number;
     };
 }
+type VisitMode = 'visit' | 'patch' | 'navigate';
+interface VisitOptions {
+    mode?: VisitMode;
+    target?: string;
+    replace?: boolean;
+}
+interface VisitResponse {
+    url: string;
+    finalUrl: string;
+    status: number;
+    mode: VisitMode;
+    target?: string;
+    replace?: boolean;
+    redirect?: string;
+    reload?: boolean;
+    reason?: string;
+    title?: string;
+    headHtml?: string;
+    documentHtml?: string;
+    assetSignature?: string;
+    scroll?: 'preserve' | 'reset';
+}
 interface BeamServer {
     call(action: string, data?: Record<string, unknown>): ReadableStream<ActionResponse>;
+    visit(url: string, options?: VisitOptions): Promise<VisitResponse>;
     registerCallback(callback: (event: string, data: unknown) => void): Promise<void>;
 }
 type BeamServerStub = RpcStub<BeamServer>;
+declare function shouldAutoConnect(): boolean;
+declare function canReconnect(): boolean;
 type HtmlApplyStyle = 'innerHTML' | 'outerHTML';
 declare function applyHtml(target: Element, html: string, options?: {
     keepElements?: string[];
@@ -61,6 +86,16 @@ declare function closeDrawer(): void;
 declare function showToast(message: string, type?: 'success' | 'error'): void;
 declare function setupSwitch(el: HTMLElement): void;
 declare function setupAutosubmit(form: HTMLFormElement): void;
+declare function getVisitMode(link: HTMLAnchorElement): VisitMode;
+declare function getVisitTargetSelector(link: HTMLAnchorElement): string;
+declare function applyVisitResponse(response: VisitResponse, targetSelector: string): 'applied' | 'hard-navigate';
+declare function prefetchVisit(link: HTMLAnchorElement): Promise<void>;
+declare function performVisit(url: string, options: {
+    mode: VisitMode;
+    target: string;
+    replace: boolean;
+    preview?: boolean;
+}): Promise<void>;
 declare function getScrollStateKey(action: string): string;
 declare function saveScrollState(targetSelector: string, action: string): void;
 declare function restoreScrollState(): boolean;
@@ -82,6 +117,7 @@ interface CallOptions {
 declare function clearScrollState(actionOrAll?: string | boolean): void;
 declare function checkWsConnected(): boolean;
 declare function manualReconnect(): Promise<BeamServerStub>;
+declare function manualVisit(url: string, options?: VisitOptions): Promise<void>;
 declare const beamUtils: {
     getState: (elOrId: Element | string) => object | undefined;
     batch: (fn: () => void) => void;
@@ -96,13 +132,22 @@ declare const beamUtils: {
     isOnline: () => boolean;
     isConnected: typeof checkWsConnected;
     reconnect: typeof manualReconnect;
+    visit: typeof manualVisit;
     getSession: () => Promise<BeamServerStub>;
 };
 export declare const __beamClientInternals: {
     api: {
         call(action: string, data?: Record<string, unknown>): Promise<ReadableStream<ActionResponse>>;
+        visit(url: string, options?: VisitOptions): Promise<VisitResponse>;
         getSession(): Promise<BeamServerStub>;
     };
+    shouldAutoConnect: typeof shouldAutoConnect;
+    canReconnect: typeof canReconnect;
+    getVisitMode: typeof getVisitMode;
+    getVisitTargetSelector: typeof getVisitTargetSelector;
+    applyVisitResponse: typeof applyVisitResponse;
+    performVisit: typeof performVisit;
+    prefetchVisit: typeof prefetchVisit;
     applyHtml: typeof applyHtml;
     swap: typeof swap;
     handleHtmlResponse: typeof handleHtmlResponse;

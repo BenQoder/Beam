@@ -24,6 +24,29 @@ function getAuthToken() {
     const meta = document.querySelector('meta[name="beam-token"]');
     return meta?.getAttribute('content') ?? '';
 }
+function parseBooleanFlag(value) {
+    if (!value)
+        return null;
+    const normalized = value.trim().toLowerCase();
+    if (['1', 'true', 'yes', 'on'].includes(normalized))
+        return true;
+    if (['0', 'false', 'no', 'off'].includes(normalized))
+        return false;
+    return null;
+}
+function isDocumentVisible() {
+    return typeof document.visibilityState !== 'string' || document.visibilityState === 'visible';
+}
+function shouldAutoConnect() {
+    const globals = globalThis;
+    if (globals.__BEAM_DISABLE_AUTO_CONNECT__)
+        return false;
+    if (typeof globals.__BEAM_AUTO_CONNECT__ === 'boolean') {
+        return globals.__BEAM_AUTO_CONNECT__;
+    }
+    const meta = document.querySelector('meta[name="beam-auto-connect"]');
+    return parseBooleanFlag(meta?.getAttribute('content')) ?? false;
+}
 // Usage: <meta name="beam-reconnect-interval" content="5000">
 function getReconnectInterval() {
     const meta = document.querySelector('meta[name="beam-reconnect-interval"]');
@@ -35,7 +58,19 @@ let rpcSession = null;
 let connectingPromise = null;
 let wsConnected = false;
 let reconnectAttempts = 0;
+let suppressReconnect = !isDocumentVisible();
 const RECONNECT_BACKOFF_STEPS = [1000, 3000, 5000]; // 1s, 3s, 5s, then fixed interval
+function canReconnect() {
+    return !suppressReconnect && isOnline && isDocumentVisible();
+}
+function maybeConnect(reason) {
+    if (!shouldAutoConnect() || !canReconnect() || rpcSession || connectingPromise) {
+        return;
+    }
+    connect().catch((error) => {
+        console.error(`[beam] Auto-connect failed (${reason}):`, error);
+    });
+}
 // Client callback handler for server-initiated updates
 function handleServerEvent(event, data) {
     // Dispatch custom event for app to handle
@@ -53,12 +88,19 @@ function handleServerEvent(event, data) {
 }
 // Handle WebSocket disconnection
 function handleWsDisconnect(error) {
-    console.warn('[beam] WebSocket disconnected:', error);
+    const reconnect = canReconnect();
+    if (reconnect) {
+        console.warn('[beam] WebSocket disconnected:', error);
+    }
     wsConnected = false;
     rpcSession = null;
     connectingPromise = null;
     // Dispatch event for app to handle
-    window.dispatchEvent(new CustomEvent('beam:disconnected', { detail: { error } }));
+    window.dispatchEvent(new CustomEvent('beam:disconnected', { detail: { error, reconnecting: reconnect } }));
+    if (!reconnect) {
+        document.body.classList.remove('beam-disconnected');
+        return;
+    }
     document.body.classList.add('beam-disconnected');
     // Show any disconnect indicators
     document.querySelectorAll('[beam-disconnected]').forEach((el) => {
@@ -71,6 +113,9 @@ function handleWsDisconnect(error) {
     reconnectAttempts++;
     console.log(`[beam] Reconnecting in ${delay}ms (attempt ${reconnectAttempts})`);
     setTimeout(() => {
+        if (!canReconnect()) {
+            return;
+        }
         connect().then(() => {
             console.log('[beam] Reconnected');
             document.body.classList.remove('beam-disconnected');
@@ -152,6 +197,10 @@ const api = {
         const session = await ensureConnected();
         return session.call(action, data);
     },
+    async visit(url, options = {}) {
+        const session = await ensureConnected();
+        return session.visit(url, options);
+    },
     // Direct access to RPC session for advanced usage (promise pipelining, etc.)
     async getSession() {
         return ensureConnected();
@@ -188,29 +237,56 @@ function getElementIdentitySelector(el, options = {}) {
     }
     return null;
 }
-function normalizeHtmlForTarget(target, html) {
+function getMatchingWrapper(target, html) {
     const temp = document.createElement('div');
     temp.innerHTML = html.trim();
     // If server sent a wrapper that matches the target element, unwrap it.
     // This avoids nesting <div beam-id="x"> inside <div beam-id="x"> and matches
     // the intuitive expectation: targeting an element updates its *inner* content.
     if (temp.childElementCount !== 1)
-        return html;
+        return null;
     const root = temp.firstElementChild;
     if (!root)
-        return html;
+        return null;
     const targetId = target instanceof HTMLElement ? target.id : '';
     const rootId = root instanceof HTMLElement ? root.id : '';
     if (targetId && rootId && targetId === rootId)
-        return root.innerHTML;
+        return { root, innerHtml: root.innerHTML };
     const targetBeamId = target.getAttribute('beam-id');
     const rootBeamId = root.getAttribute('beam-id');
     if (targetBeamId && rootBeamId && targetBeamId === rootBeamId)
-        return root.innerHTML;
+        return { root, innerHtml: root.innerHTML };
     const targetBeamItemId = target.getAttribute('beam-item-id');
     const rootBeamItemId = root.getAttribute('beam-item-id');
     if (targetBeamItemId && rootBeamItemId && targetBeamItemId === rootBeamItemId)
-        return root.innerHTML;
+        return { root, innerHtml: root.innerHTML };
+    return null;
+}
+function syncWrapperAttributes(target, wrapper) {
+    if (!(target instanceof HTMLElement) || !(wrapper instanceof HTMLElement))
+        return;
+    const nextAttrs = new Map();
+    for (const attr of Array.from(wrapper.attributes)) {
+        nextAttrs.set(attr.name, attr.value);
+    }
+    for (const attr of Array.from(target.attributes)) {
+        if (!nextAttrs.has(attr.name)) {
+            target.removeAttribute(attr.name);
+        }
+    }
+    for (const [name, value] of nextAttrs.entries()) {
+        target.setAttribute(name, value);
+    }
+    // Force Beam reactivity to rebuild scope state from the refreshed wrapper attrs.
+    target.removeAttribute('beam-state-init');
+    target.removeAttribute('beam-ref-init');
+}
+function normalizeHtmlForTarget(target, html) {
+    const match = getMatchingWrapper(target, html);
+    if (match) {
+        syncWrapperAttributes(target, match.root);
+        return match.innerHtml;
+    }
     return html;
 }
 function applyHtml(target, html, options) {
@@ -793,7 +869,18 @@ function handleHtmlResponse(response, frontendTarget, frontendSwap, trigger) {
                 applyHtml(target, htmlItem.trim(), { style: 'outerHTML' });
             }
             else {
-                console.warn(`[beam] Target "${autoTargetSelector}" (from HTML) not found on page, skipping`);
+                if (frontendTarget && !excluded.has(frontendTarget)) {
+                    const fallbackTarget = $(frontendTarget);
+                    if (fallbackTarget) {
+                        swap(fallbackTarget, htmlItem, swapMode, trigger);
+                    }
+                    else {
+                        console.warn(`[beam] Target "${autoTargetSelector}" (from HTML) not found, and fallback target "${frontendTarget}" was also not found`);
+                    }
+                }
+                else {
+                    console.warn(`[beam] Target "${autoTargetSelector}" (from HTML) not found on page, skipping`);
+                }
             }
         }
         else {
@@ -902,20 +989,12 @@ function handleHistory(el) {
     const pushUrl = el.getAttribute('beam-push');
     const replaceUrl = el.getAttribute('beam-replace');
     if (pushUrl) {
-        history.pushState({ beam: true }, '', pushUrl);
+        history.pushState({ beamAction: true }, '', pushUrl);
     }
     else if (replaceUrl) {
-        history.replaceState({ beam: true }, '', replaceUrl);
+        history.replaceState({ beamAction: true }, '', replaceUrl);
     }
 }
-// Handle back/forward navigation
-window.addEventListener('popstate', (e) => {
-    // Reload page on back/forward for now
-    // Could be enhanced to restore content from cache
-    if (e.state?.beam) {
-        location.reload();
-    }
-});
 // ============ BUTTON HANDLING ============
 // Instant click - trigger on mousedown for faster response
 document.addEventListener('mousedown', async (e) => {
@@ -1127,9 +1206,14 @@ function openModal(html, size = 'medium', spacing) {
         backdrop.id = 'modal-backdrop';
         document.body.appendChild(backdrop);
     }
-    const style = spacing !== undefined ? `padding: ${spacing}px;` : '';
+    if (spacing !== undefined) {
+        backdrop.style.setProperty('--beam-modal-spacing', `${spacing}px`);
+    }
+    else {
+        backdrop.style.removeProperty('--beam-modal-spacing');
+    }
     backdrop.innerHTML = `
-    <div id="modal-content" role="dialog" aria-modal="true" data-size="${size}" style="${style}">
+    <div id="modal-content" role="dialog" aria-modal="true" data-size="${size}">
       ${html}
     </div>
   `;
@@ -1232,9 +1316,25 @@ function updateOfflineState() {
     });
     // Add/remove body class
     document.body.classList.toggle('beam-offline', !isOnline);
+    if (isOnline) {
+        maybeConnect('online');
+    }
 }
 window.addEventListener('online', updateOfflineState);
 window.addEventListener('offline', updateOfflineState);
+window.addEventListener('visibilitychange', () => {
+    suppressReconnect = !isDocumentVisible();
+    if (!suppressReconnect) {
+        maybeConnect('visibilitychange');
+    }
+});
+window.addEventListener('pagehide', () => {
+    suppressReconnect = true;
+});
+window.addEventListener('pageshow', () => {
+    suppressReconnect = !isDocumentVisible();
+    maybeConnect('pageshow');
+});
 // Initialize offline state
 updateOfflineState();
 // ============ NAVIGATION FEEDBACK ============
@@ -1358,87 +1458,286 @@ document.querySelectorAll('form[beam-autosubmit]').forEach((form) => {
     form.setAttribute('beam-autosubmit-observed', '');
     setupAutosubmit(form);
 });
-// ============ BOOST LINKS ============
-// Usage: <main beam-boost>...all links become AJAX...</main>
-// Usage: <a href="/page" beam-boost>Single boosted link</a>
+const VISIT_CACHE_TTL = 30 * 1000;
+const visitCache = new Map();
+const visitPreloading = new Set();
+let activeVisitRequestId = 0;
+function getVisitMode(link) {
+    if (link.hasAttribute('beam-patch'))
+        return 'patch';
+    if (link.hasAttribute('beam-navigate'))
+        return 'navigate';
+    return 'visit';
+}
+function getVisitElementSelector(el) {
+    if (!el)
+        return null;
+    if (el === document.body)
+        return 'body';
+    if (el instanceof HTMLElement && el.id) {
+        return `#${escapeCss(el.id)}`;
+    }
+    const beamId = el.getAttribute('beam-id');
+    if (beamId) {
+        return `[beam-id="${escapeCss(beamId)}"]`;
+    }
+    return el.hasAttribute('beam-boost') ? '[beam-boost]' : null;
+}
+function getVisitTargetSelector(link) {
+    const explicitTarget = link.getAttribute('beam-target');
+    if (explicitTarget)
+        return explicitTarget;
+    const boostRoot = link.closest('[beam-boost]');
+    if (!boostRoot || boostRoot === link)
+        return 'body';
+    return getVisitElementSelector(boostRoot) ?? 'body';
+}
+function isLocalHttpLink(link) {
+    return link.origin === location.origin && (link.protocol === 'http:' || link.protocol === 'https:');
+}
+function isBeamVisitLink(link) {
+    if (link.hasAttribute('beam-boost-off'))
+        return false;
+    return link.hasAttribute('beam-visit')
+        || link.hasAttribute('beam-patch')
+        || link.hasAttribute('beam-navigate')
+        || !!link.closest('[beam-boost]')
+        || link.hasAttribute('beam-boost');
+}
+function getVisitCacheKey(url, mode, target) {
+    return `${mode}:${target}:${url}`;
+}
+function getCurrentAssetSignature() {
+    const assets = Array.from(document.head.querySelectorAll('script[src], link[rel="stylesheet"][href], link[rel="modulepreload"][href], link[rel="preload"][href][as="script"]'))
+        .map((node) => node.getAttribute('src') || node.getAttribute('href') || '')
+        .filter(Boolean)
+        .sort();
+    return assets.join('|');
+}
+function hardNavigate(url) {
+    location.href = url;
+}
+function getManagedHeadKey(node) {
+    if (node instanceof HTMLMetaElement) {
+        const name = node.getAttribute('name');
+        if (name)
+            return `meta:name:${name}`;
+        const property = node.getAttribute('property');
+        if (property)
+            return `meta:property:${property}`;
+        return null;
+    }
+    if (node instanceof HTMLLinkElement && node.rel === 'canonical') {
+        return 'link:canonical';
+    }
+    return null;
+}
+function syncManagedHead(doc) {
+    const incoming = Array.from(doc.head.querySelectorAll('meta[name], meta[property], link[rel="canonical"]'));
+    for (const node of incoming) {
+        const key = getManagedHeadKey(node);
+        if (!key)
+            continue;
+        let selector;
+        if (node instanceof HTMLMetaElement) {
+            const name = node.getAttribute('name');
+            selector = name
+                ? `meta[name="${escapeCss(name)}"]`
+                : `meta[property="${escapeCss(node.getAttribute('property') || '')}"]`;
+        }
+        else {
+            selector = 'link[rel="canonical"]';
+        }
+        const clone = node.cloneNode(true);
+        const existing = document.head.querySelector(selector);
+        if (existing) {
+            existing.replaceWith(clone);
+        }
+        else {
+            document.head.appendChild(clone);
+        }
+    }
+}
+function focusAfterVisit(targetSelector) {
+    const autofocusEl = document.querySelector('[autofocus]');
+    if (autofocusEl) {
+        autofocusEl.focus();
+        return;
+    }
+    const target = targetSelector === 'body'
+        ? document.querySelector('main, [role="main"], body')
+        : document.querySelector(targetSelector);
+    if (!target)
+        return;
+    if (!target.hasAttribute('tabindex')) {
+        target.setAttribute('tabindex', '-1');
+    }
+    target.focus();
+}
+function applyVisitScroll(response) {
+    if (response.scroll === 'preserve')
+        return;
+    if ('scrollRestoration' in history) {
+        history.scrollRestoration = 'manual';
+    }
+    window.scrollTo(0, 0);
+}
+function applyVisitResponse(response, targetSelector) {
+    if (response.redirect) {
+        hardNavigate(response.redirect);
+        return 'hard-navigate';
+    }
+    if (response.reload || !response.documentHtml) {
+        hardNavigate(response.finalUrl || response.url);
+        return 'hard-navigate';
+    }
+    const currentAssetSignature = getCurrentAssetSignature();
+    if (response.assetSignature && currentAssetSignature && response.assetSignature !== currentAssetSignature) {
+        hardNavigate(response.finalUrl || response.url);
+        return 'hard-navigate';
+    }
+    const doc = new DOMParser().parseFromString(response.documentHtml, 'text/html');
+    const source = targetSelector === 'body' ? doc.body : doc.querySelector(targetSelector);
+    const target = targetSelector === 'body' ? document.body : $(targetSelector);
+    if (!source || !target) {
+        hardNavigate(response.finalUrl || response.url);
+        return 'hard-navigate';
+    }
+    document.title = response.title ?? doc.title ?? document.title;
+    syncManagedHead(doc);
+    swap(target, source.innerHTML, 'replace');
+    updateNavigation();
+    applyVisitScroll(response);
+    focusAfterVisit(targetSelector);
+    return 'applied';
+}
+function commitVisitHistory(url, mode, target, replace) {
+    const state = { beamVisit: true, url, mode, target };
+    if (replace) {
+        history.replaceState(state, '', url);
+    }
+    else {
+        history.pushState(state, '', url);
+    }
+}
+async function prefetchVisit(link) {
+    if (!isBeamVisitLink(link) || !isLocalHttpLink(link))
+        return;
+    const mode = getVisitMode(link);
+    const target = getVisitTargetSelector(link);
+    const key = getVisitCacheKey(link.href, mode, target);
+    const cached = visitCache.get(key);
+    if ((cached && cached.expires > Date.now()) || visitPreloading.has(key))
+        return;
+    visitPreloading.add(key);
+    try {
+        const response = await api.visit(link.href, { mode, target, replace: link.hasAttribute('beam-replace') });
+        visitCache.set(key, { response, expires: Date.now() + VISIT_CACHE_TTL });
+    }
+    catch {
+        // Intentionally swallow prefetch failures.
+    }
+    finally {
+        visitPreloading.delete(key);
+    }
+}
+async function performVisit(url, options) {
+    const requestId = ++activeVisitRequestId;
+    const cacheKey = getVisitCacheKey(url, options.mode, options.target);
+    const cached = visitCache.get(cacheKey);
+    let historyCommitted = false;
+    if (options.preview && cached && cached.expires > Date.now()) {
+        if (applyVisitResponse(cached.response, options.target) === 'applied') {
+            commitVisitHistory(cached.response.finalUrl || url, options.mode, options.target, options.replace);
+            historyCommitted = true;
+        }
+    }
+    try {
+        const response = await api.visit(url, {
+            mode: options.mode,
+            target: options.target,
+            replace: options.replace,
+        });
+        if (requestId !== activeVisitRequestId)
+            return;
+        visitCache.set(cacheKey, { response, expires: Date.now() + VISIT_CACHE_TTL });
+        if (applyVisitResponse(response, options.target) !== 'applied')
+            return;
+        commitVisitHistory(response.finalUrl || url, options.mode, options.target, historyCommitted || options.replace);
+    }
+    catch (err) {
+        if (requestId !== activeVisitRequestId)
+            return;
+        console.error('Beam visit failed, falling back to hard navigation:', err);
+        hardNavigate(url);
+    }
+}
+window.addEventListener('popstate', (e) => {
+    if (e.state?.beamVisit) {
+        performVisit(location.href, {
+            mode: e.state.mode || 'visit',
+            target: e.state.target || 'body',
+            replace: true,
+            preview: true,
+        }).catch((err) => {
+            console.error('Beam popstate visit failed:', err);
+            hardNavigate(location.href);
+        });
+        return;
+    }
+    if (e.state?.beamAction || e.state?.beam) {
+        location.reload();
+    }
+});
 document.addEventListener('click', async (e) => {
     const target = e.target;
     if (!target?.closest)
         return;
-    // Check if click is on a link within a boosted container or a boosted link itself
     const link = target.closest('a[href]');
     if (!link)
         return;
-    const isBoosted = link.hasAttribute('beam-boost') || link.closest('[beam-boost]');
-    if (!isBoosted)
+    if (!isBeamVisitLink(link))
         return;
-    // Skip if explicitly not boosted
-    if (link.hasAttribute('beam-boost-off'))
+    if (!isLocalHttpLink(link))
         return;
-    // Skip external links
-    if (link.host !== location.host)
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0)
         return;
-    // Skip if modifier keys or non-left click
-    if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0)
+    if (link.target === '_blank' || link.hasAttribute('download'))
         return;
-    // Skip if target="_blank"
-    if (link.target === '_blank')
-        return;
-    // Skip if download link
-    if (link.hasAttribute('download'))
-        return;
-    e.preventDefault();
-    // Check confirmation
     if (!checkConfirm(link))
         return;
-    const href = link.href;
-    const targetSelector = link.getAttribute('beam-target') || 'body';
-    const swapMode = link.getAttribute('beam-swap') || 'replace';
-    // Show placeholder if specified
-    const placeholder = showPlaceholder(link);
+    e.preventDefault();
     link.classList.add('beam-active');
     try {
-        // Fetch the page
-        const response = await fetch(href, {
-            headers: { 'X-Beam-Boost': 'true' },
+        await performVisit(link.href, {
+            mode: getVisitMode(link),
+            target: getVisitTargetSelector(link),
+            replace: link.hasAttribute('beam-replace'),
+            preview: true,
         });
-        const html = await response.text();
-        // Parse response and extract target content
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(html, 'text/html');
-        // Get content from target selector
-        const sourceEl = doc.querySelector(targetSelector);
-        if (sourceEl) {
-            const target = $(targetSelector);
-            if (target) {
-                swap(target, sourceEl.innerHTML, swapMode);
-            }
-        }
-        // Update title
-        const title = doc.querySelector('title');
-        if (title) {
-            document.title = title.textContent || '';
-        }
-        // Push to history
-        if (!link.hasAttribute('beam-replace')) {
-            history.pushState({ beam: true, url: href }, '', href);
-        }
-        else {
-            history.replaceState({ beam: true, url: href }, '', href);
-        }
-        // Update navigation state
-        updateNavigation();
-    }
-    catch (err) {
-        placeholder.restore();
-        // Fallback to normal navigation
-        console.error('Boost error, falling back to navigation:', err);
-        location.href = href;
     }
     finally {
         link.classList.remove('beam-active');
     }
 });
+document.addEventListener('mouseenter', (e) => {
+    const target = e.target;
+    if (!target?.closest)
+        return;
+    const link = target.closest('a[href]');
+    if (link) {
+        void prefetchVisit(link);
+    }
+}, true);
+document.addEventListener('touchstart', (e) => {
+    const target = e.target;
+    if (!target?.closest)
+        return;
+    const link = target.closest('a[href]');
+    if (link) {
+        void prefetchVisit(link);
+    }
+}, { passive: true });
 const SCROLL_STATE_KEY_PREFIX = 'beam_scroll_';
 const SCROLL_STATE_TTL = 5 * 60 * 1000; // 5 minutes
 function getScrollStateKey(action) {
@@ -1831,6 +2130,7 @@ function clearCache(action) {
     }
     else {
         cache.clear();
+        visitCache.clear();
     }
 }
 // ============ PROGRESSIVE ENHANCEMENT ============
@@ -2705,6 +3005,14 @@ function manualReconnect() {
     reconnectAttempts = 0;
     return connect();
 }
+async function manualVisit(url, options = {}) {
+    await performVisit(url, {
+        mode: options.mode ?? 'visit',
+        target: options.target ?? 'body',
+        replace: options.replace ?? false,
+        preview: true,
+    });
+}
 const beamUtils = {
     showToast,
     closeModal,
@@ -2714,12 +3022,20 @@ const beamUtils = {
     isOnline: () => isOnline,
     isConnected: checkWsConnected,
     reconnect: manualReconnect,
+    visit: manualVisit,
     getSession: api.getSession,
     // Reactive state API (from reactivity.ts)
     ...beamReactivity,
 };
 export const __beamClientInternals = {
     api,
+    shouldAutoConnect,
+    canReconnect,
+    getVisitMode,
+    getVisitTargetSelector,
+    applyVisitResponse,
+    performVisit,
+    prefetchVisit,
     applyHtml,
     swap,
     handleHtmlResponse,
@@ -2786,7 +3102,5 @@ legacyWindow.showToast = showToast;
 legacyWindow.closeModal = closeModal;
 legacyWindow.closeDrawer = closeDrawer;
 legacyWindow.clearCache = clearCache;
-// Initialize capnweb RPC connection
-if (!globalThis.__BEAM_DISABLE_AUTO_CONNECT__) {
-    connect().catch(console.error);
-}
+// Initialize capnweb RPC connection only when explicitly opted in.
+maybeConnect('startup');

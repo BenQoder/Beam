@@ -1,5 +1,5 @@
 import { RpcTarget } from 'capnweb';
-import type { ActionHandler, ActionResponse, BeamConfig, BeamInstance, BeamContext, BeamSession, SessionConfig, AuthTokenPayload } from './types';
+import type { ActionHandler, ActionResponse, VisitOptions, VisitResponse, BeamConfig, BeamInstance, BeamContext, BeamSession, SessionConfig, AuthTokenPayload } from './types';
 /**
  * Sign an auth token payload using HMAC-SHA256
  */
@@ -58,6 +58,7 @@ declare function parseSessionFromRequest(request: Request, cookieName: string): 
  * Parse session data from raw request cookies (for WebSocket context)
  */
 declare function parseSessionDataFromRequest(request: Request): Record<string, unknown>;
+type RouteFetcher<TEnv extends object> = (request: Request, env: TEnv) => Promise<Response>;
 /**
  * Create a BeamContext with script(), render(), modal(), drawer() helpers
  */
@@ -80,14 +81,16 @@ declare function isAsyncGenerator(value: unknown): value is AsyncGenerator<unkno
 declare class BeamServer<TEnv extends object> extends RpcTarget {
     private ctx;
     private actions;
+    private routeFetcher?;
     private clientCallback;
-    constructor(ctx: BeamContext<TEnv>, actions: Record<string, ActionHandler<TEnv>>);
+    constructor(ctx: BeamContext<TEnv>, actions: Record<string, ActionHandler<TEnv>>, routeFetcher?: RouteFetcher<TEnv>);
     /**
      * Call an action handler, returning a ReadableStream of ActionResponses.
      * Supports both regular handlers (single response) and async generators (multiple responses).
      * cap'n web 0.6+ transfers ReadableStream natively with flow control and multiplexing.
      */
     call(action: string, data?: Record<string, unknown>): ReadableStream<ActionResponse>;
+    visit(url: string, options?: VisitOptions): Promise<VisitResponse>;
     /**
      * Register a client callback for server-initiated updates
      * This enables bidirectional communication - server can push to client
@@ -136,7 +139,8 @@ declare class PublicBeamServer<TEnv extends object> extends RpcTarget {
     private request;
     private actions;
     private auth;
-    constructor(secret: string, sessionConfig: SessionConfig<TEnv> | undefined, env: TEnv, request: Request, actions: Record<string, ActionHandler<TEnv>>, auth: ((request: Request, env: TEnv) => Promise<import('./types').BeamUser | null>) | undefined);
+    private routeFetcher?;
+    constructor(secret: string, sessionConfig: SessionConfig<TEnv> | undefined, env: TEnv, request: Request, actions: Record<string, ActionHandler<TEnv>>, auth: ((request: Request, env: TEnv) => Promise<import('./types').BeamUser | null>) | undefined, routeFetcher?: RouteFetcher<TEnv>);
     /**
      * Authenticate with a token and return the authenticated API
      * This is the only method available on the public API

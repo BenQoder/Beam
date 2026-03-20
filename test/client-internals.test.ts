@@ -1,9 +1,29 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+const mockVisit = vi.fn(async () => ({
+  url: 'http://localhost:3000/about',
+  finalUrl: 'http://localhost:3000/about',
+  status: 200,
+  mode: 'visit',
+  target: '#app',
+  title: 'About',
+  documentHtml: '<html><head><title>About</title></head><body><main id="app"><h1>About</h1></main></body></html>',
+  assetSignature: '',
+  scroll: 'reset',
+}))
+const mockCall = vi.fn()
+const mockRegisterCallback = vi.fn(async () => {})
+const mockAuthenticate = vi.fn(async () => ({
+  registerCallback: mockRegisterCallback,
+  visit: mockVisit,
+  call: mockCall,
+}))
+const mockNewWebSocketRpcSession = vi.fn(() => ({
+  authenticate: mockAuthenticate,
+}))
+
 vi.mock('capnweb', () => ({
-  newWebSocketRpcSession: vi.fn(() => ({
-    authenticate: vi.fn(),
-  })),
+  newWebSocketRpcSession: mockNewWebSocketRpcSession,
 }))
 
 class FakeIntersectionObserver {
@@ -15,6 +35,20 @@ class FakeIntersectionObserver {
 async function loadClientInternals() {
   vi.resetModules()
   ;(globalThis as any).__BEAM_DISABLE_AUTO_CONNECT__ = true
+  ;(globalThis as any).IntersectionObserver = FakeIntersectionObserver
+  ;(window as any).scrollTo = vi.fn()
+  ;(globalThis as any).requestAnimationFrame = (cb: FrameRequestCallback) => {
+    cb(0)
+    return 1
+  }
+  const mod = await import('../src/client')
+  return mod.__beamClientInternals
+}
+
+async function loadClientInternalsWithOptions(options: { disableAutoConnect?: boolean } = {}) {
+  vi.resetModules()
+  ;(globalThis as any).__BEAM_DISABLE_AUTO_CONNECT__ = options.disableAutoConnect ?? true
+  delete (globalThis as any).__BEAM_AUTO_CONNECT__
   ;(globalThis as any).IntersectionObserver = FakeIntersectionObserver
   ;(window as any).scrollTo = vi.fn()
   ;(globalThis as any).requestAnimationFrame = (cb: FrameRequestCallback) => {
@@ -37,19 +71,185 @@ function streamOf(...responses: any[]): ReadableStream<any> {
 describe('client internals', () => {
   beforeEach(() => {
     document.body.innerHTML = ''
+    document.head.innerHTML = ''
     sessionStorage.clear()
+    mockVisit.mockClear()
+    mockCall.mockClear()
+    mockRegisterCallback.mockClear()
+    mockAuthenticate.mockClear()
+    mockNewWebSocketRpcSession.mockClear()
+    mockVisit.mockResolvedValue({
+      url: 'http://localhost:3000/about',
+      finalUrl: 'http://localhost:3000/about',
+      status: 200,
+      mode: 'visit',
+      target: '#app',
+      title: 'About',
+      documentHtml: '<html><head><title>About</title></head><body><main id="app"><h1>About</h1></main></body></html>',
+      assetSignature: '',
+      scroll: 'reset',
+    })
+    vi.spyOn(window.history, 'pushState').mockImplementation(() => {})
+    vi.spyOn(window.history, 'replaceState').mockImplementation(() => {})
+    mockCall.mockResolvedValue(streamOf())
     vi.useFakeTimers()
   })
 
   afterEach(() => {
     document.body.innerHTML = ''
     sessionStorage.clear()
+    document.head.innerHTML = ''
+    delete (globalThis as any).__BEAM_DISABLE_AUTO_CONNECT__
+    delete (globalThis as any).__BEAM_AUTO_CONNECT__
     vi.useRealTimers()
     vi.restoreAllMocks()
   })
 
+  it('does not auto-connect by default', async () => {
+    const internals = await loadClientInternalsWithOptions({ disableAutoConnect: false })
+    expect(internals.shouldAutoConnect()).toBe(false)
+  })
+
+  it('supports explicit auto-connect opt-in via meta flag', async () => {
+    document.head.innerHTML = `
+      <meta name="beam-auto-connect" content="true">
+      <meta name="beam-token" content="test-token">
+    `
+    const internals = await loadClientInternalsWithOptions({ disableAutoConnect: false })
+    expect(internals.shouldAutoConnect()).toBe(true)
+  })
+
+  it('upgrades descendant links inside beam-boost containers into Beam visits', async () => {
+    document.head.innerHTML = '<meta name="beam-token" content="test-token">'
+    await loadClientInternals()
+    document.body.innerHTML = `
+      <main id="app" beam-boost>
+        <a id="about-link" href="/about">About</a>
+        <div>Home</div>
+      </main>
+    `
+
+    document.querySelector<HTMLAnchorElement>('#about-link')?.dispatchEvent(
+      new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 })
+    )
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(mockVisit).toHaveBeenCalledWith('http://localhost:3000/about', {
+      mode: 'visit',
+      target: '#app',
+      replace: false,
+    })
+    expect(document.querySelector('#app')?.textContent).toContain('About')
+  })
+
+  it('respects beam-boost-off for links inside boosted containers', async () => {
+    document.head.innerHTML = '<meta name="beam-token" content="test-token">'
+    await loadClientInternals()
+    document.body.innerHTML = `
+      <main id="app" beam-boost>
+        <a id="plain-link" href="/about" beam-boost-off>About</a>
+      </main>
+    `
+
+    document.querySelector<HTMLAnchorElement>('#plain-link')?.dispatchEvent(
+      new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 })
+    )
+    await Promise.resolve()
+
+    expect(mockVisit).not.toHaveBeenCalled()
+  })
+
+  it('applies visit responses by updating title and target content', async () => {
+    const internals = await loadClientInternals()
+    document.body.innerHTML = '<main id="app" beam-boost><div>Home</div></main>'
+
+    const outcome = internals.applyVisitResponse({
+      url: 'http://localhost:3000/about',
+      finalUrl: 'http://localhost:3000/about',
+      status: 200,
+      mode: 'visit',
+      target: '#app',
+      title: 'About',
+      documentHtml: '<html><head><title>About</title></head><body><main id="app"><h1>About Page</h1></main></body></html>',
+      assetSignature: '',
+      scroll: 'reset',
+    }, '#app')
+
+    expect(outcome).toBe('applied')
+    expect(document.title).toBe('About')
+    expect(document.querySelector('#app')?.textContent).toContain('About Page')
+  })
+
+  it('uses explicit visit modes over inherited beam-boost defaults', async () => {
+    document.head.innerHTML = '<meta name="beam-token" content="test-token">'
+    const internals = await loadClientInternals()
+    document.body.innerHTML = `
+      <main id="app" beam-boost>
+        <a id="patch-link" href="/about?page=2" beam-patch>Next</a>
+      </main>
+    `
+
+    document.querySelector<HTMLAnchorElement>('#patch-link')?.dispatchEvent(
+      new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 })
+    )
+    await Promise.resolve()
+    await Promise.resolve()
+    document.querySelector<HTMLAnchorElement>('#navigate-link')?.dispatchEvent(
+      new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 })
+    )
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(mockVisit).toHaveBeenNthCalledWith(1, 'http://localhost:3000/about?page=2', {
+      mode: 'patch',
+      target: '#app',
+      replace: false,
+    })
+
+    mockVisit.mockClear()
+    document.body.innerHTML = `
+      <main id="app" beam-boost>
+        <a id="navigate-link" href="/login" beam-navigate>Login</a>
+      </main>
+    `
+    document.querySelector<HTMLAnchorElement>('#navigate-link')?.dispatchEvent(
+      new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 })
+    )
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(mockVisit).toHaveBeenCalledWith('http://localhost:3000/login', {
+      mode: 'navigate',
+      target: '#app',
+      replace: false,
+    })
+
+    expect(internals.getVisitMode(document.querySelector<HTMLAnchorElement>('#navigate-link')!)).toBe('navigate')
+  })
+
+  it('suppresses reconnect when the page is hidden', async () => {
+    const visibilityDescriptor = Object.getOwnPropertyDescriptor(document, 'visibilityState')
+    Object.defineProperty(document, 'visibilityState', {
+      configurable: true,
+      get: () => 'hidden',
+    })
+
+    try {
+      const internals = await loadClientInternalsWithOptions({ disableAutoConnect: false })
+      expect(internals.canReconnect()).toBe(false)
+    } finally {
+      if (visibilityDescriptor) {
+        Object.defineProperty(document, 'visibilityState', visibilityDescriptor)
+      } else {
+        delete (document as any).visibilityState
+      }
+    }
+  })
+
   it('parses out-of-band swaps and applies server state/script/html responses', async () => {
     const internals = await loadClientInternals()
+    const { beamReactivity } = await import('../src/reactivity')
     document.body.innerHTML = `
       <div id="target"></div>
       <div id="sidebar"></div>
@@ -57,6 +257,7 @@ describe('client internals', () => {
         <span id="message" beam-text="message"></span>
       </div>
     `
+    beamReactivity.init()
     await Promise.resolve()
     const parsed = internals.parseOobSwaps(
       '<div>Main</div><template beam-touch="#sidebar"><div>Side</div></template>'
@@ -243,6 +444,28 @@ describe('client internals', () => {
     expect(internals.castValue(' yes ', 'trim')).toBe('yes')
     expect(internals.checkWatchCondition(input, 'ab')).toBe(false)
     expect(internals.checkWatchCondition(input, 'abcd')).toBe(true)
+  })
+
+  it('applies modal shell spacing on the backdrop instead of the content container', async () => {
+    const internals = await loadClientInternals()
+
+    internals.openModal('<div>Modal body</div>')
+
+    const defaultBackdrop = document.querySelector<HTMLElement>('#modal-backdrop')
+    const defaultContent = document.querySelector<HTMLElement>('#modal-content')
+    expect(defaultBackdrop).toBeTruthy()
+    expect(defaultBackdrop?.style.getPropertyValue('--beam-modal-spacing')).toBe('')
+    expect(defaultContent?.getAttribute('style')).toBeNull()
+
+    internals.closeModal()
+    vi.advanceTimersByTime(200)
+
+    internals.openModal('<div>Modal body</div>', 'large', 24)
+
+    const spacedBackdrop = document.querySelector<HTMLElement>('#modal-backdrop')
+    const spacedContent = document.querySelector<HTMLElement>('#modal-content')
+    expect(spacedBackdrop?.style.getPropertyValue('--beam-modal-spacing')).toBe('24px')
+    expect(spacedContent?.getAttribute('style')).toBeNull()
   })
 
   it('setupInputWatcher sends RPC calls and updates targets', async () => {

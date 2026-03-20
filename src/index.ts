@@ -26,4 +26,7 @@ export type {
   SessionConfig,
   SessionStorageFactory,
   AuthTokenPayload,
+  VisitMode,
+  VisitOptions,
+  VisitResponse,
 } from './types'

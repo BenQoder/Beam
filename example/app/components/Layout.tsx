@@ -23,27 +23,29 @@ export function Layout({ title = 'My App', children, cartCount = 0, authToken }:
         <link rel="stylesheet" href={stylesHref} />
       </head>
       <body>
-        <header class="site-header">
-          <nav>
-            <a href="/" class="logo">My App</a>
-            <ul>
-              <li><a href="/">Home</a></li>
-              <li><a href="/products">Products</a></li>
-              <li><a href="/about">About</a></li>
-            </ul>
-            <div id="cart-badge">
-              <CartBadge count={cartCount} />
-            </div>
-          </nav>
-        </header>
+        <div id="app-shell" beam-boost>
+          <header class="site-header">
+            <nav>
+              <a href="/" class="logo">My App</a>
+              <ul>
+                <li><a href="/">Home</a></li>
+                <li><a href="/products">Products</a></li>
+                <li><a href="/about">About</a></li>
+              </ul>
+              <div id="cart-badge">
+                <CartBadge count={cartCount} />
+              </div>
+            </nav>
+          </header>
 
-        <main id="app">
-          {children}
-        </main>
+          <main id="app">
+            {children}
+          </main>
 
-        <footer class="site-footer">
-          <p>&copy; 2024 My App</p>
-        </footer>
+          <footer class="site-footer">
+            <p>&copy; 2024 My App</p>
+          </footer>
+        </div>
 
         <script type="module" src={clientSrc}></script>
       </body>

@@ -123,6 +123,89 @@ describe('createBeam server utilities', () => {
     expect(await readAll(server.call('stream'))).toEqual([{ html: 'first' }, { html: 'second' }])
   })
 
+  it('BeamServer.visit returns a structured visit payload for SSR routes', async () => {
+    const ctx = __beamCreateBeamInternals.createBeamContext({
+      env: {},
+      user: null,
+      request: new Request('https://example.com/beam', {
+        headers: { Cookie: 'beam_sid=session123.sig' },
+      }),
+      session: new CookieSession(),
+    })
+
+    const routeFetcher = vi.fn(async (request: Request) => {
+      expect(request.headers.get('X-Beam-Visit')).toBe('true')
+      expect(request.headers.get('X-Beam-Visit-Mode')).toBe('navigate')
+      expect(request.headers.get('X-Beam-Visit-Target')).toBe('#app')
+      return new Response(
+        '<html><head><title>About</title><meta name="beam-token" content="fresh-token"><link rel="stylesheet" href="/app.css"></head><body><main id="app"><h1>About</h1></main></body></html>',
+        {
+          headers: { 'content-type': 'text/html; charset=utf-8' },
+        }
+      )
+    })
+
+    const server = new BeamServer(ctx, {}, routeFetcher as any)
+    const response = await server.visit('/about', { mode: 'navigate', target: '#app' })
+
+    expect(response).toMatchObject({
+      url: 'https://example.com/about',
+      finalUrl: 'https://example.com/about',
+      status: 200,
+      mode: 'navigate',
+      target: '#app',
+      title: 'About',
+      scroll: 'reset',
+    })
+    expect(response.documentHtml).toContain('<main id="app"><h1>About</h1></main>')
+    expect(response.assetSignature).toContain('/app.css')
+  })
+
+  it('BeamServer.visit surfaces redirects and non-html fallbacks', async () => {
+    const ctx = __beamCreateBeamInternals.createBeamContext({
+      env: {},
+      user: null,
+      request: new Request('https://example.com/beam'),
+      session: new CookieSession(),
+    })
+
+    const redirecting = new BeamServer(ctx, {}, vi.fn(async () => new Response(null, {
+      status: 302,
+      headers: { location: '/login' },
+    })) as any)
+    const redirectResponse = await redirecting.visit('/account', { mode: 'visit' })
+    expect(redirectResponse.redirect).toBe('https://example.com/login')
+
+    const nonHtml = new BeamServer(ctx, {}, vi.fn(async () => new Response('ok', {
+      headers: { 'content-type': 'application/json' },
+    })) as any)
+    const nonHtmlResponse = await nonHtml.visit('/api/demo', { mode: 'visit' })
+    expect(nonHtmlResponse.reload).toBe(true)
+    expect(nonHtmlResponse.reason).toBe('non-html-response')
+  })
+
+  it('BeamServer.visit forces hard reload when the route writes cookies', async () => {
+    const ctx = __beamCreateBeamInternals.createBeamContext({
+      env: {},
+      user: null,
+      request: new Request('https://example.com/beam'),
+      session: new CookieSession(),
+    })
+
+    const cookieResponse = new Response('<html><body><main id="app">Ok</main></body></html>', {
+      headers: {
+        'content-type': 'text/html; charset=utf-8',
+        'set-cookie': 'beam_sid=fresh.sig; Path=/; HttpOnly',
+      },
+    })
+
+    const server = new BeamServer(ctx, {}, vi.fn(async () => cookieResponse) as any)
+    const visitResponse = await server.visit('/login', { mode: 'navigate', target: '#app' })
+
+    expect(visitResponse.reload).toBe(true)
+    expect(visitResponse.reason).toBe('set-cookie-response')
+  })
+
   it('generateAuthToken requires session config and a signed session cookie', async () => {
     const beam = createBeam({
       actions: {},

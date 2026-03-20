@@ -178,6 +178,56 @@ async function toHtml(content) {
     // Fallback
     return '' + resolved;
 }
+const TITLE_RE = /<title[^>]*>([\s\S]*?)<\/title>/i;
+const HEAD_RE = /<head[^>]*>([\s\S]*?)<\/head>/i;
+const BODY_RE = /<body[^>]*>([\s\S]*?)<\/body>/i;
+const META_BEAM_VISIT_RE = /<meta[^>]+name=["']beam-visit["'][^>]+content=["']([^"']+)["'][^>]*>/i;
+const ASSET_TAG_RE = /<(?:script|link)\b[^>]*(?:src|href)=["']([^"']+)["'][^>]*>/gi;
+function decodeHtmlEntities(value) {
+    return value
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'")
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&amp;/g, '&');
+}
+function extractTitle(html) {
+    const match = html.match(TITLE_RE);
+    if (!match?.[1])
+        return undefined;
+    return decodeHtmlEntities(match[1].trim());
+}
+function extractHeadHtml(html) {
+    return html.match(HEAD_RE)?.[1]?.trim() ?? '';
+}
+function extractBodyHtml(html) {
+    return html.match(BODY_RE)?.[1]?.trim() ?? '';
+}
+function extractBeamVisitControl(html) {
+    return html.match(META_BEAM_VISIT_RE)?.[1]?.trim().toLowerCase();
+}
+function computeAssetSignature(headHtml) {
+    const assets = new Set();
+    for (const match of headHtml.matchAll(ASSET_TAG_RE)) {
+        const value = match[1]?.trim();
+        if (value)
+            assets.add(value);
+    }
+    return Array.from(assets).sort().join('|');
+}
+function isHtmlResponse(response) {
+    const contentType = response.headers.get('content-type')?.toLowerCase() ?? '';
+    return contentType.includes('text/html') || contentType.includes('application/xhtml+xml') || contentType === '';
+}
+function hasSetCookieHeader(response) {
+    if (response.headers.has('set-cookie'))
+        return true;
+    const maybeGetSetCookie = response.headers.getSetCookie;
+    if (typeof maybeGetSetCookie === 'function') {
+        return maybeGetSetCookie.call(response.headers).length > 0;
+    }
+    return false;
+}
 /**
  * Create a BeamContext with script(), render(), modal(), drawer() helpers
  */
@@ -250,11 +300,13 @@ function isAsyncGenerator(value) {
 class BeamServer extends RpcTarget {
     ctx;
     actions;
+    routeFetcher;
     clientCallback = null;
-    constructor(ctx, actions) {
+    constructor(ctx, actions, routeFetcher) {
         super();
         this.ctx = ctx;
         this.actions = actions;
+        this.routeFetcher = routeFetcher;
     }
     /**
      * Call an action handler, returning a ReadableStream of ActionResponses.
@@ -287,6 +339,113 @@ class BeamServer extends RpcTarget {
                 }
             },
         });
+    }
+    async visit(url, options = {}) {
+        if (!this.routeFetcher) {
+            return {
+                url,
+                finalUrl: url,
+                status: 500,
+                mode: options.mode ?? 'visit',
+                target: options.target,
+                replace: options.replace,
+                reload: true,
+                reason: 'visit-renderer-unavailable',
+                scroll: options.mode === 'patch' ? 'preserve' : 'reset',
+            };
+        }
+        const mode = options.mode ?? 'visit';
+        const visitUrl = new URL(url, this.ctx.request.url).toString();
+        const headers = new Headers(this.ctx.request.headers);
+        [
+            'upgrade',
+            'connection',
+            'sec-websocket-key',
+            'sec-websocket-version',
+            'sec-websocket-protocol',
+            'sec-websocket-extensions',
+            'host',
+        ].forEach((key) => headers.delete(key));
+        headers.set('X-Beam-Visit', 'true');
+        headers.set('X-Beam-Visit-Mode', mode);
+        if (options.target) {
+            headers.set('X-Beam-Visit-Target', options.target);
+        }
+        const response = await this.routeFetcher(new Request(visitUrl, {
+            method: 'GET',
+            headers,
+            redirect: 'manual',
+        }), this.ctx.env);
+        if (hasSetCookieHeader(response)) {
+            return {
+                url: visitUrl,
+                finalUrl: visitUrl,
+                status: response.status,
+                mode,
+                target: options.target,
+                replace: options.replace,
+                reload: true,
+                reason: 'set-cookie-response',
+                scroll: mode === 'patch' ? 'preserve' : 'reset',
+            };
+        }
+        const locationHeader = response.headers.get('location');
+        if (locationHeader) {
+            return {
+                url: visitUrl,
+                finalUrl: visitUrl,
+                status: response.status,
+                mode,
+                target: options.target,
+                replace: options.replace,
+                redirect: new URL(locationHeader, visitUrl).toString(),
+                scroll: mode === 'patch' ? 'preserve' : 'reset',
+            };
+        }
+        if (!isHtmlResponse(response)) {
+            return {
+                url: visitUrl,
+                finalUrl: visitUrl,
+                status: response.status,
+                mode,
+                target: options.target,
+                replace: options.replace,
+                reload: true,
+                reason: 'non-html-response',
+                scroll: mode === 'patch' ? 'preserve' : 'reset',
+            };
+        }
+        const documentHtml = await response.text();
+        const beamVisitControl = response.headers.get('X-Beam-Visit')?.toLowerCase() ?? extractBeamVisitControl(documentHtml);
+        if (beamVisitControl === 'off' || beamVisitControl === 'reload') {
+            return {
+                url: visitUrl,
+                finalUrl: visitUrl,
+                status: response.status,
+                mode,
+                target: options.target,
+                replace: options.replace,
+                reload: true,
+                reason: 'route-opt-out',
+                scroll: mode === 'patch' ? 'preserve' : 'reset',
+            };
+        }
+        const headHtml = extractHeadHtml(documentHtml);
+        const bodyHtml = extractBodyHtml(documentHtml);
+        return {
+            url: visitUrl,
+            finalUrl: visitUrl,
+            status: response.status,
+            mode,
+            target: options.target,
+            replace: options.replace,
+            title: extractTitle(documentHtml),
+            headHtml,
+            documentHtml,
+            assetSignature: computeAssetSignature(headHtml),
+            scroll: mode === 'patch' ? 'preserve' : 'reset',
+            ...(bodyHtml ? {} : { reload: true, reason: 'missing-body' }),
+        };
     }
     /**
      * Register a client callback for server-initiated updates
@@ -508,6 +667,7 @@ export function createBeam(config) {
          */
         init(app, options) {
             const endpoint = options?.endpoint ?? '/beam';
+            const routeFetcher = (request, env) => Promise.resolve(app.fetch(request, env));
             app.get(endpoint, async (c) => {
                 const upgradeHeader = c.req.header('Upgrade');
                 if (upgradeHeader !== 'websocket') {
@@ -519,7 +679,7 @@ export function createBeam(config) {
                     return c.text('Session secret is required for secure WebSocket connections', 500);
                 }
                 // Create PublicBeamServer - client must authenticate to get full API
-                const server = new PublicBeamServer(secret, sessionConfig, c.env, c.req.raw, actions, auth);
+                const server = new PublicBeamServer(secret, sessionConfig, c.env, c.req.raw, actions, auth, routeFetcher);
                 // Use capnweb to handle the RPC connection
                 return newWorkersRpcResponse(c.req.raw, server);
             });
@@ -541,7 +701,8 @@ class PublicBeamServer extends RpcTarget {
     request;
     actions;
     auth;
-    constructor(secret, sessionConfig, env, request, actions, auth) {
+    routeFetcher;
+    constructor(secret, sessionConfig, env, request, actions, auth, routeFetcher) {
         super();
         this.secret = secret;
         this.sessionConfig = sessionConfig;
@@ -549,6 +710,7 @@ class PublicBeamServer extends RpcTarget {
         this.request = request;
         this.actions = actions;
         this.auth = auth;
+        this.routeFetcher = routeFetcher;
     }
     /**
      * Authenticate with a token and return the authenticated API
@@ -593,7 +755,7 @@ class PublicBeamServer extends RpcTarget {
             session,
         });
         // Return the authenticated BeamServer
-        return new BeamServer(ctx, this.actions);
+        return new BeamServer(ctx, this.actions, this.routeFetcher);
     }
 }
 /**

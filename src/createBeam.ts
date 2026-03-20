@@ -5,6 +5,9 @@ import { RpcTarget, newWorkersRpcResponse } from 'capnweb'
 import type {
   ActionHandler,
   ActionResponse,
+  VisitMode,
+  VisitOptions,
+  VisitResponse,
   BeamConfig,
   BeamInstance,
   BeamContext,
@@ -229,6 +232,69 @@ async function toHtml(content: unknown): Promise<string> {
   return '' + resolved
 }
 
+type RouteFetcher<TEnv extends object> = (request: Request, env: TEnv) => Promise<Response>
+
+const TITLE_RE = /<title[^>]*>([\s\S]*?)<\/title>/i
+const HEAD_RE = /<head[^>]*>([\s\S]*?)<\/head>/i
+const BODY_RE = /<body[^>]*>([\s\S]*?)<\/body>/i
+const META_BEAM_VISIT_RE = /<meta[^>]+name=["']beam-visit["'][^>]+content=["']([^"']+)["'][^>]*>/i
+const ASSET_TAG_RE = /<(?:script|link)\b[^>]*(?:src|href)=["']([^"']+)["'][^>]*>/gi
+
+function decodeHtmlEntities(value: string): string {
+  return value
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&')
+}
+
+function extractTitle(html: string): string | undefined {
+  const match = html.match(TITLE_RE)
+  if (!match?.[1]) return undefined
+  return decodeHtmlEntities(match[1].trim())
+}
+
+function extractHeadHtml(html: string): string {
+  return html.match(HEAD_RE)?.[1]?.trim() ?? ''
+}
+
+function extractBodyHtml(html: string): string {
+  return html.match(BODY_RE)?.[1]?.trim() ?? ''
+}
+
+function extractBeamVisitControl(html: string): string | undefined {
+  return html.match(META_BEAM_VISIT_RE)?.[1]?.trim().toLowerCase()
+}
+
+function computeAssetSignature(headHtml: string): string {
+  const assets = new Set<string>()
+  for (const match of headHtml.matchAll(ASSET_TAG_RE)) {
+    const value = match[1]?.trim()
+    if (value) assets.add(value)
+  }
+  return Array.from(assets).sort().join('|')
+}
+
+function isHtmlResponse(response: Response): boolean {
+  const contentType = response.headers.get('content-type')?.toLowerCase() ?? ''
+  return contentType.includes('text/html') || contentType.includes('application/xhtml+xml') || contentType === ''
+}
+
+function hasSetCookieHeader(response: Response): boolean {
+  if (response.headers.has('set-cookie')) return true
+
+  const maybeGetSetCookie = (response.headers as Headers & {
+    getSetCookie?: () => string[]
+  }).getSetCookie
+
+  if (typeof maybeGetSetCookie === 'function') {
+    return maybeGetSetCookie.call(response.headers).length > 0
+  }
+
+  return false
+}
+
 /**
  * Create a BeamContext with script(), render(), modal(), drawer() helpers
  */
@@ -305,15 +371,18 @@ function isAsyncGenerator(value: unknown): value is AsyncGenerator<unknown> {
 class BeamServer<TEnv extends object> extends RpcTarget {
   private ctx: BeamContext<TEnv>
   private actions: Record<string, ActionHandler<TEnv>>
+  private routeFetcher?: RouteFetcher<TEnv>
   private clientCallback: ((event: string, data: unknown) => void | Promise<void>) | null = null
 
   constructor(
     ctx: BeamContext<TEnv>,
-    actions: Record<string, ActionHandler<TEnv>>
+    actions: Record<string, ActionHandler<TEnv>>,
+    routeFetcher?: RouteFetcher<TEnv>
   ) {
     super()
     this.ctx = ctx
     this.actions = actions
+    this.routeFetcher = routeFetcher
   }
 
   /**
@@ -348,6 +417,122 @@ class BeamServer<TEnv extends object> extends RpcTarget {
         }
       },
     })
+  }
+
+  async visit(url: string, options: VisitOptions = {}): Promise<VisitResponse> {
+    if (!this.routeFetcher) {
+      return {
+        url,
+        finalUrl: url,
+        status: 500,
+        mode: options.mode ?? 'visit',
+        target: options.target,
+        replace: options.replace,
+        reload: true,
+        reason: 'visit-renderer-unavailable',
+        scroll: options.mode === 'patch' ? 'preserve' : 'reset',
+      }
+    }
+
+    const mode: VisitMode = options.mode ?? 'visit'
+    const visitUrl = new URL(url, this.ctx.request.url).toString()
+    const headers = new Headers(this.ctx.request.headers)
+    ;[
+      'upgrade',
+      'connection',
+      'sec-websocket-key',
+      'sec-websocket-version',
+      'sec-websocket-protocol',
+      'sec-websocket-extensions',
+      'host',
+    ].forEach((key) => headers.delete(key))
+    headers.set('X-Beam-Visit', 'true')
+    headers.set('X-Beam-Visit-Mode', mode)
+    if (options.target) {
+      headers.set('X-Beam-Visit-Target', options.target)
+    }
+
+    const response = await this.routeFetcher(new Request(visitUrl, {
+      method: 'GET',
+      headers,
+      redirect: 'manual',
+    }), this.ctx.env)
+
+    if (hasSetCookieHeader(response)) {
+      return {
+        url: visitUrl,
+        finalUrl: visitUrl,
+        status: response.status,
+        mode,
+        target: options.target,
+        replace: options.replace,
+        reload: true,
+        reason: 'set-cookie-response',
+        scroll: mode === 'patch' ? 'preserve' : 'reset',
+      }
+    }
+
+    const locationHeader = response.headers.get('location')
+    if (locationHeader) {
+      return {
+        url: visitUrl,
+        finalUrl: visitUrl,
+        status: response.status,
+        mode,
+        target: options.target,
+        replace: options.replace,
+        redirect: new URL(locationHeader, visitUrl).toString(),
+        scroll: mode === 'patch' ? 'preserve' : 'reset',
+      }
+    }
+
+    if (!isHtmlResponse(response)) {
+      return {
+        url: visitUrl,
+        finalUrl: visitUrl,
+        status: response.status,
+        mode,
+        target: options.target,
+        replace: options.replace,
+        reload: true,
+        reason: 'non-html-response',
+        scroll: mode === 'patch' ? 'preserve' : 'reset',
+      }
+    }
+
+    const documentHtml = await response.text()
+    const beamVisitControl = response.headers.get('X-Beam-Visit')?.toLowerCase() ?? extractBeamVisitControl(documentHtml)
+    if (beamVisitControl === 'off' || beamVisitControl === 'reload') {
+      return {
+        url: visitUrl,
+        finalUrl: visitUrl,
+        status: response.status,
+        mode,
+        target: options.target,
+        replace: options.replace,
+        reload: true,
+        reason: 'route-opt-out',
+        scroll: mode === 'patch' ? 'preserve' : 'reset',
+      }
+    }
+
+    const headHtml = extractHeadHtml(documentHtml)
+    const bodyHtml = extractBodyHtml(documentHtml)
+
+    return {
+      url: visitUrl,
+      finalUrl: visitUrl,
+      status: response.status,
+      mode,
+      target: options.target,
+      replace: options.replace,
+      title: extractTitle(documentHtml),
+      headHtml,
+      documentHtml,
+      assetSignature: computeAssetSignature(headHtml),
+      scroll: mode === 'patch' ? 'preserve' : 'reset',
+      ...(bodyHtml ? {} : { reload: true, reason: 'missing-body' }),
+    }
   }
 
   /**
@@ -595,6 +780,7 @@ export function createBeam<TEnv extends object = object>(
      */
     init<E extends HonoEnv>(app: Hono<E>, options?: { endpoint?: string }) {
       const endpoint = options?.endpoint ?? '/beam'
+      const routeFetcher: RouteFetcher<TEnv> = (request, env) => Promise.resolve(app.fetch(request, env as any))
 
       app.get(endpoint, async (c) => {
         const upgradeHeader = c.req.header('Upgrade')
@@ -616,7 +802,8 @@ export function createBeam<TEnv extends object = object>(
           c.env as TEnv,
           c.req.raw,
           actions as Record<string, ActionHandler<TEnv>>,
-          auth
+          auth,
+          routeFetcher
         )
 
         // Use capnweb to handle the RPC connection
@@ -641,6 +828,7 @@ class PublicBeamServer<TEnv extends object> extends RpcTarget {
   private request: Request
   private actions: Record<string, ActionHandler<TEnv>>
   private auth: ((request: Request, env: TEnv) => Promise<import('./types').BeamUser | null>) | undefined
+  private routeFetcher?: RouteFetcher<TEnv>
 
   constructor(
     secret: string,
@@ -648,7 +836,8 @@ class PublicBeamServer<TEnv extends object> extends RpcTarget {
     env: TEnv,
     request: Request,
     actions: Record<string, ActionHandler<TEnv>>,
-    auth: ((request: Request, env: TEnv) => Promise<import('./types').BeamUser | null>) | undefined
+    auth: ((request: Request, env: TEnv) => Promise<import('./types').BeamUser | null>) | undefined,
+    routeFetcher?: RouteFetcher<TEnv>
   ) {
     super()
     this.secret = secret
@@ -657,6 +846,7 @@ class PublicBeamServer<TEnv extends object> extends RpcTarget {
     this.request = request
     this.actions = actions
     this.auth = auth
+    this.routeFetcher = routeFetcher
   }
 
   /**
@@ -705,7 +895,7 @@ class PublicBeamServer<TEnv extends object> extends RpcTarget {
     })
 
     // Return the authenticated BeamServer
-    return new BeamServer(ctx, this.actions)
+    return new BeamServer(ctx, this.actions, this.routeFetcher)
   }
 }
 

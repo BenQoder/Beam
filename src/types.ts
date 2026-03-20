@@ -37,6 +37,31 @@ export interface NamedStateUpdates {
   [id: string]: unknown
 }
 
+export type VisitMode = 'visit' | 'patch' | 'navigate'
+
+export interface VisitOptions {
+  mode?: VisitMode
+  target?: string
+  replace?: boolean
+}
+
+export interface VisitResponse {
+  url: string
+  finalUrl: string
+  status: number
+  mode: VisitMode
+  target?: string
+  replace?: boolean
+  redirect?: string
+  reload?: boolean
+  reason?: string
+  title?: string
+  headHtml?: string
+  documentHtml?: string
+  assetSignature?: string
+  scroll?: 'preserve' | 'reset'
+}
+
 /**
  * Context passed to all handlers
  */

@@ -40,12 +40,18 @@
 
 /* Modal backdrop */
 #modal-backdrop {
+  --beam-modal-spacing: 1rem;
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0);
   display: flex;
   align-items: center;
   justify-content: center;
+  padding-top: max(var(--beam-modal-spacing), env(safe-area-inset-top));
+  padding-right: max(var(--beam-modal-spacing), env(safe-area-inset-right));
+  padding-bottom: max(var(--beam-modal-spacing), env(safe-area-inset-bottom));
+  padding-left: max(var(--beam-modal-spacing), env(safe-area-inset-left));
+  box-sizing: border-box;
   z-index: 100;
   transition: background 200ms ease-out;
 }
@@ -59,7 +65,9 @@
   border-radius: 0.5rem;
   width: 100%;
   max-width: 32rem;
-  max-height: 100vh;
+  max-height: calc(100vh - (var(--beam-modal-spacing) * 2));
+  max-height: calc(100dvh - (var(--beam-modal-spacing) * 2));
+  box-sizing: border-box;
   overflow: auto;
   transform: scale(0.95);
   opacity: 0;
