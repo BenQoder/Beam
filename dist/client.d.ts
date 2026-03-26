@@ -53,6 +53,7 @@ declare function applyHtml(target: Element, html: string, options?: {
     keepElements?: string[];
     style?: HtmlApplyStyle;
 }): void;
+declare function updateLoadingIndicators(): void;
 declare function swap(target: Element, html: string, mode: string, trigger?: HTMLElement): void;
 /**
  * Handle HTML response - supports both single string and array of HTML strings.
@@ -173,6 +174,7 @@ export declare const __beamClientInternals: {
     parseOobSwaps: typeof parseOobSwaps;
     applyStateResponse: typeof applyStateResponse;
     applyResponse: typeof applyResponse;
+    updateLoadingIndicators: typeof updateLoadingIndicators;
     handleHistory: typeof handleHistory;
     openModal: typeof openModal;
     closeModal: typeof closeModal;

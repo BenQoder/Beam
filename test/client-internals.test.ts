@@ -71,6 +71,7 @@ function streamOf(...responses: any[]): ReadableStream<any> {
 describe('client internals', () => {
   beforeEach(() => {
     document.body.innerHTML = ''
+    document.body.removeAttribute('beam-boost')
     document.head.innerHTML = ''
     sessionStorage.clear()
     mockVisit.mockClear()
@@ -97,6 +98,7 @@ describe('client internals', () => {
 
   afterEach(() => {
     document.body.innerHTML = ''
+    document.body.removeAttribute('beam-boost')
     sessionStorage.clear()
     document.head.innerHTML = ''
     delete (globalThis as any).__BEAM_DISABLE_AUTO_CONNECT__
@@ -141,6 +143,85 @@ describe('client internals', () => {
       replace: false,
     })
     expect(document.querySelector('#app')?.textContent).toContain('About')
+  })
+
+  it('shows visit loading immediately and clears it after a boosted body swap', async () => {
+    document.head.innerHTML = '<meta name="beam-token" content="test-token">'
+    document.body.setAttribute('beam-boost', '')
+    document.body.innerHTML = `
+      <div id="global-loader" beam-loading-for="*">Loading...</div>
+      <main id="shell">
+        <a id="login-link" href="/login">Login</a>
+        <div>Home</div>
+      </main>
+    `
+
+    let resolveVisit: ((value: Awaited<ReturnType<typeof mockVisit>>) => void) | null = null
+    mockVisit.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveVisit = resolve
+    }))
+
+    await loadClientInternals()
+
+    const beforeVisit = vi.fn()
+    const afterVisit = vi.fn()
+    window.addEventListener('beam:before-visit', beforeVisit)
+    window.addEventListener('beam:after-visit', afterVisit)
+
+    const initialLoader = document.querySelector<HTMLElement>('#global-loader')
+    expect(initialLoader?.style.display).toBe('none')
+
+    document.querySelector<HTMLAnchorElement>('#login-link')?.dispatchEvent(
+      new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 })
+    )
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(beforeVisit).toHaveBeenCalled()
+    expect(beforeVisit.mock.calls.at(-1)?.[0]).toMatchObject({
+      detail: expect.objectContaining({
+        url: 'http://localhost:3000/login',
+        target: 'body',
+      }),
+    })
+    expect(initialLoader?.style.display).toBe('')
+
+    resolveVisit?.({
+      url: 'http://localhost:3000/login',
+      finalUrl: 'http://localhost:3000/login',
+      status: 200,
+      mode: 'visit',
+      target: 'body',
+      title: 'Login',
+      documentHtml: `
+        <html>
+          <head><title>Login</title></head>
+          <body beam-boost>
+            <div id="global-loader" beam-loading-for="*">Loading...</div>
+            <main id="shell">
+              <a id="home-link" href="/">Home</a>
+              <h1 id="login-title">Login Page</h1>
+            </main>
+          </body>
+        </html>
+      `,
+      assetSignature: '',
+      scroll: 'reset',
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+    await Promise.resolve()
+
+    const nextLoader = document.querySelector<HTMLElement>('#global-loader')
+    expect(nextLoader?.style.display).toBe('none')
+    expect(afterVisit).toHaveBeenCalled()
+    expect(afterVisit.mock.calls.at(-1)?.[0]).toMatchObject({
+      detail: expect.objectContaining({
+        finalUrl: 'http://localhost:3000/login',
+        status: 200,
+      }),
+    })
+    expect(document.querySelector('#login-title')?.textContent).toContain('Login Page')
   })
 
   it('respects beam-boost-off for links inside boosted containers', async () => {

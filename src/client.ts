@@ -65,6 +65,17 @@ interface VisitResponse {
   scroll?: 'preserve' | 'reset'
 }
 
+interface VisitLifecycleDetail {
+  url: string
+  mode: VisitMode
+  target: string
+  replace: boolean
+  preview?: boolean
+  finalUrl?: string
+  status?: number
+  response?: VisitResponse
+}
+
 // BeamServer interface (authenticated API - mirrors server-side RpcTarget)
 interface BeamServer {
   call(action: string, data?: Record<string, unknown>): ReadableStream<ActionResponse>
@@ -484,6 +495,7 @@ function applyHtml(
   }
 
   beamReactivity.scan(nextTarget as unknown as ParentNode)
+  updateLoadingIndicators()
 }
 
 function getParams(el: HTMLElement): Record<string, unknown> {
@@ -561,6 +573,7 @@ function checkConfirm(el: HTMLElement): boolean {
 
 // Store active actions with their params: Map<action, Set<paramsJSON>>
 const activeActions = new Map<string, Set<string>>()
+let activeVisitCount = 0
 
 // Store disabled elements during request
 const disabledElements = new Map<HTMLElement, { elements: HTMLElement[]; originalStates: boolean[] }>()
@@ -660,8 +673,10 @@ function updateLoadingIndicators(): void {
 
     let isActive = false
     if (targets.includes('*')) {
-      // Match any action
-      isActive = activeActions.size > 0
+      // Match any Beam-managed loading, including boosted visits.
+      isActive = activeActions.size > 0 || activeVisitCount > 0
+    } else if (targets.includes('visit') || targets.includes('$visit')) {
+      isActive = activeVisitCount > 0
     } else {
       // Match specific action(s) with optional params
       isActive = targets.some((action) => {
@@ -685,10 +700,25 @@ function updateLoadingIndicators(): void {
   })
 }
 
+function dispatchVisitEvent(
+  name: 'beam:before-visit' | 'beam:after-visit' | 'beam:visit-error',
+  detail: VisitLifecycleDetail & { error?: unknown }
+): void {
+  window.dispatchEvent(new CustomEvent(name, { detail }))
+}
+
+function setVisitLoading(loading: boolean): void {
+  if (loading) {
+    activeVisitCount++
+  } else {
+    activeVisitCount = Math.max(0, activeVisitCount - 1)
+  }
+
+  updateLoadingIndicators()
+}
+
 // Hide loading indicators by default on page load
-document.querySelectorAll<HTMLElement>('[beam-loading-for]:not([beam-loading-remove]):not([beam-loading-class])').forEach((el) => {
-  el.style.display = 'none'
-})
+updateLoadingIndicators()
 
 // ============ OPTIMISTIC UI ============
 
@@ -1000,6 +1030,7 @@ function swap(target: Element, html: string, mode: string, trigger?: HTMLElement
 
   // Process hungry elements - auto-update elements that match IDs in response
   processHungryElements(html)
+  updateLoadingIndicators()
 }
 
 /**
@@ -2046,18 +2077,28 @@ async function performVisit(
   options: { mode: VisitMode; target: string; replace: boolean; preview?: boolean }
 ): Promise<void> {
   const requestId = ++activeVisitRequestId
+  const visitDetail: VisitLifecycleDetail = {
+    url,
+    mode: options.mode,
+    target: options.target,
+    replace: options.replace,
+    preview: options.preview,
+  }
   const cacheKey = getVisitCacheKey(url, options.mode, options.target)
   const cached = visitCache.get(cacheKey)
   let historyCommitted = false
-
-  if (options.preview && cached && cached.expires > Date.now()) {
-    if (await applyVisitResponse(cached.response, options.target) === 'applied') {
-      commitVisitHistory(cached.response.finalUrl || url, options.mode, options.target, options.replace)
-      historyCommitted = true
-    }
-  }
+  let visitLoadingSettled = false
+  setVisitLoading(true)
+  dispatchVisitEvent('beam:before-visit', visitDetail)
 
   try {
+    if (options.preview && cached && cached.expires > Date.now()) {
+      if (await applyVisitResponse(cached.response, options.target) === 'applied') {
+        commitVisitHistory(cached.response.finalUrl || url, options.mode, options.target, options.replace)
+        historyCommitted = true
+      }
+    }
+
     const response = await api.visit(url, {
       mode: options.mode,
       target: options.target,
@@ -2070,10 +2111,23 @@ async function performVisit(
     if (await applyVisitResponse(response, options.target) !== 'applied') return
 
     commitVisitHistory(response.finalUrl || url, options.mode, options.target, historyCommitted || options.replace)
+    setVisitLoading(false)
+    visitLoadingSettled = true
+    dispatchVisitEvent('beam:after-visit', {
+      ...visitDetail,
+      finalUrl: response.finalUrl || url,
+      status: response.status,
+      response,
+    })
   } catch (err) {
     if (requestId !== activeVisitRequestId) return
     console.error('Beam visit failed, falling back to hard navigation:', err)
+    dispatchVisitEvent('beam:visit-error', { ...visitDetail, error: err })
     hardNavigate(url)
+  } finally {
+    if (!visitLoadingSettled) {
+      setVisitLoading(false)
+    }
   }
 }
 
@@ -3594,6 +3648,7 @@ export const __beamClientInternals = {
   parseOobSwaps,
   applyStateResponse,
   applyResponse,
+  updateLoadingIndicators,
   handleHistory,
   openModal,
   closeModal,

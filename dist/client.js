@@ -353,6 +353,7 @@ function applyHtml(target, html, options) {
         }
     }
     beamReactivity.scan(nextTarget);
+    updateLoadingIndicators();
 }
 function getParams(el) {
     // Start with beam-params JSON if present
@@ -424,6 +425,7 @@ function checkConfirm(el) {
 // ============ LOADING INDICATORS ============
 // Store active actions with their params: Map<action, Set<paramsJSON>>
 const activeActions = new Map();
+let activeVisitCount = 0;
 // Store disabled elements during request
 const disabledElements = new Map();
 function setLoading(el, loading, action, params) {
@@ -515,8 +517,11 @@ function updateLoadingIndicators() {
         const requiredParams = getLoadingParams(el);
         let isActive = false;
         if (targets.includes('*')) {
-            // Match any action
-            isActive = activeActions.size > 0;
+            // Match any Beam-managed loading, including boosted visits.
+            isActive = activeActions.size > 0 || activeVisitCount > 0;
+        }
+        else if (targets.includes('visit') || targets.includes('$visit')) {
+            isActive = activeVisitCount > 0;
         }
         else {
             // Match specific action(s) with optional params
@@ -539,10 +544,20 @@ function updateLoadingIndicators() {
         }
     });
 }
+function dispatchVisitEvent(name, detail) {
+    window.dispatchEvent(new CustomEvent(name, { detail }));
+}
+function setVisitLoading(loading) {
+    if (loading) {
+        activeVisitCount++;
+    }
+    else {
+        activeVisitCount = Math.max(0, activeVisitCount - 1);
+    }
+    updateLoadingIndicators();
+}
 // Hide loading indicators by default on page load
-document.querySelectorAll('[beam-loading-for]:not([beam-loading-remove]):not([beam-loading-class])').forEach((el) => {
-    el.style.display = 'none';
-});
+updateLoadingIndicators();
 function optimistic(el) {
     const template = el.getAttribute('beam-optimistic');
     const targetSelector = el.getAttribute('beam-target');
@@ -815,6 +830,7 @@ function swap(target, html, mode, trigger) {
     }
     // Process hungry elements - auto-update elements that match IDs in response
     processHungryElements(html);
+    updateLoadingIndicators();
 }
 /**
  * Handle HTML response - supports both single string and array of HTML strings.
@@ -1747,16 +1763,26 @@ async function prefetchVisit(link) {
 }
 async function performVisit(url, options) {
     const requestId = ++activeVisitRequestId;
+    const visitDetail = {
+        url,
+        mode: options.mode,
+        target: options.target,
+        replace: options.replace,
+        preview: options.preview,
+    };
     const cacheKey = getVisitCacheKey(url, options.mode, options.target);
     const cached = visitCache.get(cacheKey);
     let historyCommitted = false;
-    if (options.preview && cached && cached.expires > Date.now()) {
-        if (await applyVisitResponse(cached.response, options.target) === 'applied') {
-            commitVisitHistory(cached.response.finalUrl || url, options.mode, options.target, options.replace);
-            historyCommitted = true;
-        }
-    }
+    let visitLoadingSettled = false;
+    setVisitLoading(true);
+    dispatchVisitEvent('beam:before-visit', visitDetail);
     try {
+        if (options.preview && cached && cached.expires > Date.now()) {
+            if (await applyVisitResponse(cached.response, options.target) === 'applied') {
+                commitVisitHistory(cached.response.finalUrl || url, options.mode, options.target, options.replace);
+                historyCommitted = true;
+            }
+        }
         const response = await api.visit(url, {
             mode: options.mode,
             target: options.target,
@@ -1768,12 +1794,26 @@ async function performVisit(url, options) {
         if (await applyVisitResponse(response, options.target) !== 'applied')
             return;
         commitVisitHistory(response.finalUrl || url, options.mode, options.target, historyCommitted || options.replace);
+        setVisitLoading(false);
+        visitLoadingSettled = true;
+        dispatchVisitEvent('beam:after-visit', {
+            ...visitDetail,
+            finalUrl: response.finalUrl || url,
+            status: response.status,
+            response,
+        });
     }
     catch (err) {
         if (requestId !== activeVisitRequestId)
             return;
         console.error('Beam visit failed, falling back to hard navigation:', err);
+        dispatchVisitEvent('beam:visit-error', { ...visitDetail, error: err });
         hardNavigate(url);
+    }
+    finally {
+        if (!visitLoadingSettled) {
+            setVisitLoading(false);
+        }
     }
 }
 window.addEventListener('popstate', (e) => {
@@ -3149,6 +3189,7 @@ export const __beamClientInternals = {
     parseOobSwaps,
     applyStateResponse,
     applyResponse,
+    updateLoadingIndicators,
     handleHistory,
     openModal,
     closeModal,
