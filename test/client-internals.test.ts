@@ -164,7 +164,7 @@ describe('client internals', () => {
     const internals = await loadClientInternals()
     document.body.innerHTML = '<main id="app" beam-boost><div>Home</div></main>'
 
-    const outcome = internals.applyVisitResponse({
+    const outcome = await internals.applyVisitResponse({
       url: 'http://localhost:3000/about',
       finalUrl: 'http://localhost:3000/about',
       status: 200,
@@ -179,6 +179,58 @@ describe('client internals', () => {
     expect(outcome).toBe('applied')
     expect(document.title).toBe('About')
     expect(document.querySelector('#app')?.textContent).toContain('About Page')
+  })
+
+  it('loads missing next-page runtime assets before applying boosted visits', async () => {
+    const internals = await loadClientInternals()
+    document.head.innerHTML = `
+      <meta name="beam-token" content="test-token">
+      <link rel="stylesheet" href="/assets/app.css">
+      <link rel="preconnect" href="https://cdn.example.com">
+    `
+    document.body.innerHTML = '<main id="app" beam-boost><div>Home</div></main>'
+
+    const originalAppendChild = document.head.appendChild.bind(document.head)
+    vi.spyOn(document.head, 'appendChild').mockImplementation(((node: Node) => {
+      const result = originalAppendChild(node)
+      if (node instanceof HTMLLinkElement || node instanceof HTMLScriptElement) {
+        queueMicrotask(() => node.dispatchEvent(new Event('load')))
+      }
+      return result
+    }) as typeof document.head.appendChild)
+
+    const outcome = await internals.applyVisitResponse({
+      url: 'http://localhost:3000/login',
+      finalUrl: 'http://localhost:3000/login',
+      status: 200,
+      mode: 'visit',
+      target: '#app',
+      title: 'Login',
+      documentHtml: `
+        <html>
+          <head>
+            <title>Login</title>
+            <meta name="description" content="Login page">
+            <link rel="canonical" href="http://localhost:3000/login">
+            <link rel="preconnect" href="https://cdn.example.com">
+            <link rel="stylesheet" href="/assets/app.css">
+            <link rel="stylesheet" href="/assets/login.css">
+            <script src="/assets/login.js"></script>
+          </head>
+          <body>
+            <main id="app"><h1>Login Page</h1></main>
+          </body>
+        </html>
+      `,
+      assetSignature: '/assets/app.css|/assets/login.css|/assets/login.js',
+      scroll: 'reset',
+    }, '#app')
+
+    expect(outcome).toBe('applied')
+    expect(document.title).toBe('Login')
+    expect(document.querySelector('#app')?.textContent).toContain('Login Page')
+    expect(document.head.querySelector('link[href="/assets/login.css"]')).not.toBeNull()
+    expect(document.head.querySelector('script[src="/assets/login.js"]')).not.toBeNull()
   })
 
   it('uses explicit visit modes over inherited beam-boost defaults', async () => {

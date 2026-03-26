@@ -65,6 +65,27 @@ describe('createBeam server utilities', () => {
     expect(await verifyToken(expiredToken, 'secret')).toBeNull()
   })
 
+  it('computes asset signatures from runtime assets only and decodes HTML entities', () => {
+    const { computeAssetSignature } = __beamCreateBeamInternals
+
+    const signature = computeAssetSignature(`
+      <meta name="description" content="Login page">
+      <link rel="preconnect" href="https://cdn.example.com">
+      <link rel="icon" href="/favicon.ico">
+      <link rel="stylesheet" href="/assets/app.css?v=1&amp;theme=light">
+      <link rel="modulepreload" href="/assets/chunk.js">
+      <link rel="preload" as="script" href="/assets/entry.js">
+      <script src="/assets/runtime.js?foo=1&amp;bar=2"></script>
+    `)
+
+    expect(signature).toBe([
+      '/assets/app.css?v=1&theme=light',
+      '/assets/chunk.js',
+      '/assets/entry.js',
+      '/assets/runtime.js?foo=1&bar=2',
+    ].join('|'))
+  })
+
   it('createBeamContext helper methods normalize responses', async () => {
     const ctx = __beamCreateBeamInternals.createBeamContext({
       env: {},

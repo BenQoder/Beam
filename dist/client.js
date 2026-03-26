@@ -1461,6 +1461,7 @@ document.querySelectorAll('form[beam-autosubmit]').forEach((form) => {
 const VISIT_CACHE_TTL = 30 * 1000;
 const visitCache = new Map();
 const visitPreloading = new Set();
+const pendingHeadAssets = new Map();
 let activeVisitRequestId = 0;
 function getVisitMode(link) {
     if (link.hasAttribute('beam-patch'))
@@ -1507,12 +1508,105 @@ function isBeamVisitLink(link) {
 function getVisitCacheKey(url, mode, target) {
     return `${mode}:${target}:${url}`;
 }
+function createRuntimeHeadAssetKey(asset) {
+    return [asset.kind, asset.rel ?? '', asset.as ?? '', asset.url].join('|');
+}
+function extractRuntimeHeadAssets(root) {
+    const assets = [];
+    root.querySelectorAll('script[src]').forEach((node) => {
+        const url = node.getAttribute('src')?.trim();
+        if (!url)
+            return;
+        assets.push({
+            kind: 'script',
+            url,
+            type: node.getAttribute('type'),
+            crossorigin: node.getAttribute('crossorigin'),
+            integrity: node.getAttribute('integrity'),
+            referrerpolicy: node.getAttribute('referrerpolicy'),
+            nonce: node.getAttribute('nonce'),
+        });
+    });
+    root.querySelectorAll('link[rel="stylesheet"][href], link[rel="modulepreload"][href], link[rel="preload"][href][as="script"]').forEach((node) => {
+        const url = node.getAttribute('href')?.trim();
+        if (!url)
+            return;
+        assets.push({
+            kind: 'link',
+            url,
+            rel: node.rel.toLowerCase(),
+            as: node.getAttribute('as'),
+            crossorigin: node.getAttribute('crossorigin'),
+            integrity: node.getAttribute('integrity'),
+            referrerpolicy: node.getAttribute('referrerpolicy'),
+            nonce: node.getAttribute('nonce'),
+            media: node.getAttribute('media'),
+        });
+    });
+    return assets;
+}
 function getCurrentAssetSignature() {
-    const assets = Array.from(document.head.querySelectorAll('script[src], link[rel="stylesheet"][href], link[rel="modulepreload"][href], link[rel="preload"][href][as="script"]'))
-        .map((node) => node.getAttribute('src') || node.getAttribute('href') || '')
-        .filter(Boolean)
-        .sort();
-    return assets.join('|');
+    const assets = new Set(extractRuntimeHeadAssets(document.head).map((asset) => asset.url));
+    return Array.from(assets).sort().join('|');
+}
+function setOptionalAttribute(el, name, value) {
+    if (value == null || value === '')
+        return;
+    el.setAttribute(name, value);
+}
+function appendRuntimeHeadAsset(asset) {
+    const key = createRuntimeHeadAssetKey(asset);
+    const existingPromise = pendingHeadAssets.get(key);
+    if (existingPromise)
+        return existingPromise;
+    const promise = new Promise((resolve, reject) => {
+        if (asset.kind === 'script') {
+            const script = document.createElement('script');
+            script.src = asset.url;
+            if (asset.type)
+                script.type = asset.type;
+            setOptionalAttribute(script, 'crossorigin', asset.crossorigin);
+            setOptionalAttribute(script, 'integrity', asset.integrity);
+            setOptionalAttribute(script, 'referrerpolicy', asset.referrerpolicy);
+            setOptionalAttribute(script, 'nonce', asset.nonce);
+            script.async = false;
+            script.addEventListener('load', () => resolve(), { once: true });
+            script.addEventListener('error', () => reject(new Error(`Failed to load script asset: ${asset.url}`)), { once: true });
+            document.head.appendChild(script);
+            return;
+        }
+        const link = document.createElement('link');
+        link.rel = asset.rel ?? 'stylesheet';
+        link.href = asset.url;
+        setOptionalAttribute(link, 'as', asset.as);
+        setOptionalAttribute(link, 'crossorigin', asset.crossorigin);
+        setOptionalAttribute(link, 'integrity', asset.integrity);
+        setOptionalAttribute(link, 'referrerpolicy', asset.referrerpolicy);
+        setOptionalAttribute(link, 'nonce', asset.nonce);
+        setOptionalAttribute(link, 'media', asset.media);
+        if (link.rel === 'stylesheet') {
+            link.addEventListener('load', () => resolve(), { once: true });
+            link.addEventListener('error', () => reject(new Error(`Failed to load stylesheet asset: ${asset.url}`)), { once: true });
+        }
+        else {
+            resolve();
+        }
+        document.head.appendChild(link);
+    }).finally(() => {
+        pendingHeadAssets.delete(key);
+    });
+    pendingHeadAssets.set(key, promise);
+    return promise;
+}
+async function ensureVisitAssets(doc) {
+    const currentAssets = new Set(extractRuntimeHeadAssets(document.head).map(createRuntimeHeadAssetKey));
+    for (const asset of extractRuntimeHeadAssets(doc.head)) {
+        const key = createRuntimeHeadAssetKey(asset);
+        if (currentAssets.has(key))
+            continue;
+        await appendRuntimeHeadAsset(asset);
+        currentAssets.add(key);
+    }
 }
 function hardNavigate(url) {
     location.href = url;
@@ -1582,7 +1676,7 @@ function applyVisitScroll(response) {
     }
     window.scrollTo(0, 0);
 }
-function applyVisitResponse(response, targetSelector) {
+async function applyVisitResponse(response, targetSelector) {
     if (response.redirect) {
         hardNavigate(response.redirect);
         return 'hard-navigate';
@@ -1591,12 +1685,22 @@ function applyVisitResponse(response, targetSelector) {
         hardNavigate(response.finalUrl || response.url);
         return 'hard-navigate';
     }
-    const currentAssetSignature = getCurrentAssetSignature();
-    if (response.assetSignature && currentAssetSignature && response.assetSignature !== currentAssetSignature) {
-        hardNavigate(response.finalUrl || response.url);
-        return 'hard-navigate';
-    }
     const doc = new DOMParser().parseFromString(response.documentHtml, 'text/html');
+    if (response.assetSignature) {
+        try {
+            await ensureVisitAssets(doc);
+        }
+        catch {
+            hardNavigate(response.finalUrl || response.url);
+            return 'hard-navigate';
+        }
+        const currentAssetKeys = new Set(extractRuntimeHeadAssets(document.head).map(createRuntimeHeadAssetKey));
+        const missingAsset = extractRuntimeHeadAssets(doc.head).find((asset) => !currentAssetKeys.has(createRuntimeHeadAssetKey(asset)));
+        if (missingAsset) {
+            hardNavigate(response.finalUrl || response.url);
+            return 'hard-navigate';
+        }
+    }
     const source = targetSelector === 'body' ? doc.body : doc.querySelector(targetSelector);
     const target = targetSelector === 'body' ? document.body : $(targetSelector);
     if (!source || !target) {
@@ -1647,7 +1751,7 @@ async function performVisit(url, options) {
     const cached = visitCache.get(cacheKey);
     let historyCommitted = false;
     if (options.preview && cached && cached.expires > Date.now()) {
-        if (applyVisitResponse(cached.response, options.target) === 'applied') {
+        if (await applyVisitResponse(cached.response, options.target) === 'applied') {
             commitVisitHistory(cached.response.finalUrl || url, options.mode, options.target, options.replace);
             historyCommitted = true;
         }
@@ -1661,7 +1765,7 @@ async function performVisit(url, options) {
         if (requestId !== activeVisitRequestId)
             return;
         visitCache.set(cacheKey, { response, expires: Date.now() + VISIT_CACHE_TTL });
-        if (applyVisitResponse(response, options.target) !== 'applied')
+        if (await applyVisitResponse(response, options.target) !== 'applied')
             return;
         commitVisitHistory(response.finalUrl || url, options.mode, options.target, historyCommitted || options.replace);
     }
@@ -3031,6 +3135,9 @@ export const __beamClientInternals = {
     api,
     shouldAutoConnect,
     canReconnect,
+    getCurrentAssetSignature,
+    extractRuntimeHeadAssets,
+    ensureVisitAssets,
     getVisitMode,
     getVisitTargetSelector,
     applyVisitResponse,

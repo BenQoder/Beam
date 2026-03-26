@@ -86,9 +86,25 @@ declare function closeDrawer(): void;
 declare function showToast(message: string, type?: 'success' | 'error'): void;
 declare function setupSwitch(el: HTMLElement): void;
 declare function setupAutosubmit(form: HTMLFormElement): void;
+type RuntimeHeadAsset = {
+    kind: 'script' | 'link';
+    url: string;
+    rel?: string;
+    as?: string | null;
+    type?: string | null;
+    crossorigin?: string | null;
+    integrity?: string | null;
+    referrerpolicy?: string | null;
+    nonce?: string | null;
+    media?: string | null;
+};
+type RuntimeHeadQueryRoot = Pick<Document | Element, 'querySelectorAll'>;
 declare function getVisitMode(link: HTMLAnchorElement): VisitMode;
 declare function getVisitTargetSelector(link: HTMLAnchorElement): string;
-declare function applyVisitResponse(response: VisitResponse, targetSelector: string): 'applied' | 'hard-navigate';
+declare function extractRuntimeHeadAssets(root: RuntimeHeadQueryRoot): RuntimeHeadAsset[];
+declare function getCurrentAssetSignature(): string;
+declare function ensureVisitAssets(doc: Document): Promise<void>;
+declare function applyVisitResponse(response: VisitResponse, targetSelector: string): Promise<'applied' | 'hard-navigate'>;
 declare function prefetchVisit(link: HTMLAnchorElement): Promise<void>;
 declare function performVisit(url: string, options: {
     mode: VisitMode;
@@ -143,6 +159,9 @@ export declare const __beamClientInternals: {
     };
     shouldAutoConnect: typeof shouldAutoConnect;
     canReconnect: typeof canReconnect;
+    getCurrentAssetSignature: typeof getCurrentAssetSignature;
+    extractRuntimeHeadAssets: typeof extractRuntimeHeadAssets;
+    ensureVisitAssets: typeof ensureVisitAssets;
     getVisitMode: typeof getVisitMode;
     getVisitTargetSelector: typeof getVisitTargetSelector;
     applyVisitResponse: typeof applyVisitResponse;

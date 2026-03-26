@@ -59,6 +59,8 @@ declare function parseSessionFromRequest(request: Request, cookieName: string): 
  */
 declare function parseSessionDataFromRequest(request: Request): Record<string, unknown>;
 type RouteFetcher<TEnv extends object> = (request: Request, env: TEnv) => Promise<Response>;
+declare function decodeHtmlEntities(value: string): string;
+declare function computeAssetSignature(headHtml: string): string;
 /**
  * Create a BeamContext with script(), render(), modal(), drawer() helpers
  */
@@ -176,6 +178,8 @@ export declare const __beamCreateBeamInternals: {
     parseCookies: typeof parseCookies;
     parseSessionFromRequest: typeof parseSessionFromRequest;
     parseSessionDataFromRequest: typeof parseSessionDataFromRequest;
+    decodeHtmlEntities: typeof decodeHtmlEntities;
+    computeAssetSignature: typeof computeAssetSignature;
     createBeamContext: typeof createBeamContext;
     isAsyncGenerator: typeof isAsyncGenerator;
 };

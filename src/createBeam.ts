@@ -238,7 +238,8 @@ const TITLE_RE = /<title[^>]*>([\s\S]*?)<\/title>/i
 const HEAD_RE = /<head[^>]*>([\s\S]*?)<\/head>/i
 const BODY_RE = /<body[^>]*>([\s\S]*?)<\/body>/i
 const META_BEAM_VISIT_RE = /<meta[^>]+name=["']beam-visit["'][^>]+content=["']([^"']+)["'][^>]*>/i
-const ASSET_TAG_RE = /<(?:script|link)\b[^>]*(?:src|href)=["']([^"']+)["'][^>]*>/gi
+const ASSET_TAG_RE = /<(script|link)\b([^>]*)>/gi
+const ASSET_ATTR_RE = /([^\s=]+)=["']([^"']+)["']/gi
 
 function decodeHtmlEntities(value: string): string {
   return value
@@ -270,8 +271,30 @@ function extractBeamVisitControl(html: string): string | undefined {
 function computeAssetSignature(headHtml: string): string {
   const assets = new Set<string>()
   for (const match of headHtml.matchAll(ASSET_TAG_RE)) {
-    const value = match[1]?.trim()
-    if (value) assets.add(value)
+    const tagName = match[1]?.toLowerCase()
+    const attrsSource = match[2] ?? ''
+    const attrs: Record<string, string> = {}
+
+    for (const attrMatch of attrsSource.matchAll(ASSET_ATTR_RE)) {
+      attrs[attrMatch[1].toLowerCase()] = decodeHtmlEntities(attrMatch[2]?.trim() ?? '')
+    }
+
+    if (tagName === 'script' && attrs.src) {
+      assets.add(attrs.src)
+      continue
+    }
+
+    if (tagName !== 'link' || !attrs.href) continue
+
+    const rel = attrs.rel?.toLowerCase() ?? ''
+    if (rel === 'stylesheet' || rel === 'modulepreload') {
+      assets.add(attrs.href)
+      continue
+    }
+
+    if (rel === 'preload' && attrs.as?.toLowerCase() === 'script') {
+      assets.add(attrs.href)
+    }
   }
   return Array.from(assets).sort().join('|')
 }
@@ -933,6 +956,8 @@ export const __beamCreateBeamInternals = {
   parseCookies,
   parseSessionFromRequest,
   parseSessionDataFromRequest,
+  decodeHtmlEntities,
+  computeAssetSignature,
   createBeamContext,
   isAsyncGenerator,
 }
