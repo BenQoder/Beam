@@ -11,6 +11,7 @@ type Product = {
 
 export default createRoute(async (c) => {
   const env = c.env as Env
+  const authToken = c.get('beamAuthToken')
   const id = c.req.param('id')
   const product = await env.DB.prepare('SELECT * FROM products WHERE id = ?')
     .bind(id)
@@ -18,7 +19,7 @@ export default createRoute(async (c) => {
 
   if (!product) {
     return c.html(
-      <Layout title="Not Found">
+      <Layout title="Not Found" authToken={authToken}>
         <h1>Product Not Found</h1>
         <a href="/products">Back to Products</a>
       </Layout>,
@@ -27,7 +28,7 @@ export default createRoute(async (c) => {
   }
 
   return c.html(
-    <Layout title={product.name}>
+    <Layout title={product.name} authToken={authToken}>
       <article class="product-detail">
         <h1>{product.name}</h1>
         <p class="price">${product.price}</p>

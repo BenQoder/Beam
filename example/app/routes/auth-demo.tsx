@@ -3,9 +3,10 @@ import { Layout } from '../components/Layout'
 
 export default createRoute((c) => {
   const { user } = c.get('beam')
+  const authToken = c.get('beamAuthToken')
 
   return c.html(
-    <Layout title="Auth Demo">
+    <Layout title="Auth Demo" authToken={authToken}>
       <div class="auth-demo">
         <h1>Authentication Demo</h1>
         <p class="text-muted">

@@ -5,6 +5,7 @@ A lightweight, declarative UI framework for building interactive web application
 ## Features
 
 - **WebSocket RPC** - Real-time communication without HTTP overhead
+- **Per-Call Hono Middleware** - Re-enter Hono for every RPC action without switching the browser to HTTP
 - **Declarative** - No JavaScript needed, just HTML attributes
 - **Auto-discovery** - Handlers are automatically found via Vite plugin
 - **Modals & Drawers** - Built-in overlay components
@@ -39,6 +40,7 @@ A lightweight, declarative UI framework for building interactive web application
 - **Multi-Render** - Update multiple targets in a single action response
 - **Async Components** - Full support for HonoX async components in `ctx.render()`
 - **Streaming Actions** - Async generator handlers push incremental updates over WebSocket (skeleton → content, live progress, AI-style text)
+- **requestContext Access** - Read the live Hono request context from Beam actions when per-call middleware is enabled
 
 ## Installation
 
@@ -1966,6 +1968,24 @@ const openDrawer: ActionHandler<Env> = async (ctx, params) => {
 }
 ```
 
+### `BeamContext`
+
+Beam actions receive a `BeamContext` with:
+
+- `env` - Worker/runtime bindings
+- `user` - resolved Beam user
+- `request` - original request snapshot used to seed Beam
+- `session` - Beam session adapter
+- `requestContext?` - live Hono `Context` for the current internal action request when per-call middleware is enabled
+- response helpers like `render()`, `state()`, `script()`, `redirect()`, `modal()`, and `drawer()`
+
+```typescript
+export function myAction(ctx: BeamContext<Env>) {
+  const traceId = ctx.requestContext?.get('rpcTraceId')
+  return ctx.render(<div>Trace: {traceId ?? 'none'}</div>)
+}
+```
+
 ### Virtual Module Types
 
 Add to your `app/vite-env.d.ts`:
@@ -2358,6 +2378,123 @@ If you need to generate tokens outside the middleware:
 ```typescript
 const token = await beam.generateAuthToken(ctx);
 ```
+
+---
+
+## Per-Call Hono Middleware
+
+Beam actions still originate from the browser over the WebSocket RPC session, but Beam can now re-enter a Hono app **once per RPC action call** on the server.
+
+This gives you true per-call middleware for:
+
+- authz checks
+- tracing / request IDs
+- tenancy / org loading
+- audit logging
+- rate limiting
+- request-scoped resources
+
+### Transport Model
+
+When `rpcMiddlewareApp` is enabled:
+
+- **Browser → Beam** stays on WebSocket RPC
+- **Beam → Hono** becomes an internal synthetic request per action call
+- **Hono → Beam** returns a streamed response
+- **Beam → Browser** forwards those streamed chunks back over WebSocket
+
+So the client does **not** switch to HTTP, but your server middleware still runs per RPC action.
+The internal request path is Beam-managed server infrastructure, not a new browser-facing transport.
+
+### Setup
+
+```typescript
+// app/server.ts
+import { Hono } from "hono";
+import { createApp } from "honox/server";
+import { beam } from "virtual:beam";
+
+const app = createApp({
+  init(app) {
+    const rpcApp = new Hono();
+
+    app.use("*", beam.authMiddleware());
+    rpcApp.use("*", beam.authMiddleware());
+
+    rpcApp.use("*", async (c, next) => {
+      c.set("rpcTraceId", crypto.randomUUID().slice(0, 8));
+      await next();
+    });
+
+    beam.init(app, { rpcMiddlewareApp: rpcApp });
+  },
+});
+```
+
+### Accessing Hono Context Inside Actions
+
+When an action runs through the internal Hono request pipeline, Beam adds the live Hono context to `ctx.requestContext`.
+
+```tsx
+export function inspectRequestContext(ctx: BeamContext<Env>) {
+  return ctx.render(
+    <pre>
+      {JSON.stringify({
+        method: ctx.requestContext?.req.method,
+        path: ctx.requestContext?.req.path,
+        action: ctx.requestContext?.req.param("action"),
+        traceId: ctx.requestContext?.get("rpcTraceId"),
+      }, null, 2)}
+    </pre>,
+    { target: "#result" },
+  );
+}
+```
+
+`ctx.requestContext` is useful when middleware has already loaded request-scoped data that your action wants to read. It is optional because direct Beam execution paths may not always have a live Hono request context attached.
+
+### Request Lifecycle
+
+Each RPC action call creates a **fresh** internal Hono request/context.
+
+- Hono context is **not reused** across RPC calls
+- WebSocket session can stay open while many internal Hono requests come and go
+- a streamed action keeps its Hono request alive only for the lifetime of that stream
+- after the action/stream completes, the Hono request is over
+
+This is important for request-scoped systems like Hyperdrive: Beam does **not** hold one Hono request open for the whole WebSocket session.
+
+### Streaming Still Works
+
+Per-call middleware works with normal actions and async-generator streaming actions.
+
+```tsx
+export async function* streamRequestContext(ctx: BeamContext<Env>) {
+  yield ctx.render(<div id="status">Connecting…</div>);
+
+  await delay(300);
+
+  yield ctx.render(
+    <div id="status">
+      Trace: {ctx.requestContext?.get("rpcTraceId")}
+    </div>,
+  );
+}
+```
+
+Beam keeps the internal Hono request alive for that stream, reads the streamed response, and forwards each chunk back to the browser over WebSocket.
+
+### Low-Level Override: `actionFetcher`
+
+If you want full control over how Beam dispatches internal action requests, use `actionFetcher`:
+
+```typescript
+beam.init(app, {
+  actionFetcher: (request, env) => myInternalApp.fetch(request, env),
+});
+```
+
+Use `rpcMiddlewareApp` when you want the normal Hono experience. Use `actionFetcher` when you need a lower-level custom bridge.
 
 ---
 

@@ -11,6 +11,7 @@ const DEMO_USERS: Record<string, { id: string; name: string; email: string; role
 // GET /login - show login form
 export default createRoute((c) => {
   const { user } = c.get('beam')
+  const authToken = c.get('beamAuthToken')
   const error = c.req.query('error')
 
   // Already logged in? Redirect to home
@@ -19,7 +20,7 @@ export default createRoute((c) => {
   }
 
   return c.html(
-    <Layout title="Login">
+    <Layout title="Login" authToken={authToken}>
       <div class="auth-container">
         <div class="auth-card">
           <h1>Sign In</h1>

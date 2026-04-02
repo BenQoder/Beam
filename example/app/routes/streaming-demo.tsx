@@ -106,6 +106,25 @@ export default createRoute(async (c) => {
         </div>
       </div>
 
+      <div class="demo-section">
+        <h2>3a. Streaming requestContext</h2>
+        <p class="text-muted">
+          Streams middleware-backed Hono request data over multiple yields, proving
+          <code> ctx.requestContext </code>
+          is available for the full lifetime of the async generator.
+        </p>
+
+        <div id="request-context-stream-output" class="pipeline" style="color: #94a3b8; align-items: center; justify-content: center;">
+          Click to stream requestContext details…
+        </div>
+
+        <div class="demo-actions" style="margin-top: 12px;">
+          <button beam-action="streamRequestContext" beam-target="#request-context-stream-output">
+            Stream requestContext
+          </button>
+        </div>
+      </div>
+
       {/* Demo 4: Dashboard widgets */}
       <div class="demo-section">
         <h2>4. Progressive Dashboard</h2>

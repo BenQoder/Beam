@@ -9,6 +9,7 @@ const ITEMS_PER_PAGE = 10
 
 export default createRoute(async (c) => {
   const env = c.env as Env
+  const authToken = c.get('beamAuthToken')
 
   let products: Product[] = []
   let hasMore = false
@@ -29,7 +30,7 @@ export default createRoute(async (c) => {
   }
 
   return c.html(
-    <Layout title="Products - Infinite Scroll">
+    <Layout title="Products - Infinite Scroll" authToken={authToken}>
       <div class="page-header">
         <h1>Products</h1>
         <span class="badge">Infinite Scroll</span>

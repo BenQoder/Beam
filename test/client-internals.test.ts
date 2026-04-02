@@ -121,6 +121,37 @@ describe('client internals', () => {
     expect(internals.shouldAutoConnect()).toBe(true)
   })
 
+  it('executes beam actions over the authenticated websocket session', async () => {
+    document.head.innerHTML = '<meta name="beam-token" content="test-token">'
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+    const internals = await loadClientInternals()
+    mockCall.mockResolvedValueOnce(streamOf(
+      { html: 'Result' },
+      { script: 'globalThis.__beamActionRan = true' },
+    ))
+
+    const stream = await internals.api.call('search', { q: 'beam' })
+    const reader = stream.getReader()
+    const values: any[] = []
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      values.push(value)
+    }
+
+    reader.releaseLock()
+
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(mockNewWebSocketRpcSession).toHaveBeenCalledTimes(1)
+    expect(mockAuthenticate).toHaveBeenCalledWith('test-token')
+    expect(mockCall).toHaveBeenCalledWith('search', { q: 'beam' })
+    expect(values).toEqual([
+      { html: 'Result' },
+      { script: 'globalThis.__beamActionRan = true' },
+    ])
+  })
+
   it('upgrades descendant links inside beam-boost containers into Beam visits', async () => {
     document.head.innerHTML = '<meta name="beam-token" content="test-token">'
     await loadClientInternals()

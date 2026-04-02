@@ -12,6 +12,7 @@ const ITEMS_PER_PAGE = 5
 
 export default createRoute(async (c) => {
   const env = c.env as Env
+  const authToken = c.get('beamAuthToken')
   const page = Number(c.req.query('page') || 1)
   const offset = (page - 1) * ITEMS_PER_PAGE
 
@@ -39,7 +40,7 @@ export default createRoute(async (c) => {
   }
 
   return c.html(
-    <Layout title="Products" cartCount={cartCount}>
+    <Layout title="Products" cartCount={cartCount} authToken={authToken}>
       <div class="page-header">
         <h1>Products</h1>
         <button beam-action="createProductModal" class="btn-primary">

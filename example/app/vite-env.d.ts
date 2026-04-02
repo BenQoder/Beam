@@ -7,5 +7,6 @@ declare module 'hono' {
   interface ContextVariableMap {
     beam: BeamContext<Env>
     beamAuthToken: string
+    rpcTraceId: string
   }
 }

@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import type { Env as HonoEnv, MiddlewareHandler } from 'hono'
+import type { Context, Env as HonoEnv, MiddlewareHandler } from 'hono'
 import { getSignedCookie, setSignedCookie } from 'hono/cookie'
 import { RpcTarget, newWorkersRpcResponse } from 'capnweb'
 import type {
@@ -16,7 +16,16 @@ import type {
   SessionConfig,
   RenderOptions,
   AuthTokenPayload,
+  BeamResolvedRequest,
 } from './types'
+import {
+  BEAM_ACTION_REQUEST_HEADER,
+  BEAM_ACTION_STREAM_CONTENT_TYPE,
+  BEAM_ACTION_TRANSPORT_HEADER,
+  decodeBeamActionStream,
+  encodeBeamActionStream,
+  getBeamActionBasePath,
+} from './actionStream'
 
 /** Default token lifetime: 5 minutes */
 const DEFAULT_TOKEN_LIFETIME = 5 * 60 * 1000
@@ -233,6 +242,7 @@ async function toHtml(content: unknown): Promise<string> {
 }
 
 type RouteFetcher<TEnv extends object> = (request: Request, env: TEnv) => Promise<Response>
+type ActionFetcher<TEnv extends object> = (request: Request, env: TEnv) => Promise<Response>
 
 const TITLE_RE = /<title[^>]*>([\s\S]*?)<\/title>/i
 const HEAD_RE = /<head[^>]*>([\s\S]*?)<\/head>/i
@@ -325,6 +335,7 @@ function createBeamContext<TEnv>(base: {
   env: TEnv
   user: import('./types').BeamUser | null
   request: Request
+  requestContext?: Context
   session: BeamSession
 }): BeamContext<TEnv> {
   return {
@@ -382,6 +393,117 @@ function isAsyncGenerator(value: unknown): value is AsyncGenerator<unknown> {
   return value != null && typeof (value as any)[Symbol.asyncIterator] === 'function'
 }
 
+function normalizeActionResponse(value: ActionResponse | string): ActionResponse {
+  return typeof value === 'string' ? { html: value } : value
+}
+
+function stripConnectionHeaders(headers: Headers): Headers {
+  const next = new Headers(headers)
+  ;[
+    'upgrade',
+    'connection',
+    'sec-websocket-key',
+    'sec-websocket-version',
+    'sec-websocket-protocol',
+    'sec-websocket-extensions',
+    'host',
+    'content-length',
+  ].forEach((key) => next.delete(key))
+  return next
+}
+
+function createDirectActionStream<TEnv extends object>(
+  handler: ActionHandler<TEnv>,
+  ctx: BeamContext<TEnv>,
+  data: Record<string, unknown>
+): ReadableStream<ActionResponse> {
+  return new ReadableStream<ActionResponse>({
+    async start(controller) {
+      try {
+        const result = handler(ctx, data)
+
+        if (isAsyncGenerator(result)) {
+          for await (const chunk of result) {
+            controller.enqueue(normalizeActionResponse(await chunk))
+          }
+        } else {
+          controller.enqueue(normalizeActionResponse(await result))
+        }
+        controller.close()
+      } catch (err) {
+        controller.error(err)
+      }
+    },
+  })
+}
+
+async function prepareActionStream<TEnv extends object>(
+  handler: ActionHandler<TEnv>,
+  ctx: BeamContext<TEnv>,
+  data: Record<string, unknown>
+): Promise<ReadableStream<ActionResponse>> {
+  const result = handler(ctx, data)
+
+  if (!isAsyncGenerator(result)) {
+    const normalized = normalizeActionResponse(await result)
+    return new ReadableStream<ActionResponse>({
+      start(controller) {
+        controller.enqueue(normalized)
+        controller.close()
+      },
+    })
+  }
+
+  const iterator = result[Symbol.asyncIterator]()
+  const first = await iterator.next()
+
+  return new ReadableStream<ActionResponse>({
+    async start(controller) {
+      let completed = false
+
+      try {
+        if (!first.done) {
+          controller.enqueue(normalizeActionResponse(await first.value))
+        } else {
+          completed = true
+        }
+
+        if (!completed) {
+          while (true) {
+            const next = await iterator.next()
+            if (next.done) {
+              completed = true
+              break
+            }
+            controller.enqueue(normalizeActionResponse(await next.value))
+          }
+        }
+
+        controller.close()
+      } catch (error) {
+        controller.error(error)
+      } finally {
+        if (!completed && typeof iterator.return === 'function') {
+          try {
+            await iterator.return(undefined)
+          } catch {
+            // Ignore generator cleanup failures.
+          }
+        }
+      }
+    },
+  })
+}
+
+async function readResponseError(response: Response): Promise<string> {
+  try {
+    const text = await response.text()
+    return text || `Beam action request failed with status ${response.status}`
+  } catch {
+    return `Beam action request failed with status ${response.status}`
+  }
+}
+
 /**
  * Beam RPC Server - extends RpcTarget for capnweb integration
  *
@@ -395,17 +517,23 @@ class BeamServer<TEnv extends object> extends RpcTarget {
   private ctx: BeamContext<TEnv>
   private actions: Record<string, ActionHandler<TEnv>>
   private routeFetcher?: RouteFetcher<TEnv>
+  private actionFetcher?: ActionFetcher<TEnv>
+  private actionBasePath?: string
   private clientCallback: ((event: string, data: unknown) => void | Promise<void>) | null = null
 
   constructor(
     ctx: BeamContext<TEnv>,
     actions: Record<string, ActionHandler<TEnv>>,
-    routeFetcher?: RouteFetcher<TEnv>
+    routeFetcher?: RouteFetcher<TEnv>,
+    actionFetcher?: ActionFetcher<TEnv>,
+    actionBasePath?: string
   ) {
     super()
     this.ctx = ctx
     this.actions = actions
     this.routeFetcher = routeFetcher
+    this.actionFetcher = actionFetcher
+    this.actionBasePath = actionBasePath
   }
 
   /**
@@ -420,26 +548,56 @@ class BeamServer<TEnv extends object> extends RpcTarget {
     }
 
     const ctx = this.ctx
-    return new ReadableStream<ActionResponse>({
-      async start(controller) {
-        try {
-          const result = handler(ctx, data)
-          const normalize = (v: ActionResponse | string): ActionResponse =>
-            typeof v === 'string' ? { html: v } : v
 
-          if (isAsyncGenerator(result)) {
-            for await (const chunk of result) {
-              controller.enqueue(normalize(await chunk))
+    if (this.actionFetcher && this.actionBasePath) {
+      const actionFetcher = this.actionFetcher
+      const actionUrl = new URL(
+        `${this.actionBasePath}/${encodeURIComponent(action)}`,
+        ctx.request.url
+      ).toString()
+      const headers = stripConnectionHeaders(ctx.request.headers)
+      headers.set(BEAM_ACTION_REQUEST_HEADER, 'action')
+      headers.set(BEAM_ACTION_TRANSPORT_HEADER, 'rpc')
+      headers.set('accept', BEAM_ACTION_STREAM_CONTENT_TYPE)
+      headers.set('content-type', 'application/json')
+
+      return new ReadableStream<ActionResponse>({
+        async start(controller) {
+          try {
+            const response = await actionFetcher(new Request(actionUrl, {
+              method: 'POST',
+              headers,
+              body: JSON.stringify(data),
+            }), ctx.env)
+
+            if (!response.ok) {
+              throw new Error(await readResponseError(response))
             }
-          } else {
-            controller.enqueue(normalize(await result))
+
+            if (!response.body) {
+              controller.close()
+              return
+            }
+
+            const reader = decodeBeamActionStream<ActionResponse>(response.body).getReader()
+            try {
+              while (true) {
+                const { done, value } = await reader.read()
+                if (done) break
+                controller.enqueue(value)
+              }
+              controller.close()
+            } finally {
+              reader.releaseLock()
+            }
+          } catch (err) {
+            controller.error(err)
           }
-          controller.close()
-        } catch (err) {
-          controller.error(err)
-        }
-      },
-    })
+        },
+      })
+    }
+
+    return createDirectActionStream(handler, ctx, data)
   }
 
   async visit(url: string, options: VisitOptions = {}): Promise<VisitResponse> {
@@ -589,6 +747,125 @@ function resolveSecret<TEnv extends object>(
   return sessionConfig.secret
 }
 
+async function resolveBeamRequest<TEnv extends object>(
+  c: {
+    env: TEnv
+    req: { raw: Request }
+    set: (key: string, value: unknown) => void
+  },
+  auth: ((request: Request, env: TEnv) => Promise<import('./types').BeamUser | null>) | undefined,
+  sessionConfig: SessionConfig<TEnv> | undefined,
+  cookieName: string,
+  maxAge: number
+): Promise<BeamResolvedRequest<TEnv>> {
+  const user = auth ? await auth(c.req.raw, c.env) : null
+
+  let sessionId: string | null = null
+  let session: BeamSession
+  let cookieSession: CookieSession | null = null
+  let sessionSecret: string | undefined
+
+  if (sessionConfig) {
+    sessionSecret = resolveSecret(c.env, sessionConfig)
+    if (!sessionSecret) {
+      throw new Error(
+        sessionConfig.secretEnvKey
+          ? `Session secret not found in env.${sessionConfig.secretEnvKey}`
+          : 'Session secret is required'
+      )
+    }
+
+    const cookieValue = await getSignedCookie(c as any, sessionSecret, cookieName)
+    sessionId = typeof cookieValue === 'string' ? cookieValue : null
+
+    if (!sessionId) {
+      sessionId = crypto.randomUUID()
+      await setSignedCookie(c as any, cookieName, sessionId, sessionSecret, {
+        maxAge,
+        httpOnly: true,
+        sameSite: 'Lax',
+        path: '/',
+      })
+    }
+
+    if (sessionConfig.storageFactory) {
+      session = sessionConfig.storageFactory(sessionId, c.env)
+    } else {
+      const existingDataCookie = await getSignedCookie(c as any, sessionSecret, SESSION_DATA_COOKIE)
+      let existingData: Record<string, unknown> = {}
+      if (typeof existingDataCookie === 'string') {
+        try {
+          existingData = JSON.parse(existingDataCookie)
+        } catch {
+          existingData = {}
+        }
+      }
+      cookieSession = new CookieSession(existingData)
+      session = cookieSession
+    }
+  } else {
+    session = {
+      get: async () => null,
+      set: async () => {},
+      delete: async () => {},
+    }
+  }
+
+  const ctx = createBeamContext<TEnv>({
+    env: c.env,
+    user,
+    request: c.req.raw,
+    requestContext: c as unknown as Context,
+    session,
+  })
+
+  let authToken = ''
+  if (sessionSecret && sessionId) {
+    const tokenPayload: AuthTokenPayload = {
+      sid: sessionId,
+      uid: user?.id ?? null,
+      exp: Date.now() + DEFAULT_TOKEN_LIFETIME,
+    }
+    authToken = await signToken(tokenPayload, sessionSecret)
+  }
+
+  const resolved: BeamResolvedRequest<TEnv> = {
+    ctx,
+    user,
+    sessionId,
+    authToken,
+    sessionSecret,
+    cookieSession,
+  }
+
+  c.set('beam', ctx)
+  c.set('beamAuthToken', authToken)
+  c.set('beamResolvedRequest', resolved)
+
+  return resolved
+}
+
+async function persistCookieSessionIfNeeded<TEnv extends object>(
+  c: {
+    set: (key: string, value: unknown) => void
+  },
+  resolved: BeamResolvedRequest<TEnv> | undefined,
+  sessionConfig: SessionConfig<TEnv> | undefined,
+  maxAge: number
+): Promise<void> {
+  if (!resolved?.cookieSession || !resolved.cookieSession.isDirty() || !sessionConfig || !resolved.sessionSecret) {
+    return
+  }
+
+  const dataString = JSON.stringify(resolved.cookieSession.getData())
+  await setSignedCookie(c as any, SESSION_DATA_COOKIE, dataString, resolved.sessionSecret, {
+    maxAge,
+    httpOnly: true,
+    sameSite: 'Lax',
+    path: '/',
+  })
+}
+
 /**
  * Creates a Beam instance configured with actions.
  * Uses capnweb for RPC, enabling promise pipelining and bidirectional calls.
@@ -646,104 +923,9 @@ export function createBeam<TEnv extends object = object>(
      */
     authMiddleware(): MiddlewareHandler<{ Bindings: TEnv; Variables: BeamVariables<TEnv> }> {
       return async (c, next) => {
-        // Resolve auth if resolver provided
-        const user = auth ? await auth(c.req.raw, c.env) : null
-
-        // Resolve session
-        let sessionId: string | null = null
-        let session: BeamSession
-        let cookieSession: CookieSession | null = null
-
-        if (sessionConfig) {
-          // Resolve secret from env if secretEnvKey provided, otherwise use static secret
-          const secret = resolveSecret(c.env, sessionConfig)
-          if (!secret) {
-            throw new Error(
-              sessionConfig.secretEnvKey
-                ? `Session secret not found in env.${sessionConfig.secretEnvKey}`
-                : 'Session secret is required'
-            )
-          }
-
-          // Get or create session ID
-          const cookieValue = await getSignedCookie(c, secret, cookieName)
-          sessionId = typeof cookieValue === 'string' ? cookieValue : null
-          if (!sessionId) {
-            sessionId = crypto.randomUUID()
-            await setSignedCookie(c, cookieName, sessionId, secret, {
-              maxAge,
-              httpOnly: true,
-              sameSite: 'Lax',
-              path: '/',
-            })
-          }
-
-          // Use custom storage factory if provided, otherwise use cookie storage
-          if (sessionConfig.storageFactory) {
-            session = sessionConfig.storageFactory(sessionId, c.env)
-          } else {
-            // Default: cookie-based session storage
-            const existingDataCookie = await getSignedCookie(c, secret, SESSION_DATA_COOKIE)
-            let existingData: Record<string, unknown> = {}
-            if (typeof existingDataCookie === 'string') {
-              try {
-                existingData = JSON.parse(existingDataCookie)
-              } catch {
-                existingData = {}
-              }
-            }
-            cookieSession = new CookieSession(existingData)
-            session = cookieSession
-          }
-        } else {
-          // No session config - provide a noop session
-          session = {
-            get: async () => null,
-            set: async () => {},
-            delete: async () => {},
-          }
-        }
-
-        // Create context with script() and render() helpers
-        const ctx = createBeamContext<TEnv>({
-          env: c.env,
-          user,
-          request: c.req.raw,
-          session,
-        })
-
-        // Generate auth token for in-band WebSocket authentication
-        const secret = resolveSecret(c.env, sessionConfig)
-        let authToken = ''
-        if (secret && sessionId) {
-          const tokenPayload: AuthTokenPayload = {
-            sid: sessionId,
-            uid: user?.id ?? null,
-            exp: Date.now() + DEFAULT_TOKEN_LIFETIME,
-          }
-          authToken = await signToken(tokenPayload, secret)
-        }
-
-        // Set in Hono context for use by routes
-        c.set('beam', ctx)
-        c.set('beamAuthToken', authToken)
-
+        const resolved = await resolveBeamRequest(c as any, auth, sessionConfig, cookieName, maxAge)
         await next()
-
-        // If using cookie session and data was modified, save it back to cookie
-        if (cookieSession && cookieSession.isDirty() && sessionConfig) {
-          const secret = resolveSecret(c.env, sessionConfig)
-          if (!secret) {
-            throw new Error('Session secret is required')
-          }
-          const dataString = JSON.stringify(cookieSession.getData())
-          await setSignedCookie(c, SESSION_DATA_COOKIE, dataString, secret, {
-            maxAge,
-            httpOnly: true,
-            sameSite: 'Lax',
-            path: '/',
-          })
-        }
+        await persistCookieSessionIfNeeded(c as any, resolved, sessionConfig, maxAge)
       }
     },
 
@@ -801,9 +983,54 @@ export function createBeam<TEnv extends object = object>(
      * })
      * ```
      */
-    init<E extends HonoEnv>(app: Hono<E>, options?: { endpoint?: string }) {
+    init<E extends HonoEnv>(app: Hono<E>, options?: { endpoint?: string; rpcMiddlewareApp?: Hono<any>; actionFetcher?: ActionFetcher<TEnv> }) {
       const endpoint = options?.endpoint ?? '/beam'
+      const actionBasePath = getBeamActionBasePath(endpoint)
       const routeFetcher: RouteFetcher<TEnv> = (request, env) => Promise.resolve(app.fetch(request, env as any))
+      let actionFetcher = options?.actionFetcher
+
+      const actionHandler: MiddlewareHandler<{ Bindings: TEnv; Variables: BeamVariables<TEnv> }> = async (c) => {
+        if (c.req.header(BEAM_ACTION_REQUEST_HEADER) !== 'action') {
+          return c.text('Expected Beam action request', 400)
+        }
+
+        const action = c.req.param('action')
+        if (!action) {
+          return c.text('Missing Beam action name', 400)
+        }
+        const handler = actions[action]
+        if (!handler) {
+          return c.text(`Unknown action: ${action}`, 404)
+        }
+
+        const bodyText = await c.req.raw.text()
+        let data: Record<string, unknown> = {}
+        if (bodyText.trim()) {
+          try {
+            data = JSON.parse(bodyText) as Record<string, unknown>
+          } catch {
+            return c.text('Invalid Beam action payload', 400)
+          }
+        }
+
+        const resolved = c.get('beamResolvedRequest') ?? await resolveBeamRequest(c as any, auth, sessionConfig, cookieName, maxAge)
+        const stream = await prepareActionStream(handler, resolved.ctx, data)
+        await persistCookieSessionIfNeeded(c as any, resolved, sessionConfig, maxAge)
+
+        return new Response(encodeBeamActionStream(stream), {
+          headers: {
+            'content-type': BEAM_ACTION_STREAM_CONTENT_TYPE,
+            'cache-control': 'no-store',
+          },
+        })
+      }
+
+      if (options?.rpcMiddlewareApp) {
+        options.rpcMiddlewareApp.post(`${actionBasePath}/:action`, actionHandler as any)
+        if (!actionFetcher) {
+          actionFetcher = (request, env) => Promise.resolve(options.rpcMiddlewareApp!.fetch(request, env as any))
+        }
+      }
 
       app.get(endpoint, async (c) => {
         const upgradeHeader = c.req.header('Upgrade')
@@ -826,7 +1053,9 @@ export function createBeam<TEnv extends object = object>(
           c.req.raw,
           actions as Record<string, ActionHandler<TEnv>>,
           auth,
-          routeFetcher
+          routeFetcher,
+          actionFetcher,
+          actionBasePath
         )
 
         // Use capnweb to handle the RPC connection
@@ -852,6 +1081,8 @@ class PublicBeamServer<TEnv extends object> extends RpcTarget {
   private actions: Record<string, ActionHandler<TEnv>>
   private auth: ((request: Request, env: TEnv) => Promise<import('./types').BeamUser | null>) | undefined
   private routeFetcher?: RouteFetcher<TEnv>
+  private actionFetcher?: ActionFetcher<TEnv>
+  private actionBasePath?: string
 
   constructor(
     secret: string,
@@ -860,7 +1091,9 @@ class PublicBeamServer<TEnv extends object> extends RpcTarget {
     request: Request,
     actions: Record<string, ActionHandler<TEnv>>,
     auth: ((request: Request, env: TEnv) => Promise<import('./types').BeamUser | null>) | undefined,
-    routeFetcher?: RouteFetcher<TEnv>
+    routeFetcher?: RouteFetcher<TEnv>,
+    actionFetcher?: ActionFetcher<TEnv>,
+    actionBasePath?: string
   ) {
     super()
     this.secret = secret
@@ -870,6 +1103,8 @@ class PublicBeamServer<TEnv extends object> extends RpcTarget {
     this.actions = actions
     this.auth = auth
     this.routeFetcher = routeFetcher
+    this.actionFetcher = actionFetcher
+    this.actionBasePath = actionBasePath
   }
 
   /**
@@ -918,7 +1153,7 @@ class PublicBeamServer<TEnv extends object> extends RpcTarget {
     })
 
     // Return the authenticated BeamServer
-    return new BeamServer(ctx, this.actions, this.routeFetcher)
+    return new BeamServer(ctx, this.actions, this.routeFetcher, this.actionFetcher, this.actionBasePath)
   }
 }
 

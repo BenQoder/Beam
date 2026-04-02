@@ -1,5 +1,6 @@
 import { getSignedCookie, setSignedCookie } from 'hono/cookie';
 import { RpcTarget, newWorkersRpcResponse } from 'capnweb';
+import { BEAM_ACTION_REQUEST_HEADER, BEAM_ACTION_STREAM_CONTENT_TYPE, BEAM_ACTION_TRANSPORT_HEADER, decodeBeamActionStream, encodeBeamActionStream, getBeamActionBasePath, } from './actionStream';
 /** Default token lifetime: 5 minutes */
 const DEFAULT_TOKEN_LIFETIME = 5 * 60 * 1000;
 /**
@@ -306,6 +307,104 @@ function createBeamContext(base) {
 function isAsyncGenerator(value) {
     return value != null && typeof value[Symbol.asyncIterator] === 'function';
 }
+function normalizeActionResponse(value) {
+    return typeof value === 'string' ? { html: value } : value;
+}
+function stripConnectionHeaders(headers) {
+    const next = new Headers(headers);
+    [
+        'upgrade',
+        'connection',
+        'sec-websocket-key',
+        'sec-websocket-version',
+        'sec-websocket-protocol',
+        'sec-websocket-extensions',
+        'host',
+        'content-length',
+    ].forEach((key) => next.delete(key));
+    return next;
+}
+function createDirectActionStream(handler, ctx, data) {
+    return new ReadableStream({
+        async start(controller) {
+            try {
+                const result = handler(ctx, data);
+                if (isAsyncGenerator(result)) {
+                    for await (const chunk of result) {
+                        controller.enqueue(normalizeActionResponse(await chunk));
+                    }
+                }
+                else {
+                    controller.enqueue(normalizeActionResponse(await result));
+                }
+                controller.close();
+            }
+            catch (err) {
+                controller.error(err);
+            }
+        },
+    });
+}
+async function prepareActionStream(handler, ctx, data) {
+    const result = handler(ctx, data);
+    if (!isAsyncGenerator(result)) {
+        const normalized = normalizeActionResponse(await result);
+        return new ReadableStream({
+            start(controller) {
+                controller.enqueue(normalized);
+                controller.close();
+            },
+        });
+    }
+    const iterator = result[Symbol.asyncIterator]();
+    const first = await iterator.next();
+    return new ReadableStream({
+        async start(controller) {
+            let completed = false;
+            try {
+                if (!first.done) {
+                    controller.enqueue(normalizeActionResponse(await first.value));
+                }
+                else {
+                    completed = true;
+                }
+                if (!completed) {
+                    while (true) {
+                        const next = await iterator.next();
+                        if (next.done) {
+                            completed = true;
+                            break;
+                        }
+                        controller.enqueue(normalizeActionResponse(await next.value));
+                    }
+                }
+                controller.close();
+            }
+            catch (error) {
+                controller.error(error);
+            }
+            finally {
+                if (!completed && typeof iterator.return === 'function') {
+                    try {
+                        await iterator.return(undefined);
+                    }
+                    catch {
+                        // Ignore generator cleanup failures.
+                    }
+                }
+            }
+        },
+    });
+}
+async function readResponseError(response) {
+    try {
+        const text = await response.text();
+        return text || `Beam action request failed with status ${response.status}`;
+    }
+    catch {
+        return `Beam action request failed with status ${response.status}`;
+    }
+}
 /**
  * Beam RPC Server - extends RpcTarget for capnweb integration
  *
@@ -319,12 +418,16 @@ class BeamServer extends RpcTarget {
     ctx;
     actions;
     routeFetcher;
+    actionFetcher;
+    actionBasePath;
     clientCallback = null;
-    constructor(ctx, actions, routeFetcher) {
+    constructor(ctx, actions, routeFetcher, actionFetcher, actionBasePath) {
         super();
         this.ctx = ctx;
         this.actions = actions;
         this.routeFetcher = routeFetcher;
+        this.actionFetcher = actionFetcher;
+        this.actionBasePath = actionBasePath;
     }
     /**
      * Call an action handler, returning a ReadableStream of ActionResponses.
@@ -337,26 +440,50 @@ class BeamServer extends RpcTarget {
             throw new Error(`Unknown action: ${action}`);
         }
         const ctx = this.ctx;
-        return new ReadableStream({
-            async start(controller) {
-                try {
-                    const result = handler(ctx, data);
-                    const normalize = (v) => typeof v === 'string' ? { html: v } : v;
-                    if (isAsyncGenerator(result)) {
-                        for await (const chunk of result) {
-                            controller.enqueue(normalize(await chunk));
+        if (this.actionFetcher && this.actionBasePath) {
+            const actionFetcher = this.actionFetcher;
+            const actionUrl = new URL(`${this.actionBasePath}/${encodeURIComponent(action)}`, ctx.request.url).toString();
+            const headers = stripConnectionHeaders(ctx.request.headers);
+            headers.set(BEAM_ACTION_REQUEST_HEADER, 'action');
+            headers.set(BEAM_ACTION_TRANSPORT_HEADER, 'rpc');
+            headers.set('accept', BEAM_ACTION_STREAM_CONTENT_TYPE);
+            headers.set('content-type', 'application/json');
+            return new ReadableStream({
+                async start(controller) {
+                    try {
+                        const response = await actionFetcher(new Request(actionUrl, {
+                            method: 'POST',
+                            headers,
+                            body: JSON.stringify(data),
+                        }), ctx.env);
+                        if (!response.ok) {
+                            throw new Error(await readResponseError(response));
+                        }
+                        if (!response.body) {
+                            controller.close();
+                            return;
+                        }
+                        const reader = decodeBeamActionStream(response.body).getReader();
+                        try {
+                            while (true) {
+                                const { done, value } = await reader.read();
+                                if (done)
+                                    break;
+                                controller.enqueue(value);
+                            }
+                            controller.close();
+                        }
+                        finally {
+                            reader.releaseLock();
                         }
                     }
-                    else {
-                        controller.enqueue(normalize(await result));
+                    catch (err) {
+                        controller.error(err);
                     }
-                    controller.close();
-                }
-                catch (err) {
-                    controller.error(err);
-                }
-            },
-        });
+                },
+            });
+        }
+        return createDirectActionStream(handler, ctx, data);
     }
     async visit(url, options = {}) {
         if (!this.routeFetcher) {
@@ -491,6 +618,96 @@ function resolveSecret(env, sessionConfig) {
     }
     return sessionConfig.secret;
 }
+async function resolveBeamRequest(c, auth, sessionConfig, cookieName, maxAge) {
+    const user = auth ? await auth(c.req.raw, c.env) : null;
+    let sessionId = null;
+    let session;
+    let cookieSession = null;
+    let sessionSecret;
+    if (sessionConfig) {
+        sessionSecret = resolveSecret(c.env, sessionConfig);
+        if (!sessionSecret) {
+            throw new Error(sessionConfig.secretEnvKey
+                ? `Session secret not found in env.${sessionConfig.secretEnvKey}`
+                : 'Session secret is required');
+        }
+        const cookieValue = await getSignedCookie(c, sessionSecret, cookieName);
+        sessionId = typeof cookieValue === 'string' ? cookieValue : null;
+        if (!sessionId) {
+            sessionId = crypto.randomUUID();
+            await setSignedCookie(c, cookieName, sessionId, sessionSecret, {
+                maxAge,
+                httpOnly: true,
+                sameSite: 'Lax',
+                path: '/',
+            });
+        }
+        if (sessionConfig.storageFactory) {
+            session = sessionConfig.storageFactory(sessionId, c.env);
+        }
+        else {
+            const existingDataCookie = await getSignedCookie(c, sessionSecret, SESSION_DATA_COOKIE);
+            let existingData = {};
+            if (typeof existingDataCookie === 'string') {
+                try {
+                    existingData = JSON.parse(existingDataCookie);
+                }
+                catch {
+                    existingData = {};
+                }
+            }
+            cookieSession = new CookieSession(existingData);
+            session = cookieSession;
+        }
+    }
+    else {
+        session = {
+            get: async () => null,
+            set: async () => { },
+            delete: async () => { },
+        };
+    }
+    const ctx = createBeamContext({
+        env: c.env,
+        user,
+        request: c.req.raw,
+        requestContext: c,
+        session,
+    });
+    let authToken = '';
+    if (sessionSecret && sessionId) {
+        const tokenPayload = {
+            sid: sessionId,
+            uid: user?.id ?? null,
+            exp: Date.now() + DEFAULT_TOKEN_LIFETIME,
+        };
+        authToken = await signToken(tokenPayload, sessionSecret);
+    }
+    const resolved = {
+        ctx,
+        user,
+        sessionId,
+        authToken,
+        sessionSecret,
+        cookieSession,
+    };
+    c.set('beam', ctx);
+    c.set('beamAuthToken', authToken);
+    c.set('beamResolvedRequest', resolved);
+    return resolved;
+}
+async function persistCookieSessionIfNeeded(c, resolved, sessionConfig, maxAge) {
+    if (!resolved?.cookieSession || !resolved.cookieSession.isDirty() || !sessionConfig || !resolved.sessionSecret) {
+        return;
+    }
+    const dataString = JSON.stringify(resolved.cookieSession.getData());
+    await setSignedCookie(c, SESSION_DATA_COOKIE, dataString, resolved.sessionSecret, {
+        maxAge,
+        httpOnly: true,
+        sameSite: 'Lax',
+        path: '/',
+    });
+}
 /**
  * Creates a Beam instance configured with actions.
  * Uses capnweb for RPC, enabling promise pipelining and bidirectional calls.
@@ -543,96 +760,9 @@ export function createBeam(config) {
          */
         authMiddleware() {
             return async (c, next) => {
-                // Resolve auth if resolver provided
-                const user = auth ? await auth(c.req.raw, c.env) : null;
-                // Resolve session
-                let sessionId = null;
-                let session;
-                let cookieSession = null;
-                if (sessionConfig) {
-                    // Resolve secret from env if secretEnvKey provided, otherwise use static secret
-                    const secret = resolveSecret(c.env, sessionConfig);
-                    if (!secret) {
-                        throw new Error(sessionConfig.secretEnvKey
-                            ? `Session secret not found in env.${sessionConfig.secretEnvKey}`
-                            : 'Session secret is required');
-                    }
-                    // Get or create session ID
-                    const cookieValue = await getSignedCookie(c, secret, cookieName);
-                    sessionId = typeof cookieValue === 'string' ? cookieValue : null;
-                    if (!sessionId) {
-                        sessionId = crypto.randomUUID();
-                        await setSignedCookie(c, cookieName, sessionId, secret, {
-                            maxAge,
-                            httpOnly: true,
-                            sameSite: 'Lax',
-                            path: '/',
-                        });
-                    }
-                    // Use custom storage factory if provided, otherwise use cookie storage
-                    if (sessionConfig.storageFactory) {
-                        session = sessionConfig.storageFactory(sessionId, c.env);
-                    }
-                    else {
-                        // Default: cookie-based session storage
-                        const existingDataCookie = await getSignedCookie(c, secret, SESSION_DATA_COOKIE);
-                        let existingData = {};
-                        if (typeof existingDataCookie === 'string') {
-                            try {
-                                existingData = JSON.parse(existingDataCookie);
-                            }
-                            catch {
-                                existingData = {};
-                            }
-                        }
-                        cookieSession = new CookieSession(existingData);
-                        session = cookieSession;
-                    }
-                }
-                else {
-                    // No session config - provide a noop session
-                    session = {
-                        get: async () => null,
-                        set: async () => { },
-                        delete: async () => { },
-                    };
-                }
-                // Create context with script() and render() helpers
-                const ctx = createBeamContext({
-                    env: c.env,
-                    user,
-                    request: c.req.raw,
-                    session,
-                });
-                // Generate auth token for in-band WebSocket authentication
-                const secret = resolveSecret(c.env, sessionConfig);
-                let authToken = '';
-                if (secret && sessionId) {
-                    const tokenPayload = {
-                        sid: sessionId,
-                        uid: user?.id ?? null,
-                        exp: Date.now() + DEFAULT_TOKEN_LIFETIME,
-                    };
-                    authToken = await signToken(tokenPayload, secret);
-                }
-                // Set in Hono context for use by routes
-                c.set('beam', ctx);
-                c.set('beamAuthToken', authToken);
+                const resolved = await resolveBeamRequest(c, auth, sessionConfig, cookieName, maxAge);
                 await next();
-                // If using cookie session and data was modified, save it back to cookie
-                if (cookieSession && cookieSession.isDirty() && sessionConfig) {
-                    const secret = resolveSecret(c.env, sessionConfig);
-                    if (!secret) {
-                        throw new Error('Session secret is required');
-                    }
-                    const dataString = JSON.stringify(cookieSession.getData());
-                    await setSignedCookie(c, SESSION_DATA_COOKIE, dataString, secret, {
-                        maxAge,
-                        httpOnly: true,
-                        sameSite: 'Lax',
-                        path: '/',
-                    });
-                }
+                await persistCookieSessionIfNeeded(c, resolved, sessionConfig, maxAge);
             };
         },
         /**
@@ -685,7 +815,47 @@ export function createBeam(config) {
          */
         init(app, options) {
             const endpoint = options?.endpoint ?? '/beam';
+            const actionBasePath = getBeamActionBasePath(endpoint);
             const routeFetcher = (request, env) => Promise.resolve(app.fetch(request, env));
+            let actionFetcher = options?.actionFetcher;
+            const actionHandler = async (c) => {
+                if (c.req.header(BEAM_ACTION_REQUEST_HEADER) !== 'action') {
+                    return c.text('Expected Beam action request', 400);
+                }
+                const action = c.req.param('action');
+                if (!action) {
+                    return c.text('Missing Beam action name', 400);
+                }
+                const handler = actions[action];
+                if (!handler) {
+                    return c.text(`Unknown action: ${action}`, 404);
+                }
+                const bodyText = await c.req.raw.text();
+                let data = {};
+                if (bodyText.trim()) {
+                    try {
+                        data = JSON.parse(bodyText);
+                    }
+                    catch {
+                        return c.text('Invalid Beam action payload', 400);
+                    }
+                }
+                const resolved = c.get('beamResolvedRequest') ?? await resolveBeamRequest(c, auth, sessionConfig, cookieName, maxAge);
+                const stream = await prepareActionStream(handler, resolved.ctx, data);
+                await persistCookieSessionIfNeeded(c, resolved, sessionConfig, maxAge);
+                return new Response(encodeBeamActionStream(stream), {
+                    headers: {
+                        'content-type': BEAM_ACTION_STREAM_CONTENT_TYPE,
+                        'cache-control': 'no-store',
+                    },
+                });
+            };
+            if (options?.rpcMiddlewareApp) {
+                options.rpcMiddlewareApp.post(`${actionBasePath}/:action`, actionHandler);
+                if (!actionFetcher) {
+                    actionFetcher = (request, env) => Promise.resolve(options.rpcMiddlewareApp.fetch(request, env));
+                }
+            }
             app.get(endpoint, async (c) => {
                 const upgradeHeader = c.req.header('Upgrade');
                 if (upgradeHeader !== 'websocket') {
@@ -697,7 +867,7 @@ export function createBeam(config) {
                     return c.text('Session secret is required for secure WebSocket connections', 500);
                 }
                 // Create PublicBeamServer - client must authenticate to get full API
-                const server = new PublicBeamServer(secret, sessionConfig, c.env, c.req.raw, actions, auth, routeFetcher);
+                const server = new PublicBeamServer(secret, sessionConfig, c.env, c.req.raw, actions, auth, routeFetcher, actionFetcher, actionBasePath);
                 // Use capnweb to handle the RPC connection
                 return newWorkersRpcResponse(c.req.raw, server);
             });
@@ -720,7 +890,9 @@ class PublicBeamServer extends RpcTarget {
     actions;
     auth;
     routeFetcher;
-    constructor(secret, sessionConfig, env, request, actions, auth, routeFetcher) {
+    actionFetcher;
+    actionBasePath;
+    constructor(secret, sessionConfig, env, request, actions, auth, routeFetcher, actionFetcher, actionBasePath) {
         super();
         this.secret = secret;
         this.sessionConfig = sessionConfig;
@@ -729,6 +901,8 @@ class PublicBeamServer extends RpcTarget {
         this.actions = actions;
         this.auth = auth;
         this.routeFetcher = routeFetcher;
+        this.actionFetcher = actionFetcher;
+        this.actionBasePath = actionBasePath;
     }
     /**
      * Authenticate with a token and return the authenticated API
@@ -773,7 +947,7 @@ class PublicBeamServer extends RpcTarget {
             session,
         });
         // Return the authenticated BeamServer
-        return new BeamServer(ctx, this.actions, this.routeFetcher);
+        return new BeamServer(ctx, this.actions, this.routeFetcher, this.actionFetcher, this.actionBasePath);
     }
 }
 /**

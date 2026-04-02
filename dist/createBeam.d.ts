@@ -1,3 +1,4 @@
+import type { Context } from 'hono';
 import { RpcTarget } from 'capnweb';
 import type { ActionHandler, ActionResponse, VisitOptions, VisitResponse, BeamConfig, BeamInstance, BeamContext, BeamSession, SessionConfig, AuthTokenPayload } from './types';
 /**
@@ -59,6 +60,7 @@ declare function parseSessionFromRequest(request: Request, cookieName: string): 
  */
 declare function parseSessionDataFromRequest(request: Request): Record<string, unknown>;
 type RouteFetcher<TEnv extends object> = (request: Request, env: TEnv) => Promise<Response>;
+type ActionFetcher<TEnv extends object> = (request: Request, env: TEnv) => Promise<Response>;
 declare function decodeHtmlEntities(value: string): string;
 declare function computeAssetSignature(headHtml: string): string;
 /**
@@ -68,6 +70,7 @@ declare function createBeamContext<TEnv>(base: {
     env: TEnv;
     user: import('./types').BeamUser | null;
     request: Request;
+    requestContext?: Context;
     session: BeamSession;
 }): BeamContext<TEnv>;
 declare function isAsyncGenerator(value: unknown): value is AsyncGenerator<unknown>;
@@ -84,8 +87,10 @@ declare class BeamServer<TEnv extends object> extends RpcTarget {
     private ctx;
     private actions;
     private routeFetcher?;
+    private actionFetcher?;
+    private actionBasePath?;
     private clientCallback;
-    constructor(ctx: BeamContext<TEnv>, actions: Record<string, ActionHandler<TEnv>>, routeFetcher?: RouteFetcher<TEnv>);
+    constructor(ctx: BeamContext<TEnv>, actions: Record<string, ActionHandler<TEnv>>, routeFetcher?: RouteFetcher<TEnv>, actionFetcher?: ActionFetcher<TEnv>, actionBasePath?: string);
     /**
      * Call an action handler, returning a ReadableStream of ActionResponses.
      * Supports both regular handlers (single response) and async generators (multiple responses).
@@ -142,7 +147,9 @@ declare class PublicBeamServer<TEnv extends object> extends RpcTarget {
     private actions;
     private auth;
     private routeFetcher?;
-    constructor(secret: string, sessionConfig: SessionConfig<TEnv> | undefined, env: TEnv, request: Request, actions: Record<string, ActionHandler<TEnv>>, auth: ((request: Request, env: TEnv) => Promise<import('./types').BeamUser | null>) | undefined, routeFetcher?: RouteFetcher<TEnv>);
+    private actionFetcher?;
+    private actionBasePath?;
+    constructor(secret: string, sessionConfig: SessionConfig<TEnv> | undefined, env: TEnv, request: Request, actions: Record<string, ActionHandler<TEnv>>, auth: ((request: Request, env: TEnv) => Promise<import('./types').BeamUser | null>) | undefined, routeFetcher?: RouteFetcher<TEnv>, actionFetcher?: ActionFetcher<TEnv>, actionBasePath?: string);
     /**
      * Authenticate with a token and return the authenticated API
      * This is the only method available on the public API

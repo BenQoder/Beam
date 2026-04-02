@@ -1,4 +1,4 @@
-import type { Env as HonoEnv, Hono, MiddlewareHandler } from 'hono'
+import type { Context, Env as HonoEnv, Hono, MiddlewareHandler } from 'hono'
 
 /**
  * User type - customize per app via module augmentation
@@ -69,6 +69,8 @@ export interface BeamContext<TEnv = object> {
   env: TEnv
   user: BeamUser | null // null = guest
   request: Request // original request for headers/cookies
+  /** Live Hono request context when the action is executed through Beam's internal request pipeline */
+  requestContext?: Context
   session: BeamSession // session storage (uses KV)
 
   /**
@@ -118,6 +120,18 @@ export interface BeamContext<TEnv = object> {
    * @example ctx.drawer(render(<MyDrawer />), { position: 'left', size: 'large', spacing: 20 })
    */
   drawer(html: string | Promise<string>, options?: { position?: string; size?: string; spacing?: number }): ActionResponse | Promise<ActionResponse>
+}
+
+export interface BeamResolvedRequest<TEnv = object> {
+  ctx: BeamContext<TEnv>
+  user: BeamUser | null
+  sessionId: string | null
+  authToken: string
+  sessionSecret?: string
+  cookieSession: {
+    isDirty(): boolean
+    getData(): Record<string, unknown>
+  } | null
 }
 
 /**
@@ -260,6 +274,10 @@ export interface BeamConfig<TEnv = object> {
 export interface BeamInitOptions {
   /** WebSocket endpoint path (default: '/beam') */
   endpoint?: string
+  /** Optional internal Hono app used to run per-call Beam middleware on server-side RPC calls */
+  rpcMiddlewareApp?: Hono<any>
+  /** Optional internal fetcher used by RPC callers to route action invocations through middleware */
+  actionFetcher?: (request: Request, env: any) => Promise<Response>
 }
 
 /**
@@ -270,6 +288,8 @@ export interface BeamVariables<TEnv = object> {
   beam: BeamContext<TEnv>
   /** Short-lived auth token for in-band WebSocket authentication */
   beamAuthToken: string
+  /** Internal per-request Beam resolution details used by streamed action routes */
+  beamResolvedRequest?: BeamResolvedRequest<TEnv>
 }
 
 /**

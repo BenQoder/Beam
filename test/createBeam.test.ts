@@ -10,6 +10,10 @@ import {
   beamTokenMeta,
   createBeam,
 } from '../src/createBeam'
+import {
+  BEAM_ACTION_REQUEST_HEADER,
+  BEAM_ACTION_STREAM_CONTENT_TYPE,
+} from '../src/actionStream'
 
 describe('createBeam server utilities', () => {
   afterEach(() => {
@@ -142,6 +146,44 @@ describe('createBeam server utilities', () => {
 
     expect(await readAll(server.call('greet'))).toEqual([{ html: 'hello' }])
     expect(await readAll(server.call('stream'))).toEqual([{ html: 'first' }, { html: 'second' }])
+  })
+
+  it('BeamServer.call routes through the configured action fetcher when available', async () => {
+    const ctx = __beamCreateBeamInternals.createBeamContext({
+      env: {},
+      user: null,
+      request: new Request('https://example.com/beam', {
+        headers: { Cookie: 'beam_sid=session123.sig' },
+      }),
+      session: new CookieSession(),
+    })
+
+    const actionFetcher = vi.fn(async (request: Request) => {
+      expect(request.url).toBe('https://example.com/beam/actions/greet')
+      expect(request.headers.get(BEAM_ACTION_REQUEST_HEADER)).toBe('action')
+      expect(request.headers.get('content-type')).toContain('application/json')
+      expect(await request.json()).toEqual({ name: 'Beam' })
+
+      return new Response('{"html":"from route"}\n', {
+        headers: { 'content-type': BEAM_ACTION_STREAM_CONTENT_TYPE },
+      })
+    })
+
+    const server = new BeamServer(ctx, {
+      greet: () => 'direct',
+    }, undefined, actionFetcher as any, '/beam/actions')
+
+    const reader = server.call('greet', { name: 'Beam' }).getReader()
+    const values: any[] = []
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      values.push(value)
+    }
+    reader.releaseLock()
+
+    expect(actionFetcher).toHaveBeenCalledTimes(1)
+    expect(values).toEqual([{ html: 'from route' }])
   })
 
   it('BeamServer.visit returns a structured visit payload for SSR routes', async () => {
@@ -293,5 +335,81 @@ describe('createBeam server utilities', () => {
     const res = await app.request(upgradeReq)
     expect(res.status).toBe(426)
     expect(await res.text()).toBe('Expected WebSocket')
+  })
+
+  it('init wires rpcMiddlewareApp for internal action fetches without exposing a public route', async () => {
+    const beam = createBeam({
+      actions: {
+        greet: (_ctx, data) => ({ html: `Hello ${String(data.name ?? 'guest')}` }),
+      },
+    })
+
+    const app = new Hono()
+    const rpcApp = new Hono()
+    const middlewareSpy = vi.fn()
+
+    rpcApp.use('*', async (c, next) => {
+      middlewareSpy(c.req.path)
+      await next()
+    })
+
+    beam.init(app, { endpoint: '/rpc', rpcMiddlewareApp: rpcApp })
+
+    const internalRes = await rpcApp.request('https://example.com/rpc/actions/greet', {
+      method: 'POST',
+      headers: {
+        [BEAM_ACTION_REQUEST_HEADER]: 'action',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ name: 'Beam' }),
+    })
+
+    expect(internalRes.status).toBe(200)
+    expect(middlewareSpy).toHaveBeenCalledWith('/rpc/actions/greet')
+    expect(internalRes.headers.get('content-type')).toContain(BEAM_ACTION_STREAM_CONTENT_TYPE)
+    expect(await internalRes.text()).toBe('{"html":"Hello Beam"}\n')
+
+    const publicRes = await app.request('https://example.com/rpc/actions/greet', {
+      method: 'POST',
+      headers: {
+        [BEAM_ACTION_REQUEST_HEADER]: 'action',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ name: 'Beam' }),
+    })
+
+    expect(publicRes.status).toBe(404)
+  })
+
+  it('exposes the live Hono request context inside actions routed through rpcMiddlewareApp', async () => {
+    const beam = createBeam({
+      actions: {
+        greet: (ctx) => ({
+          html: `${ctx.requestContext?.req.param('action')}:${(ctx.requestContext as any)?.get('traceId')}`,
+        }),
+      },
+    })
+
+    const app = new Hono()
+    const rpcApp = new Hono()
+
+    rpcApp.use('*', async (c, next) => {
+      c.set('traceId', 'trace-123' as any)
+      await next()
+    })
+
+    beam.init(app, { endpoint: '/rpc', rpcMiddlewareApp: rpcApp })
+
+    const res = await rpcApp.request('https://example.com/rpc/actions/greet', {
+      method: 'POST',
+      headers: {
+        [BEAM_ACTION_REQUEST_HEADER]: 'action',
+        'content-type': 'application/json',
+      },
+      body: '{}',
+    })
+
+    expect(res.status).toBe(200)
+    expect(await res.text()).toBe('{"html":"greet:trace-123"}\n')
   })
 })

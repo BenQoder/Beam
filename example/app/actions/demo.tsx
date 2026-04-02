@@ -44,6 +44,30 @@ export async function greet(_ctx: BeamContext<Env>, { name, emoji }: Record<stri
   )
 }
 
+export async function inspectRequestContext(ctx: BeamContext<Env>, _params: Record<string, unknown>): Promise<string> {
+  const requestContext = ctx.requestContext
+  const details = {
+    method: requestContext?.req.method ?? null,
+    path: requestContext?.req.path ?? null,
+    action: requestContext?.req.param('action') ?? null,
+    beamTransport: requestContext?.req.header('x-beam-transport') ?? null,
+    traceId: requestContext?.get('rpcTraceId') ?? null,
+    hasBeamContext: Boolean(requestContext?.get('beam')),
+  }
+
+  return render(
+    <div class="demo-box success-box">
+      <strong>requestContext snapshot</strong>
+      <pre style="margin: 0.75rem 0 0; font-size: 0.875rem; overflow-x: auto;">
+        {JSON.stringify(details, null, 2)}
+      </pre>
+      <div style="margin-top: 0.75rem; font-size: 0.875rem; color: #666;">
+        This came from the internal Hono request pipeline plus rpc middleware.
+      </div>
+    </div>
+  )
+}
+
 // ============ BEAM-INCLUDE TEST ============
 
 export async function testInclude(_ctx: BeamContext<Env>, params: Record<string, unknown>): Promise<string> {

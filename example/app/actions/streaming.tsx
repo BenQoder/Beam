@@ -112,6 +112,57 @@ export async function* streamText(ctx: BeamContext<Env>, _params: Record<string,
   )
 }
 
+// ============ STREAMING requestContext ============
+// Proves the live Hono context is available inside async generator actions too
+
+export async function* streamRequestContext(ctx: BeamContext<Env>, _params: Record<string, unknown>) {
+  const requestContext = ctx.requestContext
+  const traceId = requestContext?.get('rpcTraceId') ?? null
+  const details = {
+    method: requestContext?.req.method ?? null,
+    path: requestContext?.req.path ?? null,
+    action: requestContext?.req.param('action') ?? null,
+    beamTransport: requestContext?.req.header('x-beam-transport') ?? null,
+    traceId,
+    hasBeamContext: Boolean(requestContext?.get('beam')),
+  }
+
+  yield ctx.render(
+    <div id="request-context-stream-output" class="pipeline">
+      <div class="pipeline-step running">Connecting streamed action to requestContext…</div>
+      <div class="pipeline-step pending">Waiting for middleware data…</div>
+      <div class="pipeline-step pending">Preparing final snapshot…</div>
+    </div>
+  )
+
+  await delay(450)
+
+  yield ctx.render(
+    <div id="request-context-stream-output" class="pipeline">
+      <div class="pipeline-step done">✅ Request method: {details.method}</div>
+      <div class="pipeline-step done">✅ Request path: {details.path}</div>
+      <div class="pipeline-step running">⏳ Action name: {details.action}</div>
+      <div class="pipeline-step pending">Transport and middleware trace incoming…</div>
+    </div>
+  )
+
+  await delay(550)
+
+  yield ctx.render(
+    <div id="request-context-stream-output" class="pipeline">
+      <div class="pipeline-step done">✅ Request method: {details.method}</div>
+      <div class="pipeline-step done">✅ Request path: {details.path}</div>
+      <div class="pipeline-step done">✅ Action name: {details.action}</div>
+      <div class="pipeline-step done">✅ Beam transport: {details.beamTransport}</div>
+      <div class="pipeline-step done">✅ rpcTraceId from middleware: {details.traceId}</div>
+      <div class="pipeline-complete">
+        requestContext remained available for the whole streamed action.
+      </div>
+      <pre style="margin: 0; padding: 12px; border-radius: 8px; background: #0f172a; color: #e2e8f0; font-size: 0.8rem; overflow-x: auto;">{JSON.stringify(details, null, 2)}</pre>
+    </div>
+  )
+}
+
 // ============ STREAMING STATE ============
 // Yield named state updates without replacing DOM
 

@@ -49,6 +49,21 @@ export default createRoute(async (c) => {
         </div>
       </div>
 
+      <div class="demo-section">
+        <h2>2a. requestContext</h2>
+        <p class="text-muted">
+          Shows data coming from the internal Hono request plus rpc middleware for this action call.
+        </p>
+        <div id="request-context-display" class="demo-box">
+          Click the button to inspect <code>ctx.requestContext</code>.
+        </div>
+        <div class="demo-actions">
+          <button beam-action="inspectRequestContext" beam-target="#request-context-display">
+            Inspect requestContext
+          </button>
+        </div>
+      </div>
+
       {/* beam-include */}
       <div class="demo-section">
         <h2>2b. Include Inputs (beam-include)</h2>
