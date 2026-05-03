@@ -3,10 +3,10 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "dev": "wrangler dev",
-    "build": "npm run build:beam && vite build && vite build --mode client",
+    "dev": "npx wrangler dev --port 8791",
+    "build": "npm run build:beam && beam build",
     "build:beam": "cd .. && npm run build",
-    "deploy": "npm run build && wrangler deploy"
+    "deploy": "wrangler deploy"
   },
   "dependencies": {
     "@benqoder/beam": "file:..",

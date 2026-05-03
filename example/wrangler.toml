@@ -6,6 +6,10 @@ compatibility_flags = ["nodejs_compat"]
 [assets]
 directory = "./dist"
 
+[build]
+command = "npx --no-install beam build --dev"
+watch_dir = "app"
+
 # Bindings
 [[d1_databases]]
 binding = "DB"

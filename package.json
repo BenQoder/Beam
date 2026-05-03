@@ -27,6 +27,10 @@
       "types": "./dist/directives.d.ts",
       "import": "./dist/directives.js"
     },
+    "./dev-refresh": {
+      "types": "./dist/dev-refresh.d.ts",
+      "import": "./dist/dev-refresh.js"
+    },
     "./vite": {
       "types": "./dist/vite.d.ts",
       "import": "./dist/vite.js"
@@ -36,6 +40,9 @@
     },
     "./styles": "./src/beam.css",
     "./beam.css": "./src/beam.css"
+  },
+  "bin": {
+    "beam": "./dist/cli.js"
   },
   "files": [
     "dist",
@@ -69,6 +76,7 @@
     "jsdom": "^26.1.0",
     "typescript": "^5.0.0",
     "vite": "^6.0.0",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.4",
+    "@types/node": "^25.6.0"
   }
 }

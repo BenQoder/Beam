@@ -48,6 +48,40 @@ A lightweight, declarative UI framework for building interactive web application
 npm install @benqoder/beam
 ```
 
+## Wrangler-First Development
+
+Beam actions run over WebSocket RPC, so Cloudflare Workers apps should be developed through Wrangler rather than a standalone Vite dev server. The Beam CLI provides a build command that creates both the Worker bundle and client assets:
+
+```bash
+beam build
+```
+
+Add it to Wrangler's build hook so `wrangler dev` works from a clean checkout without manually running `npm run build` first. Use `--dev` for local development; normal production builds remove dev-only refresh artifacts.
+
+```toml
+# wrangler.toml
+main = "./dist/index.js"
+
+[assets]
+directory = "./dist"
+
+[build]
+command = "npx --no-install beam build --dev"
+watch_dir = "app"
+```
+
+With that configuration, `wrangler dev` runs `beam build --dev` before Miniflare starts and rebuilds when files in `app/` change. This keeps the Worker, assets, and WebSocket endpoint on the same origin, avoiding the split Vite/Worker setup that can break Beam RPC connections.
+
+For development-only DOM refresh, add the dev refresh script when `VITE_BEAM_DEV_REFRESH=1` is present:
+
+```tsx
+{import.meta.env.VITE_BEAM_DEV_REFRESH === '1' && (
+  <script type="module" src="/static/dev-refresh.js"></script>
+)}
+```
+
+`beam build --dev` writes `/__beam_dev.json` and builds `/static/dev-refresh.js`. The browser polls that manifest; server-only changes fetch the current page and morph the matching root (`[beam-dev-refresh-root]`, `[beam-boost]`, or `body`) while preserving focused inputs and `[beam-keep]` nodes. Asset changes fall back to a full reload.
+
 ## Quick Start
 
 ### 1. Add the Vite Plugin

@@ -5,6 +5,8 @@ import { defineConfig } from 'vite'
 import { beamPlugin } from '@benqoder/beam/vite'
 
 export default defineConfig(({ mode }) => {
+  const devRefresh = process.env.BEAM_BUILD_DEV === '1'
+  const clientInputs = ['./app/client.ts', './app/styles.css', ...(devRefresh ? ['./app/dev-refresh.ts'] : [])]
   const common = {
     plugins: [
       beamPlugin({
@@ -20,9 +22,9 @@ export default defineConfig(({ mode }) => {
       ...common,
       build: {
         rollupOptions: {
-          input: ['./app/client.ts', './app/styles.css'],
+          input: clientInputs,
           output: {
-            entryFileNames: 'static/[name].js',
+            entryFileNames: (chunk) => chunk.name === 'dev-refresh' ? 'static/dev-refresh.js' : 'static/[name].js',
             assetFileNames: 'static/[name].[ext]',
           },
         },

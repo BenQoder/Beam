@@ -9,9 +9,7 @@ type Props = {
 }
 
 export function Layout({ title = 'My App', children, cartCount = 0, authToken }: Props) {
-  const isDev = (import.meta as any).env?.DEV ?? false
-  const stylesHref = isDev ? '/app/styles.css' : '/static/styles.css'
-  const clientSrc = isDev ? '/app/client.ts' : '/static/client.js'
+  const enableDevRefresh = import.meta.env.VITE_BEAM_DEV_REFRESH === '1'
 
   return (
     <html lang="en">
@@ -20,7 +18,7 @@ export function Layout({ title = 'My App', children, cartCount = 0, authToken }:
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <title>{title}</title>
         {authToken && <meta name="beam-token" content={authToken} />}
-        <link rel="stylesheet" href={stylesHref} />
+        <link rel="stylesheet" href="/static/styles.css" />
       </head>
       <body>
         <div id="app-shell" beam-boost>
@@ -47,7 +45,8 @@ export function Layout({ title = 'My App', children, cartCount = 0, authToken }:
           </footer>
         </div>
 
-        <script type="module" src={clientSrc}></script>
+        <script type="module" src="/static/client.js"></script>
+        {enableDevRefresh && <script type="module" src="/static/dev-refresh.js"></script>}
       </body>
     </html>
   )
