@@ -46,6 +46,7 @@
   },
   "files": [
     "dist",
+    "templates",
     "src/beam.css",
     "src/virtual-beam.d.ts"
   ],

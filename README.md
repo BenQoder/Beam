@@ -48,6 +48,29 @@ A lightweight, declarative UI framework for building interactive web application
 npm install @benqoder/beam
 ```
 
+## Create or Initialize an App
+
+Beam ships its scaffolding in the same package as the framework.
+
+Create a new HonoX + Beam + Wrangler app:
+
+```bash
+npx @benqoder/beam create my-app
+cd my-app
+npm install
+npm run dev
+```
+
+Add Beam to an existing HonoX project:
+
+```bash
+npx @benqoder/beam init
+npm install
+npm run dev
+```
+
+`init` writes `wrangler.json`, updates `package.json`, adds missing starter files, and skips existing source files unless `--force` is provided.
+
 ## Wrangler-First Development
 
 Beam actions run over WebSocket RPC, so Cloudflare Workers apps should be developed through Wrangler rather than a standalone Vite dev server. The Beam CLI provides a build command that creates both the Worker bundle and client assets:
@@ -58,16 +81,17 @@ beam build
 
 Add it to Wrangler's build hook so `wrangler dev` works from a clean checkout without manually running `npm run build` first. Use `--dev` for local development; normal production builds remove dev-only refresh artifacts.
 
-```toml
-# wrangler.toml
-main = "./dist/index.js"
-
-[assets]
-directory = "./dist"
-
-[build]
-command = "npx --no-install beam build --dev"
-watch_dir = "app"
+```json
+{
+  "main": "./dist/index.js",
+  "assets": {
+    "directory": "./dist"
+  },
+  "build": {
+    "command": "npx --no-install beam build --dev",
+    "watch_dir": "app"
+  }
+}
 ```
 
 With that configuration, `wrangler dev` runs `beam build --dev` before Miniflare starts and rebuilds when files in `app/` change. This keeps the Worker, assets, and WebSocket endpoint on the same origin, avoiding the split Vite/Worker setup that can break Beam RPC connections.
@@ -2159,11 +2183,14 @@ beamPlugin({
 });
 ```
 
-2. **Add SESSION_SECRET to wrangler.toml:**
+2. **Add SESSION_SECRET to wrangler.json:**
 
-```toml
-[vars]
-SESSION_SECRET = "your-secret-key-change-in-production"
+```json
+{
+  "vars": {
+    "SESSION_SECRET": "your-secret-key-change-in-production"
+  }
+}
 ```
 
 3. **Use in actions:**
@@ -2247,14 +2274,18 @@ export default (sessionId: string, env: { KV: KVNamespace }) =>
   new KVSession(sessionId, env.KV);
 ```
 
-```toml
-# wrangler.toml
-[[kv_namespaces]]
-binding = "KV"
-id = "your-kv-namespace-id"
-
-[vars]
-SESSION_SECRET = "your-secret-key"
+```json
+{
+  "kv_namespaces": [
+    {
+      "binding": "KV",
+      "id": "your-kv-namespace-id"
+    }
+  ],
+  "vars": {
+    "SESSION_SECRET": "your-secret-key"
+  }
+}
 ```
 
 ### Architecture

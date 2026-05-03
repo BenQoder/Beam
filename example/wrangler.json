@@ -1,0 +1,30 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "capnweb-app",
+  "main": "./dist/index.js",
+  "compatibility_date": "2024-01-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "./dist"
+  },
+  "build": {
+    "command": "npx --no-install beam build --dev",
+    "watch_dir": "app"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "capnweb-db",
+      "database_id": "local"
+    }
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "KV",
+      "id": "cart-kv"
+    }
+  ],
+  "vars": {
+    "SESSION_SECRET": "dev-secret-change-in-production"
+  }
+}
