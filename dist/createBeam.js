@@ -259,6 +259,21 @@ function createBeamContext(base) {
                 : idOrUpdates;
             return { state };
         },
+        island: (idOrUpdates, props, options) => {
+            if (typeof idOrUpdates === 'string' && options) {
+                // Upsert form: create the island in options.target when missing
+                return { islandUpserts: { [idOrUpdates]: { ...options, props: props ?? {} } } };
+            }
+            const islands = typeof idOrUpdates === 'string'
+                ? { [idOrUpdates]: props ?? {} }
+                : idOrUpdates;
+            return { islands };
+        },
+        removeIsland: (...ids) => ({ removeIslands: ids }),
+        json: (value) => ({ json: value }),
+        event: (name, data) => ({
+            event: data === undefined ? { name } : { name, data },
+        }),
         script: (code) => ({ script: code }),
         render: (content, options) => {
             // Helper to build response without undefined values
@@ -428,6 +443,11 @@ class BeamServer extends RpcTarget {
         this.routeFetcher = routeFetcher;
         this.actionFetcher = actionFetcher;
         this.actionBasePath = actionBasePath;
+        // Expose the client callback to action handlers so the server can push
+        // data at any time during the connection: await ctx.notify?.('name', data)
+        this.ctx.notify = async (event, data) => {
+            await this.notify(event, data);
+        };
     }
     /**
      * Call an action handler, returning a ReadableStream of ActionResponses.

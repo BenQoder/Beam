@@ -346,6 +346,25 @@ function createBeamContext<TEnv>(base: {
         : idOrUpdates
       return { state }
     },
+    island: (
+      idOrUpdates: string | Record<string, Record<string, unknown>>,
+      props?: Record<string, unknown>,
+      options?: import('./types').IslandMountOptions
+    ): ActionResponse => {
+      if (typeof idOrUpdates === 'string' && options) {
+        // Upsert form: create the island in options.target when missing
+        return { islandUpserts: { [idOrUpdates]: { ...options, props: props ?? {} } } }
+      }
+      const islands = typeof idOrUpdates === 'string'
+        ? { [idOrUpdates]: props ?? {} }
+        : idOrUpdates
+      return { islands }
+    },
+    removeIsland: (...ids: string[]): ActionResponse => ({ removeIslands: ids }),
+    json: (value: unknown): ActionResponse => ({ json: value }),
+    event: (name: string, data?: unknown): ActionResponse => ({
+      event: data === undefined ? { name } : { name, data },
+    }),
     script: (code: string): ActionResponse => ({ script: code }),
     render: (
       content: string | Promise<string> | (string | Promise<string>)[],
@@ -534,6 +553,12 @@ class BeamServer<TEnv extends object> extends RpcTarget {
     this.routeFetcher = routeFetcher
     this.actionFetcher = actionFetcher
     this.actionBasePath = actionBasePath
+
+    // Expose the client callback to action handlers so the server can push
+    // data at any time during the connection: await ctx.notify?.('name', data)
+    this.ctx.notify = async (event: string, data?: unknown) => {
+      await this.notify(event, data)
+    }
   }
 
   /**

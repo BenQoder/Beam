@@ -37,6 +37,45 @@ export interface NamedStateUpdates {
   [id: string]: unknown
 }
 
+/**
+ * React island props updates keyed by the island's beam-id
+ */
+export interface IslandPropsUpdates {
+  [id: string]: Record<string, unknown>
+}
+
+/**
+ * Options for server-driven island creation (ctx.island upsert form)
+ */
+export interface IslandMountOptions {
+  /** Component name (registry) — required when the island doesn't exist yet */
+  component?: string
+  /** Runtime module URL (dynamic islands) — must match an allowed source prefix */
+  src?: string
+  /** CSS selector to create the island in — required when it doesn't exist yet */
+  target?: string
+  /** How to insert into the target: append (default), prepend, or replace its content */
+  swap?: 'append' | 'prepend' | 'replace'
+  /** Mount strategy for the created island */
+  load?: 'eager' | 'visible' | 'idle'
+}
+
+/**
+ * Server-driven island upserts keyed by beam-id: update props when mounted,
+ * create the island in `target` when not.
+ */
+export interface IslandUpserts {
+  [id: string]: IslandMountOptions & { props?: Record<string, unknown> }
+}
+
+/**
+ * Named event pushed to the client (dispatched as 'beam:server-event')
+ */
+export interface BeamServerEvent {
+  name: string
+  data?: unknown
+}
+
 export type VisitMode = 'visit' | 'patch' | 'navigate'
 
 export interface VisitOptions {
@@ -81,6 +120,52 @@ export interface BeamContext<TEnv = object> {
    */
   state(id: string, value: unknown): ActionResponse
   state(updates: NamedStateUpdates): ActionResponse
+
+  /**
+   * Update the props of one or more mounted React islands (by beam-id).
+   * The island re-renders with the new props while keeping its local React state.
+   * With options, becomes an upsert: creates the island in `options.target`
+   * when it is not on the page yet.
+   * @example ctx.island('salesChart', { series })
+   * @example ctx.island({ salesChart: { series }, cartBadge: { count: 3 } })
+   * @example ctx.island('recs', { items }, { component: 'RecRail', target: '#below-cart' })
+   */
+  island(id: string, props: Record<string, unknown>): ActionResponse
+  island(updates: IslandPropsUpdates): ActionResponse
+  island(id: string, props: Record<string, unknown>, options: IslandMountOptions): ActionResponse
+
+  /**
+   * Remove one or more islands (by beam-id): unmounts the React root and
+   * deletes the element from the DOM.
+   * @example ctx.removeIsland('recs')
+   * @example ctx.removeIsland('recs', 'promoBanner')
+   */
+  removeIsland(...ids: string[]): ActionResponse
+
+  /**
+   * Return plain JSON to the caller — no DOM update, no state, no events.
+   * The value resolves the calling side's promise (useBeamAction / window.beam),
+   * private to that caller. In streaming actions, yield it last: the caller
+   * receives the final chunk.
+   * @example return ctx.json(await db.search(q))
+   */
+  json(value: unknown): ActionResponse
+
+  /**
+   * Push a named event to the client (dispatched as 'beam:server-event',
+   * received by useBeamEvent / window listeners). Works from streaming
+   * generators too — yield it whenever you want.
+   * @example yield ctx.event('order:shipped', { orderId })
+   */
+  event(name: string, data?: unknown): ActionResponse
+
+  /**
+   * Fire-and-forget push to this client outside the response stream.
+   * Available on the live WebSocket session (undefined in the per-call
+   * HTTP middleware pipeline) — prefer ctx.event() for transport-agnostic pushes.
+   * @example await ctx.notify?.('job:progress', { pct: 40 })
+   */
+  notify?: (event: string, data?: unknown) => Promise<void>
 
   /**
    * Return JavaScript to execute on the client (no DOM update)
@@ -190,6 +275,16 @@ export interface ActionResponse {
   html?: string | string[]
   /** Named reactive state updates keyed by beam-id */
   state?: NamedStateUpdates
+  /** React island props updates keyed by beam-id */
+  islands?: IslandPropsUpdates
+  /** React island upserts keyed by beam-id (create when missing, update when mounted) */
+  islandUpserts?: IslandUpserts
+  /** beam-ids of islands to remove from the page */
+  removeIslands?: string[]
+  /** Named event to dispatch on the client ('beam:server-event') */
+  event?: BeamServerEvent
+  /** Plain JSON payload for the caller — applied nowhere, returned to the call site */
+  json?: unknown
   /** JavaScript to execute on client (optional) */
   script?: string
   /** URL to redirect to (optional) */

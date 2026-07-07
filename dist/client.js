@@ -638,6 +638,10 @@ function collectPreservedNodes(target, keepSelectors = []) {
     const shouldPreserve = (el) => {
         if (el.hasAttribute('beam-keep'))
             return true;
+        // React islands are client-owned: preserve them (and their React state)
+        // across server swaps unless explicitly opted out.
+        if (el.hasAttribute('beam-island') && !el.hasAttribute('beam-island-remount'))
+            return true;
         for (const selector of keepSelectors) {
             try {
                 if (el.matches(selector))
@@ -667,6 +671,20 @@ function restorePreservedNodes(target, preserved) {
             continue;
         if (placeholder === el)
             continue;
+        if (el.hasAttribute('beam-island')) {
+            // A renamed island is a different component — let it remount fresh.
+            if (placeholder.getAttribute('beam-island') !== el.getAttribute('beam-island'))
+                continue;
+            // Adopt the fresh server props so the mounted React root re-renders with
+            // them (local React state is preserved). Set after re-inserting: attribute
+            // mutations on detached nodes are invisible to the island observer.
+            const nextProps = placeholder.getAttribute('beam-props');
+            placeholder.replaceWith(el);
+            if (nextProps !== null && nextProps !== el.getAttribute('beam-props')) {
+                el.setAttribute('beam-props', nextProps);
+            }
+            continue;
+        }
         placeholder.replaceWith(el);
     }
 }
@@ -935,6 +953,80 @@ function applyStateResponse(stateUpdates) {
         });
     });
 }
+/**
+ * Apply server-driven React island props updates (ctx.island(id, props)).
+ * Writing beam-props keeps the DOM as the source of truth; the react runtime
+ * observes the attribute change and re-renders the mounted root.
+ */
+function applyIslandPropsResponse(updates) {
+    Object.entries(updates).forEach(([id, props]) => {
+        const el = document.querySelector(`[beam-island][beam-id="${escapeCss(id)}"]`);
+        if (!el) {
+            console.warn(`[beam] Island "${id}" not found on page, skipping props update`);
+            return;
+        }
+        el.setAttribute('beam-props', JSON.stringify(props ?? {}));
+    });
+}
+/**
+ * Apply island upserts (ctx.island(id, props, options)): update props when the
+ * island is already on the page, otherwise create its marker element in the
+ * target — the islands runtime observes the insertion and mounts it.
+ */
+function applyIslandUpserts(upserts) {
+    Object.entries(upserts).forEach(([id, spec]) => {
+        const existing = document.querySelector(`[beam-island][beam-id="${escapeCss(id)}"]`);
+        if (existing) {
+            // Structural fields (component/src/target) are creation-only; changing
+            // them on a live island requires removeIsland + a fresh upsert.
+            existing.setAttribute('beam-props', JSON.stringify(spec.props ?? {}));
+            return;
+        }
+        if (!spec.component && !spec.src) {
+            console.warn(`[beam] Island upsert "${id}" needs a component or src to be created, skipping`);
+            return;
+        }
+        if (!spec.target) {
+            console.warn(`[beam] Island upsert "${id}" is not on the page and has no target, skipping`);
+            return;
+        }
+        const target = $(spec.target);
+        if (!target) {
+            console.warn(`[beam] Island upsert "${id}": target "${spec.target}" not found, skipping`);
+            return;
+        }
+        const el = document.createElement('div');
+        el.setAttribute('beam-island', spec.component ?? id);
+        el.setAttribute('beam-id', id);
+        el.setAttribute('beam-props', JSON.stringify(spec.props ?? {}));
+        if (spec.src)
+            el.setAttribute('beam-island-src', spec.src);
+        if (spec.load && spec.load !== 'eager')
+            el.setAttribute('beam-island-load', spec.load);
+        switch (spec.swap) {
+            case 'prepend':
+                target.insertBefore(el, target.firstChild);
+                break;
+            case 'replace':
+                target.innerHTML = '';
+                target.appendChild(el);
+                break;
+            default:
+                target.appendChild(el);
+        }
+    });
+}
+/** Remove islands by beam-id — the islands runtime unmounts their roots. */
+function applyIslandRemovals(ids) {
+    ids.forEach((id) => {
+        const el = document.querySelector(`[beam-island][beam-id="${escapeCss(id)}"]`);
+        if (!el) {
+            console.warn(`[beam] Island "${id}" not found on page, skipping removal`);
+            return;
+        }
+        el.remove();
+    });
+}
 // ============ RPC WRAPPER ============
 /**
  * Apply a single ActionResponse chunk to the DOM.
@@ -955,6 +1047,18 @@ function applyResponse(response, frontendTarget, frontendSwap, trigger) {
     }
     if (response.state) {
         applyStateResponse(response.state);
+    }
+    if (response.islands) {
+        applyIslandPropsResponse(response.islands);
+    }
+    if (response.islandUpserts) {
+        applyIslandUpserts(response.islandUpserts);
+    }
+    if (response.removeIslands) {
+        applyIslandRemovals(response.removeIslands);
+    }
+    if (response.event) {
+        handleServerEvent(response.event.name, response.event.data);
     }
     handleHtmlResponse(response, frontendTarget, frontendSwap, trigger);
     if (response.script)

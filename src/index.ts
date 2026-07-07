@@ -2,6 +2,8 @@
 
 export { createBeam, KVSession, CookieSession, beamTokenMeta } from './createBeam'
 export { render } from './render'
+export { Island, beamIslandImportMap, ISLAND_SHARED_MODULES } from './island'
+export type { IslandProps } from './island'
 
 // Auto-discovery utilities
 export {
@@ -15,6 +17,8 @@ export type {
   ModalOptions,
   DrawerOptions,
   NamedStateUpdates,
+  IslandPropsUpdates,
+  BeamServerEvent,
   BeamConfig,
   BeamInstance,
   BeamInitOptions,

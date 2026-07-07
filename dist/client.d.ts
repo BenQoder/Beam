@@ -1,7 +1,23 @@
 import { type RpcStub } from 'capnweb';
+interface IslandUpsertSpec {
+    props?: Record<string, unknown>;
+    component?: string;
+    src?: string;
+    target?: string;
+    swap?: 'append' | 'prepend' | 'replace';
+    load?: 'eager' | 'visible' | 'idle';
+}
 interface ActionResponse {
     html?: string | string[];
     state?: Record<string, unknown>;
+    islands?: Record<string, Record<string, unknown>>;
+    islandUpserts?: Record<string, IslandUpsertSpec>;
+    removeIslands?: string[];
+    event?: {
+        name: string;
+        data?: unknown;
+    };
+    json?: unknown;
     script?: string;
     redirect?: string;
     target?: string;
@@ -139,6 +155,8 @@ declare const beamUtils: {
     getState: (elOrId: Element | string) => object | undefined;
     batch: (fn: () => void) => void;
     updateState: (id: string, value: unknown) => boolean;
+    ensureState: (id: string, initial?: Record<string, unknown>) => object;
+    effect: (fn: () => void) => (() => void);
     init: () => void;
     scan: (root?: ParentNode) => void;
     showToast: typeof showToast;

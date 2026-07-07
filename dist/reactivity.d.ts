@@ -15,6 +15,17 @@ export declare const beamReactivity: {
      */
     updateState: (id: string, value: unknown) => boolean;
     /**
+     * Get a named state, creating and registering it when missing.
+     * Lets JS/React code use a named state before (or without) any
+     * beam-state element declaring it.
+     */
+    ensureState: (id: string, initial?: Record<string, unknown>) => object;
+    /**
+     * Run fn as a reactive effect: it re-runs whenever any reactive state read
+     * inside it changes. Returns a dispose function that stops tracking.
+     */
+    effect: (fn: () => void) => (() => void);
+    /**
      * Manually initialize reactivity (called automatically on import)
      */
     init: typeof initReactivity;

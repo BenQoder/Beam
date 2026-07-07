@@ -1,4 +1,6 @@
 import type { Child } from 'hono/jsx'
+import { raw } from 'hono/html'
+import { beamIslandImportMap } from '@benqoder/beam'
 import { CartBadge } from './CartBadge'
 
 type Props = {
@@ -18,6 +20,7 @@ export function Layout({ title = 'My App', children, cartCount = 0, authToken }:
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <title>{title}</title>
         {authToken && <meta name="beam-token" content={authToken} />}
+        {raw(beamIslandImportMap())}
         <link rel="stylesheet" href="/static/styles.css" />
       </head>
       <body>

@@ -69,6 +69,12 @@ function createReactiveEffect(fn) {
     runReactiveEffect(e);
     return e;
 }
+function stopReactiveEffect(e) {
+    e.deps.forEach((s) => s.subs.delete(e));
+    e.deps.clear();
+    pendingReactiveEffects.delete(e);
+    e.run = () => { };
+}
 function runReactiveEffect(e) {
     // Clean up old deps
     e.deps.forEach((s) => s.subs.delete(e));
@@ -443,6 +449,15 @@ function parseStateValue(raw, beamId) {
 function detectNamedStateKind(raw) {
     return parseSimpleValue(raw.trim()) !== undefined ? 'simple' : 'object';
 }
+function ensureNamedState(id, initial) {
+    const existing = reactiveNamedStates.get(id);
+    if (existing)
+        return existing;
+    const state = createReactiveProxy({ ...(initial ?? {}) });
+    reactiveNamedStates.set(id, state);
+    reactiveNamedStateKinds.set(id, 'object');
+    return state;
+}
 function updateNamedState(id, value) {
     const current = reactiveNamedStates.get(id);
     if (!current) {
@@ -667,6 +682,20 @@ export const beamReactivity = {
      * Apply a server-driven update to a named state created with beam-id.
      */
     updateState: (id, value) => updateNamedState(id, value),
+    /**
+     * Get a named state, creating and registering it when missing.
+     * Lets JS/React code use a named state before (or without) any
+     * beam-state element declaring it.
+     */
+    ensureState: (id, initial) => ensureNamedState(id, initial),
+    /**
+     * Run fn as a reactive effect: it re-runs whenever any reactive state read
+     * inside it changes. Returns a dispose function that stops tracking.
+     */
+    effect: (fn) => {
+        const e = createReactiveEffect(fn);
+        return () => stopReactiveEffect(e);
+    },
     /**
      * Manually initialize reactivity (called automatically on import)
      */

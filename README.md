@@ -40,6 +40,9 @@ A lightweight, declarative UI framework for building interactive web application
 - **Multi-Render** - Update multiple targets in a single action response
 - **Async Components** - Full support for HonoX async components in `ctx.render()`
 - **Streaming Actions** - Async generator handlers push incremental updates over WebSocket (skeleton → content, live progress, AI-style text)
+- **React Islands** - Mount pure React components into server-rendered pages; the server pushes props/state/events into them at any time and they call actions at any time, all over the same WebSocket
+- **Dynamic Islands** - Load island components from URLs at runtime (per-tenant compiled artifacts, plugin systems) with an explicit source allowlist and a single shared React instance via import map
+- **Island Lifecycle & Resilience** - Lazy mounting (`beam-island-load="visible" | "idle"`), crash fallback to the server-rendered placeholder with `beam:island-error`, and server-spawned/removed islands (`ctx.island()` upsert / `ctx.removeIsland()`)
 - **requestContext Access** - Read the live Hono request context from Beam actions when per-call middleware is enabled
 
 ## Installation
@@ -526,6 +529,287 @@ export async function* openProfileModal(ctx: BeamContext<Env>, { id }: Record<st
 
 ---
 
+## React Islands
+
+Mount **pure React** components into server-rendered pages — no SSR, no hydration, no `"use client"`. Islands are first-class citizens of Beam's duplex WebSocket: **the server can push data into them at any time, and they can call the server at any time.**
+
+React is loaded lazily: pages without islands download zero React bytes; island components are code-split per file.
+
+### Setup
+
+```bash
+npm install react react-dom
+```
+
+The Vite plugin discovers islands automatically (default glob `/app/islands/*.tsx`; those files are compiled with the React JSX runtime — the rest of your app stays on hono/jsx):
+
+```typescript
+// vite.config.ts
+beamPlugin({
+  actions: '/app/actions/*.tsx',
+  islands: '/app/islands/*.tsx', // default; set false to disable
+})
+```
+
+Register them in your client entry:
+
+```typescript
+// app/client.ts
+import '@benqoder/beam/client'
+import { registerIslands } from '@benqoder/beam/islands'
+import islands from 'virtual:beam/islands'
+
+registerIslands(islands)
+```
+
+For editor type-checking, give the islands directory its own tsconfig:
+
+```json
+// app/islands/tsconfig.json
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": { "jsxImportSource": "react" },
+  "include": ["./**/*"]
+}
+```
+
+### Writing an Island
+
+```tsx
+// app/islands/Counter.tsx — plain React, hooks from '@benqoder/beam/react'
+import { useState } from 'react'
+import { useBeamAction } from '@benqoder/beam/react'
+
+export default function Counter({ initial = 0, serverMessage }: { initial?: number; serverMessage?: string }) {
+  const [count, setCount] = useState(initial)
+  const { call: sync, loading } = useBeamAction('syncCounter')
+
+  return (
+    <div>
+      <button onClick={() => setCount(count + 1)}>{count}</button>
+      <button disabled={loading} onClick={() => sync({ value: count })}>Sync</button>
+      {serverMessage && <p>{serverMessage}</p>}
+    </div>
+  )
+}
+```
+
+### Rendering an Island
+
+Use the `<Island>` helper in any route or action (server-side, hono/jsx). Children are the placeholder until React mounts:
+
+```tsx
+import { Island } from '@benqoder/beam'
+
+<Island name="Counter" id="counter" props={{ initial: 5 }}>
+  <div class="skeleton" />
+</Island>
+```
+
+This renders `<div beam-island="Counter" beam-id="counter" beam-props='{"initial":5}'>` — you can also write the attributes by hand.
+
+### Server → Client (any time)
+
+Update a mounted island's props — it re-renders **without remounting**, keeping its local React state:
+
+```tsx
+export function syncCounter(ctx: BeamContext<Env>, { value }: Record<string, unknown>) {
+  return ctx.island('counter', { initial: Number(value), serverMessage: 'Saved!' })
+}
+```
+
+Stream props and events from a generator — one push per yield over the WebSocket:
+
+```tsx
+export async function* streamTicker(ctx: BeamContext<Env>) {
+  for (let tick = 1; tick <= 15; tick++) {
+    yield ctx.island('stockTicker', { price: await nextPrice(), tick })
+    await delay(350)
+  }
+  yield ctx.event('ticker:done', { message: 'Stream complete' })
+}
+```
+
+- `ctx.island(id, props)` / `ctx.island({ id1: props1, id2: props2 })` — update island props by `beam-id`
+- `ctx.island(id, props, options)` — **upsert**: creates the island when it isn't on the page yet — `options: { component, src?, target, swap?: 'append' | 'prepend' | 'replace', load? }`
+- `ctx.removeIsland(...ids)` — unmount and delete islands from the page
+- `ctx.event(name, data)` — push a named event (received by `useBeamEvent` and `beam:server-event` listeners)
+- `ctx.state(id, value)` — update shared reactive state (React subscribes via `useBeamState`)
+- `await ctx.notify?.(name, data)` — fire-and-forget push outside the response stream (live WebSocket sessions)
+
+```tsx
+// Spawn an island anywhere, no HTML sent; remove it later
+export function spawnRecs(ctx: BeamContext<Env>) {
+  return ctx.island('recs', { items }, { component: 'RecRail', target: '#below-cart' })
+}
+export function dismissRecs(ctx: BeamContext<Env>) {
+  return ctx.removeIsland('recs')
+}
+```
+
+### Client → Server (any time)
+
+```tsx
+const { call, loading, error, data } = useBeamAction('addToCart')
+// call({ id: 42 }) — streaming chunks are applied as they arrive;
+// resolves with the final ActionResponse
+```
+
+Or outside components: `callBeamAction('addToCart', { id: 42 })`.
+
+**Plain request/response with `ctx.json()`** — when an island fetches data for itself (search, pagination, chart data), return JSON that is private to the caller: no DOM update, no state, no events.
+
+```tsx
+// server
+export async function searchProducts(ctx: BeamContext<Env>, { q }: Record<string, unknown>) {
+  return ctx.json(await db.search(q as string))
+}
+
+// island
+const { call: search, json: results } = useBeamAction<Product[]>('searchProducts')
+// declarative: `results` updates after each call — or imperative:
+const products = (await search({ q })).json as Product[]
+```
+
+One response can carry data **and** side effects — `{ ...ctx.island('cart', cart), ...ctx.json(cart) }` updates the page and answers the caller. In streaming actions, yield `ctx.json` last: the caller resolves with the final chunk.
+
+### Hooks
+
+| Hook                            | Purpose                                                                                          |
+| ------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `useBeamAction(name, options?)` | Call any action over the WebSocket; `{ call, loading, error, data, json }`                       |
+| `useBeamState(id, initial?)`    | Bind a named reactive state into React — two-way: mutate the proxy and beam-text bindings update |
+| `useBeamEvent(name, handler)`   | Subscribe to server-pushed events (`ctx.event` / `ctx.notify`)                                   |
+| `useBeamConnection()`           | `{ connected, online }` WebSocket status                                                         |
+
+`useBeamState` shares state with the attribute world — a React island and a `beam-state` div with the same `beam-id` read and write the same reactive object:
+
+```tsx
+// In the island
+const shared = useBeamState('cart', { clicks: 0 })
+<button onClick={() => { shared.clicks++ }}>Add</button>
+```
+
+```html
+<!-- Anywhere on the page, no React -->
+<div beam-state="clicks: 0" beam-id="cart">
+  Clicked <strong beam-text="clicks"></strong> times
+</div>
+```
+
+State semantics: object states shallow-merge on server updates (`ctx.state('cart', { count: 3 })` keeps `cart.total`), but nested object values replace wholesale — keep states flat-ish. Declare every key you need in `initial`: the initial shape is the subscription contract, and whichever side (island or `beam-state` element) initializes an id first creates the state, so give both the same shape.
+
+### Picking the Right Channel
+
+| You're sending…                                    | Use                    | Because                                        |
+| -------------------------------------------------- | ---------------------- | ---------------------------------------------- |
+| Shared app data (cart, session, inventory)          | `ctx.state(id, value)` | Broadcast to every subscriber, merges, survives swaps |
+| One component's inputs                              | `ctx.island(id, props)`| Scoped props semantics, remount-safe           |
+| A private answer to whoever called                  | `ctx.json(value)`      | Zero side effects anywhere else on the page    |
+| A moment-in-time notification                       | `ctx.event(name, data)`| Ephemeral, no storage, any listener can react  |
+| A rendered region                                   | `ctx.render(<Jsx />)`  | HTML over the wire, the classic Beam path      |
+
+### Mount Strategies & Crash Resilience
+
+Control **when** an island mounts with `beam-island-load` (or `load` on `<Island>`):
+
+| Strategy  | Behavior                                                                                  |
+| --------- | ----------------------------------------------------------------------------------------- |
+| `eager`   | Mount as soon as the marker is seen (default)                                             |
+| `visible` | Mount when scrolled near the viewport (100px margin) — a grid of 30 product-card islands creates zero React roots until the shopper reaches them |
+| `idle`    | Mount when the main thread is free (`requestIdleCallback`)                                |
+
+```tsx
+<Island name="ProductCard" id={`card-${p.id}`} load="visible" props={{ product: p }}>
+  {/* the server-rendered card shows instantly; React attaches on approach */}
+</Island>
+```
+
+Props pushed to a pending island land in `beam-props` and are used when it eventually mounts — nothing is lost while deferred.
+
+**Crashes fall back to the server HTML.** The placeholder is captured before mount; if the module fails to load or the component throws during render/commit, Beam unmounts the root, restores the server-rendered placeholder, and dispatches a `beam:island-error` window event (`detail: { name, src, phase: 'load' | 'render', error, element }`). A broken tenant artifact degrades to a static-but-fine card instead of a blank hole; the failed element is not retried until a swap replaces it.
+
+```javascript
+window.addEventListener('beam:island-error', (e) => {
+  logToPlatform('island-crash', { name: e.detail.name, src: e.detail.src, phase: e.detail.phase })
+})
+```
+
+### Islands and DOM Swaps
+
+Islands **survive server swaps by default** (like `beam-keep`): when an action re-renders a region containing a mounted island, the live element is preserved, fresh `beam-props` from the server are adopted, and the root re-renders — local React state (inputs, toggles, timers) is kept. Requirements and options:
+
+- Give islands a stable `beam-id` — it's the identity used for preservation and for `ctx.island(id, ...)` targeting
+- Add `beam-island-remount` (or `remount` on `<Island>`) to tear down and remount on swaps instead
+- Renaming the island (different `beam-island` value at the same identity) always remounts
+
+Islands mounted inside modals, drawers, streamed fragments, and Beam visits all work — one MutationObserver covers every update path, and roots are unmounted automatically when their element leaves the DOM.
+
+### Dynamic Islands (runtime component sources)
+
+Islands normally come from the build-time registry (`app/islands/`). **Dynamic islands** load their component module from a URL at runtime instead — for platforms that compile components from other sources (per-tenant artifacts in R2, a plugin system, a component marketplace) after the app is deployed.
+
+**1. Allow source prefixes** (off by default — a source URL is executable code, so every prefix is a trust decision):
+
+```typescript
+// vite.config.ts
+beamPlugin({
+  islandSources: ['/islands/'], // enables dynamic islands + emits shared react files
+})
+```
+
+Alternatively `allowIslandSources([...])` at runtime or `<meta name="beam-island-sources" content="/islands/">`.
+
+**2. Add the import map to your document head** (before any module scripts):
+
+```tsx
+// in your renderer/layout <head>
+import { raw } from 'hono/html'
+import { beamIslandImportMap } from '@benqoder/beam'
+
+{raw(beamIslandImportMap())}
+```
+
+Configuring `islandSources` makes the build emit shared files with stable names (`static/beam-shared/react.js`, `react-jsx-runtime.js`, `react-dom-client.js`, `beam-react.js`). The import map resolves bare `react` / `@benqoder/beam/react` imports in remote modules to these files — which re-export from the **same chunks Beam's own runtime uses**, so there is exactly one React instance on the page (two copies would break hooks).
+
+`extra` entries turn the import map into a **shared-component registry**: island modules import UI by bare name, and the map pins versions per deploy/tenant — repointing one entry updates every island that uses it, no recompiles:
+
+```tsx
+{raw(beamIslandImportMap({ extra: { '@ui/button': '/islands/ui/button@f3a9.js' } }))}
+```
+```javascript
+// inside any island module
+import Button from '@ui/button'
+```
+
+**3. Serve the component as an ES module** — default export, compiled with `react`, `react/jsx-runtime`, `react-dom/client`, and `@benqoder/beam/react` left as bare imports (externals):
+
+```javascript
+// served at /islands/ProductCard.js — e.g. compiled from TSX by your platform
+import { useState } from 'react'
+import { jsx, jsxs } from 'react/jsx-runtime'
+import { useBeamAction } from '@benqoder/beam/react'
+
+export default function ProductCard({ product }) { /* ... */ }
+```
+
+**4. Point the island at it:**
+
+```tsx
+<Island name="ProductCard" id={`card-${p.id}`} src={`/islands/product-card@${hash}.js`} props={{ product: p }}>
+  {/* server-rendered card = the placeholder until the module mounts */}
+</Island>
+```
+
+Notes:
+
+- `beam-island-src` wins over a registered component of the same name, so runtime artifacts can override built-in defaults
+- Modules are cached per URL — use content-hashed file names so updates bust caches and unchanged components load instantly
+- Disallowed sources are refused loudly (console error, no import); a failed load leaves the placeholder in place
+- Everything else works identically to registered islands: `ctx.island()` props pushes, swap preservation, hooks, unmounting
+
+---
+
 ## Attribute Reference
 
 ### Actions
@@ -746,6 +1030,17 @@ return ctx.drawer(render(<MyDrawer />), { position: "left", size: "medium" });
 | Attribute   | Description                         | Example             |
 | ----------- | ----------------------------------- | ------------------- |
 | `beam-keep` | Preserve element during DOM updates | `<video beam-keep>` |
+
+### React Islands
+
+| Attribute             | Description                                            | Example                     |
+| --------------------- | ------------------------------------------------------ | --------------------------- |
+| `beam-island`         | React component to mount (registered name)             | `beam-island="Chart"`       |
+| `beam-props`          | JSON props for the component                           | `beam-props='{"series":[]}'`|
+| `beam-id`             | Island identity for `ctx.island()` and preservation    | `beam-id="salesChart"`      |
+| `beam-island-src`     | Load the component module from a URL at runtime        | `beam-island-src="/islands/chart@a1.js"` |
+| `beam-island-load`    | Mount strategy: `eager` (default), `visible`, `idle`   | `beam-island-load="visible"` |
+| `beam-island-remount` | Remount on swaps instead of preserving React state     | `beam-island-remount`       |
 
 ### Client-Side Reactive State (No Server Round-Trip)
 
@@ -1888,6 +2183,17 @@ beam.batch(() => {
 
 // Apply a named state update programmatically
 beam.updateState("cart", { count: 4, total: 39.99 });
+
+// Get a named state, creating and registering it when missing —
+// lets JS/React code use a state before any beam-state element declares it
+const prefs = beam.ensureState("prefs", { theme: "light" });
+
+// Run a reactive effect: re-runs whenever any state it reads changes.
+// Returns a dispose function. (This is what useBeamState builds on.)
+const dispose = beam.effect(() => {
+  console.log("cart count is now", beam.getState("cart").count);
+});
+dispose(); // stop tracking
 ```
 
 #### Standalone Usage (No Beam Server)

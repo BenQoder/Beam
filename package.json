@@ -1,6 +1,6 @@
 {
   "name": "@benqoder/beam",
-  "version": "0.8.0",
+  "version": "1.0.0",
   "type": "module",
   "publishConfig": {
     "registry": "https://registry.npmjs.org",
@@ -22,6 +22,14 @@
     "./reactivity": {
       "types": "./dist/reactivity.d.ts",
       "import": "./dist/reactivity.js"
+    },
+    "./react": {
+      "types": "./dist/react.d.ts",
+      "import": "./dist/react.js"
+    },
+    "./islands": {
+      "types": "./dist/islands.d.ts",
+      "import": "./dist/islands.js"
     },
     "./directives": {
       "types": "./dist/directives.d.ts",
@@ -62,19 +70,31 @@
     "capnweb": "^0.4.0",
     "hono": "^4.0.0",
     "honox": "^0.1.0",
+    "react": "^18.0.0 || ^19.0.0",
+    "react-dom": "^18.0.0 || ^19.0.0",
     "vite": "^5.0.0 || ^6.0.0"
   },
   "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    },
+    "react-dom": {
+      "optional": true
+    },
     "vite": {
       "optional": true
     }
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260124.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
     "capnweb": "^0.6.1",
     "hono": "^4.6.0",
     "honox": "^0.1.0",
     "jsdom": "^26.1.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
     "typescript": "^5.0.0",
     "vite": "^6.0.0",
     "vitest": "^3.2.4",

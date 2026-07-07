@@ -32,6 +32,24 @@ export interface BeamPluginOptions {
         /** Path to custom storage factory module (must export default SessionStorageFactory) */
         storage?: string;
     };
+    /**
+     * Glob pattern for React island components (must start with '/').
+     * Matched files are lazily imported (code-split) and compiled with the
+     * React JSX runtime (a \/** @jsxImportSource react *\/ pragma is injected).
+     * Import the registry from 'virtual:beam/islands'. Set false to disable.
+     * @default '/app/islands/*.tsx'
+     */
+    islands?: string | false;
+    /**
+     * Enable dynamic islands (beam-island-src): URL prefixes the client may
+     * load island modules from at runtime (e.g. ['/islands/']). Setting this
+     * also emits the shared react / react-dom / beam hooks files (stable names
+     * under static/beam-shared/) that remote modules resolve via the import
+     * map — add beamIslandImportMap() to your document head.
+     * Off by default: remote sources are executable code, so every prefix here
+     * is a trust decision.
+     */
+    islandSources?: string[];
 }
 /**
  * Vite plugin that auto-generates the beam instance from handler files.
