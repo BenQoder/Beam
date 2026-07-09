@@ -1,6 +1,6 @@
 {
   "name": "@benqoder/beam",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "type": "module",
   "publishConfig": {
     "registry": "https://registry.npmjs.org",
@@ -67,7 +67,7 @@
     "test": "vitest run --environment jsdom"
   },
   "peerDependencies": {
-    "capnweb": "^0.4.0",
+    "capnweb": "^0.10.0",
     "hono": "^4.0.0",
     "honox": "^0.1.0",
     "react": "^18.0.0 || ^19.0.0",
@@ -89,7 +89,7 @@
     "@cloudflare/workers-types": "^4.20260124.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
-    "capnweb": "^0.6.1",
+    "capnweb": "^0.10.0",
     "hono": "^4.6.0",
     "honox": "^0.1.0",
     "jsdom": "^26.1.0",

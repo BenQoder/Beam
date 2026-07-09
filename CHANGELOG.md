@@ -1,5 +1,39 @@
 # Changelog
 
+## 1.2.0 — 2026-07-10
+
+- **Security hardening.**
+  - Session cookies now set `Secure` (in addition to `HttpOnly` +
+    `SameSite=Lax`).
+  - Dynamic island source allowlist now matches on a **path-segment
+    boundary** instead of a raw string prefix — closes a sibling-path bypass
+    where `islandSources: ['/islands']` also permitted `/islands-evil/x.js`.
+  - WebSocket endpoint is **same-origin by default** (defense-in-depth over
+    the in-band token); `beam.init(app, { allowedOrigins })` configures a list
+    or `'*'` to disable.
+  - Blob-carrying action bodies are capped (`maxUploadBytes`, default 10 MB →
+    413) before buffering.
+  - `verifyToken` validates payload shape (numeric `exp`, string `sid`) — a
+    signed-but-malformed token can no longer become a non-expiring credential.
+  - Beam visits are clamped to same-origin (rejects cross-origin URLs without
+    fetching).
+  - New `beamCsp()` helper builds a Beam-tuned Content-Security-Policy
+    (islands, reactivity `unsafe-eval`, WebSocket connect-src).
+  - README **Hardening Checklist** documents secret management, the
+    expression-eval RCE caveat, and cookie-session (signed-not-encrypted)
+    guidance.
+- **capnweb upgraded 0.6.1 → 0.10.0.** Fixes a memory leak that pinned all
+  received messages for the life of the session (Beam sessions are long-lived,
+  so this affected every connected client), plus prototype-pollution and
+  resource-leak security fixes. New capabilities Beam now rides on:
+  `Blob` (and streams) are serializable over the RPC pipe with MIME preserved —
+  the transport primitive for upcoming file uploads — and receiver-side
+  resource limits (message size, nesting depth, bigint length) are enforced
+  with sane defaults on the WebSocket endpoint. New
+  `beam.init(app, { rpcOptions })` passthrough exposes `limits` tuning and the
+  `onSendError` log/redact hook. Peer range corrected from `^0.4.0` (which
+  never matched the 0.6.x actually in use) to `^0.10.0`.
+
 ## 1.1.0 — 2026-07-09
 
 - **Typed actions**: the Vite plugin generates a typed-action registry
