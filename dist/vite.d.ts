@@ -50,6 +50,16 @@ export interface BeamPluginOptions {
      * is a trust decision.
      */
     islandSources?: string[];
+    /**
+     * Output path (root-relative, must start with '/') for the generated
+     * typed-action registry d.ts. It maps your action modules into Beam's
+     * types so action names, params, and ctx.json payloads are inferred in
+     * useBeamAction / callBeamAction / window.beam.
+     * Defaults to 'beam-actions.d.ts' next to the actions directory
+     * (e.g. '/app/beam-actions.d.ts' for '/app/actions/*.tsx').
+     * Set false to disable generation.
+     */
+    actionTypes?: string | false;
 }
 /**
  * Vite plugin that auto-generates the beam instance from handler files.

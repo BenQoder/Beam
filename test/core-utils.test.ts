@@ -131,7 +131,7 @@ describe('core utilities', () => {
       const pkg = JSON.parse(readFileSync(join(appDir, 'package.json'), 'utf8'))
       const wrangler = JSON.parse(readFileSync(join(appDir, 'wrangler.json'), 'utf8'))
       expect(pkg.name).toBe('my-beam-app')
-      expect(pkg.scripts.dev).toBe('npx wrangler dev --port 8791')
+      expect(pkg.scripts.dev).toBe('beam dev --port 8791')
       expect(wrangler.name).toBe('my-beam-app')
       expect(wrangler.build.command).toBe('npx --no-install beam build --dev')
     } finally {
@@ -156,7 +156,7 @@ describe('core utilities', () => {
       expect(readFileSync(join(dir, 'app', 'client.ts'), 'utf8')).toBe('console.log("keep me")\n')
 
       const pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'))
-      expect(pkg.scripts.dev).toBe('npx wrangler dev --port 8791')
+      expect(pkg.scripts.dev).toBe('beam dev --port 8791')
       expect(pkg.dependencies['@benqoder/beam']).toBeTruthy()
     } finally {
       rmSync(dir, { recursive: true, force: true })

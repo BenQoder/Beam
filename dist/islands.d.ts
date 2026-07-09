@@ -1,9 +1,11 @@
 import type { ComponentType } from 'react';
 export type IslandComponent = ComponentType<any>;
-/** Zero-arg loader returning a module (default export) or a component */
-export type IslandLoader = () => Promise<{
-    default: IslandComponent;
-} | IslandComponent>;
+/**
+ * Zero-arg loader returning a module (default export) or a component.
+ * Typed loosely (Promise<unknown>) so import.meta.glob output assigns
+ * directly; the runtime unwraps and validates the default export.
+ */
+export type IslandLoader = () => Promise<unknown>;
 export type IslandRegistration = IslandComponent | IslandLoader;
 /**
  * Allow island source URL prefixes for beam-island-src loading.

@@ -19,31 +19,9 @@ function beamGlobal() {
     }
     return beam;
 }
-/**
- * Call a Beam action over the WebSocket RPC from anywhere in JS/React.
- * Responses are applied like any Beam response (html swaps, state, islands,
- * events, modals, ...) and the final ActionResponse is returned.
- */
 export function callBeamAction(action, data = {}, options) {
     return beamGlobal()[action](data, options);
 }
-/**
- * React hook to call a Beam action at any time.
- *
- * Streaming actions (async generators) work transparently: every chunk is
- * applied as it arrives and `call` resolves with the last one.
- *
- * Actions returning `ctx.json(value)` deliver plain data — read it from the
- * resolved response or the `json` field:
- *
- * @example
- * const { call: addToCart, loading } = useBeamAction('addToCart')
- * <button disabled={loading} onClick={() => addToCart({ id })}>Add</button>
- *
- * @example
- * const { call: search, json: results } = useBeamAction<Product[]>('searchProducts')
- * // or imperatively: const results = (await search({ q })).json as Product[]
- */
 export function useBeamAction(action, options) {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);

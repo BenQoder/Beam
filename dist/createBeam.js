@@ -339,7 +339,10 @@ function stripConnectionHeaders(headers) {
     ].forEach((key) => next.delete(key));
     return next;
 }
-function createDirectActionStream(handler, ctx, data) {
+function isDevRuntime() {
+    return typeof __BEAM_DEV__ !== 'undefined' && Boolean(__BEAM_DEV__);
+}
+function createDirectActionStream(handler, ctx, data, action) {
     return new ReadableStream({
         async start(controller) {
             try {
@@ -355,15 +358,56 @@ function createDirectActionStream(handler, ctx, data) {
                 controller.close();
             }
             catch (err) {
-                controller.error(err);
+                if (isDevRuntime()) {
+                    // Dev: deliver real details as a terminal chunk so the client can
+                    // paint an error overlay (action name, message, server stack).
+                    const error = err instanceof Error ? err : new Error(String(err));
+                    controller.enqueue({
+                        error: { action, message: error.message, stack: error.stack },
+                    });
+                    controller.close();
+                }
+                else {
+                    // Production: opaque failure, no details leak to the client.
+                    controller.error(err);
+                }
             }
         },
     });
 }
-async function prepareActionStream(handler, ctx, data) {
-    const result = handler(ctx, data);
-    if (!isAsyncGenerator(result)) {
-        const normalized = normalizeActionResponse(await result);
+function devActionError(action, err) {
+    const error = err instanceof Error ? err : new Error(String(err));
+    return { error: { action, message: error.message, stack: error.stack } };
+}
+async function prepareActionStream(handler, ctx, data, action) {
+    let result;
+    let firstStep;
+    try {
+        result = handler(ctx, data);
+        if (!isAsyncGenerator(result)) {
+            firstStep = { normalized: normalizeActionResponse(await result) };
+        }
+        else {
+            const iterator = result[Symbol.asyncIterator]();
+            firstStep = { iterator, first: await iterator.next() };
+        }
+    }
+    catch (err) {
+        // Handler failed before any chunk (sync throw, awaited promise, or the
+        // generator's first step). Dev: deliver details; production: rethrow to
+        // an opaque 500.
+        if (!isDevRuntime())
+            throw err;
+        const chunk = devActionError(action, err);
+        return new ReadableStream({
+            start(controller) {
+                controller.enqueue(chunk);
+                controller.close();
+            },
+        });
+    }
+    if (firstStep.normalized !== undefined) {
+        const normalized = firstStep.normalized;
         return new ReadableStream({
             start(controller) {
                 controller.enqueue(normalized);
@@ -371,8 +415,8 @@ async function prepareActionStream(handler, ctx, data) {
             },
         });
     }
-    const iterator = result[Symbol.asyncIterator]();
-    const first = await iterator.next();
+    const iterator = firstStep.iterator;
+    const first = firstStep.first;
     return new ReadableStream({
         async start(controller) {
             let completed = false;
@@ -396,7 +440,13 @@ async function prepareActionStream(handler, ctx, data) {
                 controller.close();
             }
             catch (error) {
-                controller.error(error);
+                if (isDevRuntime()) {
+                    controller.enqueue(devActionError(action, error));
+                    controller.close();
+                }
+                else {
+                    controller.error(error);
+                }
             }
             finally {
                 if (!completed && typeof iterator.return === 'function') {
@@ -503,7 +553,7 @@ class BeamServer extends RpcTarget {
                 },
             });
         }
-        return createDirectActionStream(handler, ctx, data);
+        return createDirectActionStream(handler, ctx, data, action);
     }
     async visit(url, options = {}) {
         if (!this.routeFetcher) {
@@ -861,7 +911,7 @@ export function createBeam(config) {
                     }
                 }
                 const resolved = c.get('beamResolvedRequest') ?? await resolveBeamRequest(c, auth, sessionConfig, cookieName, maxAge);
-                const stream = await prepareActionStream(handler, resolved.ctx, data);
+                const stream = await prepareActionStream(handler, resolved.ctx, data, action);
                 await persistCookieSessionIfNeeded(c, resolved, sessionConfig, maxAge);
                 return new Response(encodeBeamActionStream(stream), {
                     headers: {
@@ -1007,6 +1057,8 @@ export const __beamCreateBeamInternals = {
     computeAssetSignature,
     createBeamContext,
     isAsyncGenerator,
+    createDirectActionStream,
+    prepareActionStream,
 };
 // Export BeamServer for advanced usage (e.g., extending with custom methods)
 export { BeamServer, PublicBeamServer };

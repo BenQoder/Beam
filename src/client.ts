@@ -1,5 +1,6 @@
 import { newWebSocketRpcSession, type RpcStub } from 'capnweb'
 import { beamReactivity } from './reactivity'
+import type { BeamActionJson, BeamActionParams, RegisteredActionName } from './types'
 
 // ============ BEAM - capnweb RPC Client ============
 //
@@ -46,6 +47,7 @@ interface ActionResponse {
   removeIslands?: string[]
   event?: { name: string; data?: unknown }
   json?: unknown
+  error?: { action?: string; message: string; stack?: string }
   script?: string
   redirect?: string
   target?: string  // Can be comma-separated: "#a, #b, #c"
@@ -960,8 +962,11 @@ function runSwapTransition(target: Element): void {
   const mode = target.getAttribute('beam-swap-transition')
   if (!mode) return
 
-  // CSS-driven: [beam-swap-transition="fade"].beam-swap-enter { opacity: 0 }
+  // Snap to the from-state (.beam-swap-enter sets transition:none), commit it
+  // with a forced reflow, then release so the base transition animates to the
+  // natural state.
   target.classList.add('beam-swap-enter')
+  void (target as HTMLElement).offsetHeight
   requestAnimationFrame(() => {
     target.classList.remove('beam-swap-enter')
   })
@@ -1014,7 +1019,178 @@ function dedupeItems(target: Element, html: string): string {
   return temp.innerHTML
 }
 
+// ============ ANIMATIONS ============
+// Layer 1: View Transitions API — beam-transition="view" on a swap target
+// wraps its DOM updates in document.startViewTransition (native cross-fade),
+// and beam-transition-name enables shared-element morphs across swaps/visits.
+// Layer 2: Alpine/Vue-style enter/leave classes on inserted/removed content
+// (beam-enter / beam-enter-start / beam-enter-end, beam-leave*), with
+// beam-enter-stagger on a parent for list choreography.
+// Both respect prefers-reduced-motion.
+
+function prefersReducedMotion(): boolean {
+  try {
+    return window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  } catch {
+    return false
+  }
+}
+
+/** beam-transition-name="x" → style view-transition-name (shared-element morphs) */
+function applyTransitionNames(root: Document | Element): void {
+  const apply = (el: Element) => {
+    const name = el.getAttribute('beam-transition-name')
+    if (name && el instanceof HTMLElement) {
+      el.style.setProperty('view-transition-name', name)
+    }
+  }
+  if (root instanceof Element && root.hasAttribute('beam-transition-name')) apply(root)
+  root.querySelectorAll('[beam-transition-name]').forEach(apply)
+}
+
+function withViewTransition(target: Element, mutate: () => void): void {
+  const startViewTransition = (document as Document & {
+    startViewTransition?: (cb: () => void) => unknown
+  }).startViewTransition
+  if (
+    target.getAttribute('beam-transition') !== 'view' ||
+    typeof startViewTransition !== 'function' ||
+    prefersReducedMotion()
+  ) {
+    mutate()
+    return
+  }
+  startViewTransition.call(document, mutate)
+}
+
+function splitClasses(value: string | null): string[] {
+  return (value ?? '').split(/\s+/).filter(Boolean)
+}
+
+const ENTER_SELECTOR = '[beam-enter], [beam-enter-start], [beam-enter-end]'
+
+function collectEnterElements(root: Element): HTMLElement[] {
+  const els: HTMLElement[] = []
+  if (root instanceof HTMLElement && root.matches(ENTER_SELECTOR)) els.push(root)
+  root.querySelectorAll<HTMLElement>(ENTER_SELECTOR).forEach((el) => els.push(el))
+  return els
+}
+
+/** Remove transition classes when the animation settles (events + safety timeout). */
+function finishTransition(el: HTMLElement, classes: string[], done?: () => void): void {
+  let finished = false
+  const finish = () => {
+    if (finished) return
+    finished = true
+    el.classList.remove(...classes)
+    el.removeEventListener('transitionend', finish)
+    el.removeEventListener('animationend', finish)
+    done?.()
+  }
+  el.addEventListener('transitionend', finish)
+  el.addEventListener('animationend', finish)
+  setTimeout(finish, 1500)
+}
+
+/**
+ * Run enter transitions on newly inserted content. Elements carrying
+ * beam-enter classes get: enter+start applied pre-paint → start swapped for
+ * end on the next frame → all classes removed when the transition settles.
+ * A parent's beam-enter-stagger="80" spaces its children by 80ms each.
+ */
+function runEnterTransitions(root: Element): void {
+  const els = collectEnterElements(root)
+  if (!els.length || prefersReducedMotion()) return
+
+  const staggerCount = new Map<Element, number>()
+  for (const el of els) {
+    const parent = el.parentElement
+    if (!parent || !parent.hasAttribute('beam-enter-stagger')) continue
+    const index = staggerCount.get(parent) ?? 0
+    staggerCount.set(parent, index + 1)
+    const step = Number(parent.getAttribute('beam-enter-stagger')) || 50
+    el.style.transitionDelay = `${index * step}ms`
+    el.style.animationDelay = `${index * step}ms`
+  }
+
+  for (const el of els) {
+    const enter = splitClasses(el.getAttribute('beam-enter'))
+    const start = splitClasses(el.getAttribute('beam-enter-start'))
+    const end = splitClasses(el.getAttribute('beam-enter-end'))
+    if (!enter.length && !start.length && !end.length) continue
+
+    el.classList.add(...enter, ...start)
+    void el.offsetWidth
+    requestAnimationFrame(() => {
+      el.classList.remove(...start)
+      el.classList.add(...end)
+      finishTransition(el, [...enter, ...end], () => {
+        el.style.removeProperty('transition-delay')
+        el.style.removeProperty('animation-delay')
+      })
+    })
+  }
+}
+
+/**
+ * Run leave transitions before an element is removed (beam-swap="delete",
+ * ctx.removeIsland, ...). Resolves when the animation settles — or
+ * immediately when the element has no beam-leave classes or reduced motion
+ * is preferred.
+ */
+function runLeaveTransition(el: Element): Promise<void> {
+  return new Promise((resolve) => {
+    const leave = splitClasses(el.getAttribute('beam-leave'))
+    const start = splitClasses(el.getAttribute('beam-leave-start'))
+    const end = splitClasses(el.getAttribute('beam-leave-end'))
+    if (
+      !(el instanceof HTMLElement) ||
+      (!leave.length && !start.length && !end.length) ||
+      prefersReducedMotion()
+    ) {
+      resolve()
+      return
+    }
+
+    el.classList.add(...leave, ...start)
+    void el.offsetWidth
+    requestAnimationFrame(() => {
+      el.classList.remove(...start)
+      el.classList.add(...end)
+      finishTransition(el, [...leave, ...end], resolve)
+    })
+  })
+}
+
+function htmlToNodes(html: string): Node[] {
+  const template = document.createElement('template')
+  template.innerHTML = html
+  return Array.from(template.content.childNodes)
+}
+
+function afterInsert(nodes: Node[]): void {
+  for (const node of nodes) {
+    if (node instanceof Element) {
+      applyTransitionNames(node)
+      runEnterTransitions(node)
+    }
+  }
+}
+
 function swap(target: Element, html: string, mode: string, trigger?: HTMLElement): void {
+  withViewTransition(target, () => performSwap(target, html, mode, trigger))
+}
+
+// Load-more / infinite sentinels replace themselves on append/prepend (the
+// server returns a fresh sentinel). A plain beam-action button that just
+// appends/prepends is not a sentinel and stays put.
+function removeSentinelTrigger(trigger?: HTMLElement): void {
+  if (trigger?.hasAttribute('beam-load-more') || trigger?.hasAttribute('beam-infinite')) {
+    trigger.remove()
+  }
+}
+
+function performSwap(target: Element, html: string, mode: string, trigger?: HTMLElement): void {
   // Only allow known modes; everything else falls back to replace.
   if (mode !== 'append' && mode !== 'prepend' && mode !== 'replace' && mode !== 'delete') {
     mode = 'replace'
@@ -1029,14 +1205,23 @@ function swap(target: Element, html: string, mode: string, trigger?: HTMLElement
   const scrollState = mode === 'replace' ? captureSwapScrollState(target) : null
 
   switch (mode) {
-    case 'append':
-      trigger?.remove()
-      target.insertAdjacentHTML('beforeend', dedupeItems(target, normalizedMain))
+    case 'append': {
+      // Self-removing trigger is a load-more/infinite sentinel pattern (the
+      // response carries a fresh sentinel). Plain append buttons persist.
+      removeSentinelTrigger(trigger)
+      const appended = htmlToNodes(dedupeItems(target, normalizedMain))
+      for (const node of appended) target.appendChild(node)
+      afterInsert(appended)
       break
-    case 'prepend':
-      trigger?.remove()
-      target.insertAdjacentHTML('afterbegin', dedupeItems(target, normalizedMain))
+    }
+    case 'prepend': {
+      removeSentinelTrigger(trigger)
+      const prepended = htmlToNodes(dedupeItems(target, normalizedMain))
+      const anchor = target.firstChild
+      for (const node of prepended) target.insertBefore(node, anchor)
+      afterInsert(prepended)
       break
+    }
     case 'replace':
       target.innerHTML = normalizedMain
       restorePreservedNodes(target, preserved)
@@ -1044,9 +1229,11 @@ function swap(target: Element, html: string, mode: string, trigger?: HTMLElement
       if (scrollState) restoreSwapScrollState(scrollState)
       initAlpine(target)
       runSwapTransition(target)
+      applyTransitionNames(target)
+      runEnterTransitions(target)
       break
     case 'delete':
-      target.remove()
+      void runLeaveTransition(target).then(() => target.remove())
       break
   }
 
@@ -1239,6 +1426,8 @@ function applyIslandUpserts(upserts: Record<string, IslandUpsertSpec>): void {
       default:
         target.appendChild(el)
     }
+    applyTransitionNames(el)
+    runEnterTransitions(el)
   })
 }
 
@@ -1250,11 +1439,97 @@ function applyIslandRemovals(ids: string[]): void {
       console.warn(`[beam] Island "${id}" not found on page, skipping removal`)
       return
     }
-    el.remove()
+    void runLeaveTransition(el).then(() => el.remove())
   })
 }
 
 // ============ RPC WRAPPER ============
+
+// ============ DEBUG TRACING & ACTION ERRORS ============
+
+const DEBUG_STORAGE_KEY = 'beam:debug'
+let debugEnabled: boolean | null = null
+
+function isDebug(): boolean {
+  if (debugEnabled === null) {
+    try {
+      debugEnabled = localStorage.getItem(DEBUG_STORAGE_KEY) === '1'
+    } catch {
+      debugEnabled = false
+    }
+  }
+  return debugEnabled
+}
+
+/** Toggle beam call tracing (persisted). Call from the console: beam.debug(true) */
+function setDebug(on = true): boolean {
+  debugEnabled = Boolean(on)
+  try {
+    if (debugEnabled) localStorage.setItem(DEBUG_STORAGE_KEY, '1')
+    else localStorage.removeItem(DEBUG_STORAGE_KEY)
+  } catch {
+    // storage unavailable (private mode etc.) — runtime flag still applies
+  }
+  console.log(`[beam] debug tracing ${debugEnabled ? 'on' : 'off'}`)
+  return debugEnabled
+}
+
+function summarizeResponse(response: ActionResponse): string {
+  const parts: string[] = []
+  if (response.html) parts.push(Array.isArray(response.html) ? `html×${response.html.length}` : 'html')
+  if (response.state) parts.push(`state(${Object.keys(response.state).join(',')})`)
+  if (response.islands) parts.push(`islands(${Object.keys(response.islands).join(',')})`)
+  if (response.islandUpserts) parts.push(`upserts(${Object.keys(response.islandUpserts).join(',')})`)
+  if (response.removeIslands) parts.push(`remove(${response.removeIslands.join(',')})`)
+  if (response.event) parts.push(`event(${response.event.name})`)
+  if (response.json !== undefined) parts.push('json')
+  if (response.script) parts.push('script')
+  if (response.redirect) parts.push(`redirect(${response.redirect})`)
+  if (response.modal) parts.push('modal')
+  if (response.drawer) parts.push('drawer')
+  if (response.error) parts.push(`error(${response.error.message})`)
+  return parts.join(' + ') || 'empty'
+}
+
+interface ActionTrace {
+  chunk(response: ActionResponse): void
+  done(error?: unknown): void
+}
+
+function traceAction(action: string, params: Record<string, unknown>): ActionTrace {
+  if (!isDebug()) {
+    return { chunk: () => {}, done: () => {} }
+  }
+  const startedAt = performance.now()
+  let chunks = 0
+  console.log(`[beam] → ${action}`, params)
+  return {
+    chunk(response) {
+      chunks++
+      console.log(`[beam] ← ${action} #${chunks}: ${summarizeResponse(response)}`)
+    },
+    done(error) {
+      const ms = Math.round(performance.now() - startedAt)
+      if (error) {
+        console.log(`[beam] ✕ ${action} failed after ${ms}ms`, error)
+      } else {
+        console.log(`[beam] ✓ ${action} done in ${ms}ms (${chunks} chunk${chunks === 1 ? '' : 's'})`)
+      }
+    },
+  }
+}
+
+/**
+ * Surface an action failure: console + 'beam:action-error' window event
+ * (rendered by the dev overlay in dev builds, loggable anywhere).
+ */
+function handleActionError(error: { action?: string; message: string; stack?: string }): void {
+  console.error(
+    `[beam] Action ${error.action ? `"${error.action}" ` : ''}failed: ${error.message}`,
+    error.stack ? `\n${error.stack}` : ''
+  )
+  window.dispatchEvent(new CustomEvent('beam:action-error', { detail: error }))
+}
 
 /**
  * Apply a single ActionResponse chunk to the DOM.
@@ -1266,6 +1541,10 @@ function applyResponse(
   frontendSwap: string,
   trigger?: HTMLElement
 ): boolean {
+  if (response.error) {
+    handleActionError(response.error)
+    return false
+  }
   if (response.redirect) {
     location.href = response.redirect
     return true
@@ -1305,6 +1584,7 @@ async function rpc(action: string, data: Record<string, unknown>, el: HTMLElemen
   const placeholder = showPlaceholder(el)
 
   setLoading(el, true, action, data)
+  const trace = traceAction(action, data)
 
   try {
     const stream = await api.call(action, data)
@@ -1314,6 +1594,7 @@ async function rpc(action: string, data: Record<string, unknown>, el: HTMLElemen
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
+        trace.chunk(value)
         if (applyResponse(value, frontendTarget, frontendSwap, el)) {
           redirected = true
           break
@@ -1322,12 +1603,17 @@ async function rpc(action: string, data: Record<string, unknown>, el: HTMLElemen
     } finally {
       reader.releaseLock()
     }
+    trace.done()
     if (!redirected) handleHistory(el)
   } catch (err) {
+    trace.done(err)
     opt.rollback()
     placeholder.restore()
     showToast('Something went wrong. Please try again.', 'error')
     console.error('RPC error:', err)
+    window.dispatchEvent(new CustomEvent('beam:action-error', {
+      detail: { action, message: err instanceof Error ? err.message : String(err) },
+    }))
   } finally {
     setLoading(el, false, action, data)
   }
@@ -1582,6 +1868,10 @@ function openModal(html: string, size: string = 'medium', spacing?: number): voi
   document.body.classList.add('modal-open')
 
   activeModal = $('#modal-content') as HTMLElement
+  if (activeModal) {
+    applyTransitionNames(activeModal)
+    runEnterTransitions(activeModal)
+  }
 
   const autoFocus = activeModal?.querySelector<HTMLElement>('[autofocus]')
   const firstInput = activeModal?.querySelector<HTMLElement>('input, button, textarea, select')
@@ -1626,6 +1916,10 @@ function openDrawer(html: string, position: string = 'right', size: string = 'me
   document.body.classList.add('drawer-open')
 
   activeDrawer = $('#drawer-content') as HTMLElement
+  if (activeDrawer) {
+    applyTransitionNames(activeDrawer)
+    runEnterTransitions(activeDrawer)
+  }
 
   const autoFocus = activeDrawer?.querySelector<HTMLElement>('[autofocus]')
   const firstInput = activeDrawer?.querySelector<HTMLElement>('input, button, textarea, select')
@@ -3740,6 +4034,7 @@ const beamUtils = {
   closeModal,
   closeDrawer,
   clearCache,
+  debug: setDebug,
   clearScrollState,
   isOnline: () => isOnline,
   isConnected: checkWsConnected,
@@ -3768,6 +4063,14 @@ export const __beamClientInternals = {
   parseOobSwaps,
   applyStateResponse,
   applyResponse,
+  handleActionError,
+  summarizeResponse,
+  traceAction,
+  setDebug,
+  applyTransitionNames,
+  runEnterTransitions,
+  runLeaveTransition,
+  withViewTransition,
   updateLoadingIndicators,
   handleHistory,
   openModal,
@@ -3795,9 +4098,19 @@ export const __beamClientInternals = {
 // Type for the dynamic action caller
 type ActionCaller = (data?: Record<string, unknown>, options?: string | CallOptions) => Promise<ActionResponse>
 
+// Typed callers derived from the generated action registry (beamPlugin
+// actionTypes). Empty registry → empty map; the index signature keeps the
+// permissive fallback either way. Runtime precedence: beamUtils keys win.
+type TypedActionCallers = {
+  [N in RegisteredActionName]: (
+    data?: BeamActionParams<N>,
+    options?: string | CallOptions
+  ) => Promise<ActionResponse & { json?: BeamActionJson<N> }>
+}
+
 declare global {
   interface Window {
-    beam: typeof beamUtils & {
+    beam: typeof beamUtils & TypedActionCallers & {
       [action: string]: ActionCaller
     }
   }
@@ -3814,22 +4127,33 @@ window.beam = new Proxy(beamUtils, {
     // Return a dynamic action caller for any other property
     return async (data: Record<string, unknown> = {}, options?: string | CallOptions): Promise<ActionResponse> => {
       const opts: CallOptions = typeof options === 'string' ? { target: options } : (options || {})
-      const stream = await api.call(prop, data)
-      const reader = stream.getReader()
-      let last: ActionResponse = {}
+      const trace = traceAction(prop, data)
       try {
-        while (true) {
-          const { done, value } = await reader.read()
-          if (done) break
-          last = value
-          const targetSelector = value.target || opts.target || null
-          const swapMode = value.swap || opts.swap || 'replace'
-          if (applyResponse(value, targetSelector, swapMode)) break
+        const stream = await api.call(prop, data)
+        const reader = stream.getReader()
+        let last: ActionResponse = {}
+        try {
+          while (true) {
+            const { done, value } = await reader.read()
+            if (done) break
+            last = value
+            trace.chunk(value)
+            const targetSelector = value.target || opts.target || null
+            const swapMode = value.swap || opts.swap || 'replace'
+            if (applyResponse(value, targetSelector, swapMode)) break
+          }
+        } finally {
+          reader.releaseLock()
         }
-      } finally {
-        reader.releaseLock()
+        trace.done()
+        return last
+      } catch (err) {
+        trace.done(err)
+        window.dispatchEvent(new CustomEvent('beam:action-error', {
+          detail: { action: prop, message: err instanceof Error ? err.message : String(err) },
+        }))
+        throw err
       }
-      return last
     }
   }
 }) as typeof beamUtils & { [action: string]: ActionCaller }
@@ -3843,3 +4167,19 @@ legacyWindow.clearCache = clearCache
 
 // Initialize capnweb RPC connection only when explicitly opted in.
 maybeConnect('startup')
+
+// Shared-element names on the server-rendered page (view transitions)
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', () => applyTransitionNames(document), { once: true })
+} else {
+  applyTransitionNames(document)
+}
+
+// Auto-load the dev-refresh poller in dev builds (`beam build --dev`). The
+// beamPlugin defines __BEAM_DEV_REFRESH__ statically, so production builds
+// eliminate this branch (and the chunk) entirely — no layout wiring needed.
+declare const __BEAM_DEV_REFRESH__: boolean | undefined
+if (typeof __BEAM_DEV_REFRESH__ !== 'undefined' && __BEAM_DEV_REFRESH__) {
+  void import('./dev-refresh')
+  void import('./dev-overlay')
+}

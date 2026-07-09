@@ -77,9 +77,33 @@ export function writeDevManifest(outDir = 'dist', now = Date.now()): { version: 
   return manifest
 }
 
+// Served by Workers static assets (_headers support): disables asset caching
+// in dev so rebuilds are never masked by miniflare's emulated cache or the
+// browser's HTTP cache. Removed by production builds.
+export const DEV_HEADERS_CONTENT = `/*
+  Cache-Control: no-store
+`
+
+export function writeDevHeaders(outDir = 'dist'): void {
+  mkdirSync(outDir, { recursive: true })
+  writeFileSync(join(outDir, '_headers'), DEV_HEADERS_CONTENT)
+}
+
 export function cleanDevArtifacts(outDir = 'dist'): void {
   rmSync(join(outDir, '__beam_dev.json'), { force: true })
   rmSync(join(outDir, 'static', 'dev-refresh.js'), { force: true })
+  rmSync(join(outDir, '_headers'), { force: true })
+}
+
+/** Best-effort check that wrangler config rebuilds via beam on file changes */
+export function hasBeamBuildHook(cwd = process.cwd()): boolean {
+  for (const file of ['wrangler.json', 'wrangler.jsonc', 'wrangler.toml']) {
+    const path = join(cwd, file)
+    if (existsSync(path) && readFileSync(path, 'utf8').includes('beam build')) {
+      return true
+    }
+  }
+  return false
 }
 
 function readJsonFile<T>(file: string): T | null {
@@ -125,7 +149,7 @@ function patchPackageJsonText(input: string, packageName?: string): string {
 
   pkg.scripts = {
     ...pkg.scripts,
-    dev: 'npx wrangler dev --port 8791',
+    dev: 'beam dev --port 8791',
     build: 'beam build',
     deploy: 'wrangler deploy',
   }
@@ -300,11 +324,15 @@ function printHelp() {
   console.log(`Beam CLI
 
 Usage:
+  beam dev [wrangler dev args, e.g. --port 8791]
   beam build [--dev] [--server-only | --client-only]
   beam create <name> [--template minimal] [--force] [--dry-run]
   beam init [--template minimal] [--force] [--dry-run]
 
 Commands:
+  dev      Build with dev refresh, then run "wrangler dev" with cache-safe
+           asset headers (no-store) so rebuilds are never masked by stale
+           caches. Extra args pass through to wrangler dev.
   build    Build the Worker bundle and client assets with Vite.
            --dev writes dist/__beam_dev.json for development refresh.
   create   Create a new HonoX + Beam + Wrangler app.
@@ -343,9 +371,30 @@ function runBuild(args: string[]) {
 
   if (dev) {
     writeDevManifest()
+    writeDevHeaders()
   } else {
     cleanDevArtifacts()
   }
+}
+
+function runDev(args: string[]) {
+  // Warm start: build before wrangler boots so the first request never races
+  // the build hook, and dist/_headers (no-store) exists from the first byte.
+  runBuild(['--dev'])
+
+  if (!hasBeamBuildHook()) {
+    console.warn(
+      '[beam] No "beam build" hook found in your wrangler config — file changes will not rebuild.\n' +
+      '       Add: "build": { "command": "npx --no-install beam build --dev", "watch_dir": "app" }'
+    )
+  }
+
+  console.log('[beam] Starting wrangler dev (dev assets served with Cache-Control: no-store)…')
+  const result = spawnSync('npx', ['--no-install', 'wrangler', 'dev', ...args], {
+    stdio: 'inherit',
+    shell: process.platform === 'win32',
+  })
+  process.exit(result.status ?? 0)
 }
 
 function main() {
@@ -358,6 +407,11 @@ function main() {
 
   if (command === 'build') {
     runBuild(args)
+    return
+  }
+
+  if (command === 'dev') {
+    runDev(args)
     return
   }
 

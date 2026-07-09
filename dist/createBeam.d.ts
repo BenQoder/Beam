@@ -74,6 +74,8 @@ declare function createBeamContext<TEnv>(base: {
     session: BeamSession;
 }): BeamContext<TEnv>;
 declare function isAsyncGenerator(value: unknown): value is AsyncGenerator<unknown>;
+declare function createDirectActionStream<TEnv extends object>(handler: ActionHandler<TEnv>, ctx: BeamContext<TEnv>, data: Record<string, unknown>, action?: string): ReadableStream<ActionResponse>;
+declare function prepareActionStream<TEnv extends object>(handler: ActionHandler<TEnv>, ctx: BeamContext<TEnv>, data: Record<string, unknown>, action?: string): Promise<ReadableStream<ActionResponse>>;
 /**
  * Beam RPC Server - extends RpcTarget for capnweb integration
  *
@@ -189,6 +191,8 @@ export declare const __beamCreateBeamInternals: {
     computeAssetSignature: typeof computeAssetSignature;
     createBeamContext: typeof createBeamContext;
     isAsyncGenerator: typeof isAsyncGenerator;
+    createDirectActionStream: typeof createDirectActionStream;
+    prepareActionStream: typeof prepareActionStream;
 };
 export { BeamServer, PublicBeamServer };
 //# sourceMappingURL=createBeam.d.ts.map

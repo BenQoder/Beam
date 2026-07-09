@@ -6,34 +6,103 @@
 
 /* === SWAP TRANSITIONS (for server-driven updates) === */
 /* Usage: <div beam-swap-transition="fade">...</div>
-   Beam briefly adds .beam-swap-enter after swap and removes it next frame. */
+   Beam briefly adds .beam-swap-enter after swap and removes it next frame.
+   Tune per element: style="--beam-swap-duration: 300ms; --beam-swap-ease: ease-in-out"
+   Presets: fade, scale, zoom, pop, blur, slide, slide-up, slide-down,
+            slide-left, slide-right, flip-x, flip-y */
 
-[beam-swap-transition="fade"] {
-  transition: opacity 150ms ease-out;
+[beam-swap-transition] {
+  --beam-swap-duration: 220ms;
+  --beam-swap-ease: ease-out;
+  transition:
+    opacity var(--beam-swap-duration) var(--beam-swap-ease),
+    transform var(--beam-swap-duration) var(--beam-swap-ease),
+    filter var(--beam-swap-duration) var(--beam-swap-ease);
+  transform-origin: top;
+}
+
+/* The from-state must SNAP (no transition) so the element starts there, then
+   releasing .beam-swap-enter animates to the natural state. Without this the
+   base transition would animate INTO the from-state (a near-invisible dip). */
+[beam-swap-transition].beam-swap-enter {
+  transition: none;
 }
 
 [beam-swap-transition="fade"].beam-swap-enter {
   opacity: 0;
 }
 
-[beam-swap-transition="slide"] {
-  transition: opacity 150ms ease-out, transform 150ms ease-out;
-  transform-origin: top;
-}
-
-[beam-swap-transition="slide"].beam-swap-enter {
+/* legacy alias of slide-down */
+[beam-swap-transition="slide"].beam-swap-enter,
+[beam-swap-transition="slide-down"].beam-swap-enter {
   opacity: 0;
   transform: translateY(-10px);
 }
 
-[beam-swap-transition="scale"] {
-  transition: opacity 150ms ease-out, transform 150ms ease-out;
-  transform-origin: top;
+[beam-swap-transition="slide-up"].beam-swap-enter {
+  opacity: 0;
+  transform: translateY(12px);
+}
+
+[beam-swap-transition="slide-left"].beam-swap-enter {
+  opacity: 0;
+  transform: translateX(16px);
+}
+
+[beam-swap-transition="slide-right"].beam-swap-enter {
+  opacity: 0;
+  transform: translateX(-16px);
 }
 
 [beam-swap-transition="scale"].beam-swap-enter {
   opacity: 0;
   transform: scale(0.98);
+}
+
+[beam-swap-transition="zoom"] {
+  transform-origin: center;
+}
+
+[beam-swap-transition="zoom"].beam-swap-enter {
+  opacity: 0;
+  transform: scale(0.85);
+}
+
+/* springy overshoot */
+[beam-swap-transition="pop"] {
+  --beam-swap-duration: 250ms;
+  --beam-swap-ease: cubic-bezier(0.34, 1.56, 0.64, 1);
+  transform-origin: center;
+}
+
+[beam-swap-transition="pop"].beam-swap-enter {
+  opacity: 0;
+  transform: scale(0.9);
+}
+
+[beam-swap-transition="blur"].beam-swap-enter {
+  opacity: 0;
+  filter: blur(6px);
+}
+
+[beam-swap-transition="flip-x"] {
+  perspective: 600px;
+}
+
+[beam-swap-transition="flip-x"].beam-swap-enter {
+  opacity: 0;
+  transform: perspective(600px) rotateX(-12deg);
+}
+
+[beam-swap-transition="flip-y"].beam-swap-enter {
+  opacity: 0;
+  transform: perspective(600px) rotateY(10deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [beam-swap-transition] {
+    transition: none !important;
+  }
 }
 
 /* === MODAL & DRAWER STYLES === */

@@ -361,7 +361,7 @@ function createBeamContext<TEnv>(base: {
       return { islands }
     },
     removeIsland: (...ids: string[]): ActionResponse => ({ removeIslands: ids }),
-    json: (value: unknown): ActionResponse => ({ json: value }),
+    json: <T,>(value: T): ActionResponse & { json: T } => ({ json: value }),
     event: (name: string, data?: unknown): ActionResponse => ({
       event: data === undefined ? { name } : { name, data },
     }),
@@ -431,10 +431,19 @@ function stripConnectionHeaders(headers: Headers): Headers {
   return next
 }
 
+// Statically defined by the beamPlugin ('true' in `beam build --dev`).
+// Guarded with typeof so non-Vite environments (tests, plain node) work.
+declare const __BEAM_DEV__: boolean | undefined
+
+function isDevRuntime(): boolean {
+  return typeof __BEAM_DEV__ !== 'undefined' && Boolean(__BEAM_DEV__)
+}
+
 function createDirectActionStream<TEnv extends object>(
   handler: ActionHandler<TEnv>,
   ctx: BeamContext<TEnv>,
-  data: Record<string, unknown>
+  data: Record<string, unknown>,
+  action?: string
 ): ReadableStream<ActionResponse> {
   return new ReadableStream<ActionResponse>({
     async start(controller) {
@@ -450,21 +459,62 @@ function createDirectActionStream<TEnv extends object>(
         }
         controller.close()
       } catch (err) {
-        controller.error(err)
+        if (isDevRuntime()) {
+          // Dev: deliver real details as a terminal chunk so the client can
+          // paint an error overlay (action name, message, server stack).
+          const error = err instanceof Error ? err : new Error(String(err))
+          controller.enqueue({
+            error: { action, message: error.message, stack: error.stack },
+          })
+          controller.close()
+        } else {
+          // Production: opaque failure, no details leak to the client.
+          controller.error(err)
+        }
       }
     },
   })
 }
 
+function devActionError(action: string | undefined, err: unknown): ActionResponse {
+  const error = err instanceof Error ? err : new Error(String(err))
+  return { error: { action, message: error.message, stack: error.stack } }
+}
+
 async function prepareActionStream<TEnv extends object>(
   handler: ActionHandler<TEnv>,
   ctx: BeamContext<TEnv>,
-  data: Record<string, unknown>
+  data: Record<string, unknown>,
+  action?: string
 ): Promise<ReadableStream<ActionResponse>> {
-  const result = handler(ctx, data)
+  let result: ReturnType<ActionHandler<TEnv>>
+  let firstStep: { normalized?: ActionResponse; iterator?: AsyncIterator<unknown>; first?: IteratorResult<unknown> }
 
-  if (!isAsyncGenerator(result)) {
-    const normalized = normalizeActionResponse(await result)
+  try {
+    result = handler(ctx, data)
+
+    if (!isAsyncGenerator(result)) {
+      firstStep = { normalized: normalizeActionResponse(await result) }
+    } else {
+      const iterator = result[Symbol.asyncIterator]()
+      firstStep = { iterator, first: await iterator.next() }
+    }
+  } catch (err) {
+    // Handler failed before any chunk (sync throw, awaited promise, or the
+    // generator's first step). Dev: deliver details; production: rethrow to
+    // an opaque 500.
+    if (!isDevRuntime()) throw err
+    const chunk = devActionError(action, err)
+    return new ReadableStream<ActionResponse>({
+      start(controller) {
+        controller.enqueue(chunk)
+        controller.close()
+      },
+    })
+  }
+
+  if (firstStep.normalized !== undefined) {
+    const normalized = firstStep.normalized
     return new ReadableStream<ActionResponse>({
       start(controller) {
         controller.enqueue(normalized)
@@ -473,8 +523,8 @@ async function prepareActionStream<TEnv extends object>(
     })
   }
 
-  const iterator = result[Symbol.asyncIterator]()
-  const first = await iterator.next()
+  const iterator = firstStep.iterator!
+  const first = firstStep.first!
 
   return new ReadableStream<ActionResponse>({
     async start(controller) {
@@ -482,7 +532,7 @@ async function prepareActionStream<TEnv extends object>(
 
       try {
         if (!first.done) {
-          controller.enqueue(normalizeActionResponse(await first.value))
+          controller.enqueue(normalizeActionResponse(await (first.value as ActionResponse | string | Promise<ActionResponse | string>)))
         } else {
           completed = true
         }
@@ -494,13 +544,18 @@ async function prepareActionStream<TEnv extends object>(
               completed = true
               break
             }
-            controller.enqueue(normalizeActionResponse(await next.value))
+            controller.enqueue(normalizeActionResponse(await (next.value as ActionResponse | string | Promise<ActionResponse | string>)))
           }
         }
 
         controller.close()
       } catch (error) {
-        controller.error(error)
+        if (isDevRuntime()) {
+          controller.enqueue(devActionError(action, error))
+          controller.close()
+        } else {
+          controller.error(error)
+        }
       } finally {
         if (!completed && typeof iterator.return === 'function') {
           try {
@@ -622,7 +677,7 @@ class BeamServer<TEnv extends object> extends RpcTarget {
       })
     }
 
-    return createDirectActionStream(handler, ctx, data)
+    return createDirectActionStream(handler, ctx, data, action)
   }
 
   async visit(url: string, options: VisitOptions = {}): Promise<VisitResponse> {
@@ -1039,7 +1094,7 @@ export function createBeam<TEnv extends object = object>(
         }
 
         const resolved = c.get('beamResolvedRequest') ?? await resolveBeamRequest(c as any, auth, sessionConfig, cookieName, maxAge)
-        const stream = await prepareActionStream(handler, resolved.ctx, data)
+        const stream = await prepareActionStream(handler, resolved.ctx, data, action)
         await persistCookieSessionIfNeeded(c as any, resolved, sessionConfig, maxAge)
 
         return new Response(encodeBeamActionStream(stream), {
@@ -1220,6 +1275,8 @@ export const __beamCreateBeamInternals = {
   computeAssetSignature,
   createBeamContext,
   isAsyncGenerator,
+  createDirectActionStream,
+  prepareActionStream,
 }
 
 // Export BeamServer for advanced usage (e.g., extending with custom methods)

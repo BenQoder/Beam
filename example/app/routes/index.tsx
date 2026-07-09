@@ -32,6 +32,7 @@ export default createRoute((c) => {
           <a href="/products" class="btn-primary">View Products</a>
           <a href="/reactivity" class="btn-secondary">Reactivity Demo</a>
           <a href="/react-demo" class="btn-secondary">React Islands</a>
+          <a href="/animations" class="btn-secondary">Animations</a>
           <a href="/auth-demo" class="btn-secondary">Auth Demo</a>
           <a href="/demo" class="btn-secondary">Beam Demo</a>
         </div>

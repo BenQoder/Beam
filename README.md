@@ -76,11 +76,49 @@ npm run dev
 
 ## Wrangler-First Development
 
-Beam actions run over WebSocket RPC, so Cloudflare Workers apps should be developed through Wrangler rather than a standalone Vite dev server. The Beam CLI provides a build command that creates both the Worker bundle and client assets:
+Beam actions run over WebSocket RPC, so Cloudflare Workers apps should be developed through Wrangler rather than a standalone Vite dev server.
+
+### beam dev
+
+One command runs the whole loop:
+
+```bash
+beam dev --port 8791    # extra args pass through to wrangler dev
+```
+
+It builds with dev refresh, then starts `wrangler dev` with **cache-safe assets**: dev builds emit a `dist/_headers` file serving everything with `Cache-Control: no-store`, so rebuilds are never masked by the browser's HTTP cache or miniflare's emulated edge cache — the class of "I rebuilt but the browser runs old code" problems is gone by construction. Production builds remove `_headers` automatically.
+
+Dev refresh needs **no wiring**: in dev builds the Beam client auto-loads the refresh poller (statically eliminated from production bundles — zero bytes shipped). Edit a file → the wrangler build hook rebuilds → the page morphs in place, preserving focused inputs, `beam-keep` nodes, and mounted React islands. The manual `<script src="/static/dev-refresh.js">` tag still works and is safe to keep — the poller is a singleton.
+
+`beam dev` warns if your wrangler config lacks the rebuild hook. The Beam CLI also provides the underlying build command:
 
 ```bash
 beam build
 ```
+
+### Error Visibility & Debugging
+
+**Dev error overlay.** In dev builds, an action that throws on the server delivers its real details over the WebSocket — action name, message, and server stack — and Beam paints a full-screen overlay (dismiss with Esc). React island crashes (`beam:island-error`) appear in the same overlay. In production none of this ships: the overlay module is dead-code eliminated and the server sends an opaque failure with no stack.
+
+Both failure kinds also dispatch a `beam:action-error` window event (`detail: { action, message, stack? }`) in every build, so you can wire your own reporting:
+
+```javascript
+window.addEventListener('beam:action-error', (e) => {
+  logToSentry(e.detail)
+})
+```
+
+**Call tracing.** Toggle from the console (persisted in localStorage):
+
+```javascript
+beam.debug(true)
+// [beam] → addToCart { id: 42 }
+// [beam] ← addToCart #1: state(cart) + json
+// [beam] ✓ addToCart done in 38ms (1 chunk)
+beam.debug(false)
+```
+
+Every action call logs its params, each response chunk (summarized by what it carries — html, state, islands, json, …), and the round-trip duration.
 
 Add it to Wrangler's build hook so `wrangler dev` works from a clean checkout without manually running `npm run build` first. Use `--dev` for local development; normal production builds remove dev-only refresh artifacts.
 
@@ -657,6 +695,27 @@ const { call, loading, error, data } = useBeamAction('addToCart')
 
 Or outside components: `callBeamAction('addToCart', { id: 42 })`.
 
+### Typed Actions
+
+The Vite plugin generates a typed-action registry (`app/beam-actions.d.ts` by default, next to your actions directory) mapping your action modules into Beam's types. With it, **action names, params, and `ctx.json` payloads are inferred at every call site** — `useBeamAction`, `callBeamAction`, and `window.beam.*`:
+
+```tsx
+// app/actions/cart.tsx — type the data param, types flow everywhere
+export function addToCart(ctx: BeamContext<Env>, { productId, qty }: { productId: number; qty?: number }) {
+  ...
+  return ctx.json({ ok: true, count: cart.items.length })
+}
+```
+
+```tsx
+// in an island — all inferred from the registry:
+const { call, json } = useBeamAction('addToCart')  // name validated, typo = compile error
+call({ productId: 42 })                             // params typed
+json?.count                                         // ctx.json payload typed
+```
+
+Zero runtime cost — it's a generated `.d.ts` that augments `BeamRegisteredActionModules` on `@benqoder/beam`. It regenerates on build and when action files are added/removed in dev. Configure with the plugin's `actionTypes` option (a root-relative path, or `false` to disable). Untyped handlers (`data: Record<string, unknown>`) stay permissive; without the generated file everything falls back to the classic string-based API. If your `app/islands/` has its own tsconfig, add `"../beam-actions.d.ts"` to its `include` for typed actions inside islands. Commit the generated file (or gitignore it — it rebuilds deterministically).
+
 **Plain request/response with `ctx.json()`** — when an island fetches data for itself (search, pagination, chart data), return JSON that is private to the caller: no DOM update, no state, no events.
 
 ```tsx
@@ -844,7 +903,7 @@ Add `beam-swap-transition` on the _target_ element to animate after swaps:
 <div id="results" beam-swap-transition="fade"></div>
 ```
 
-Supported values: `fade`, `slide`, `scale`.
+Presets: `fade`, `scale`, `zoom`, `pop`, `blur`, `slide`, `slide-up`, `slide-down`, `slide-left`, `slide-right`, `flip-x`, `flip-y`. Tune per element with CSS variables: `style="--beam-swap-duration: 300ms; --beam-swap-ease: ease-in-out"`. See the **Animations** section for view transitions, enter/leave classes, and staggering.
 
 ### Modals & Drawers
 
@@ -1031,6 +1090,17 @@ return ctx.drawer(render(<MyDrawer />), { position: "left", size: "medium" });
 | ----------- | ----------------------------------- | ------------------- |
 | `beam-keep` | Preserve element during DOM updates | `<video beam-keep>` |
 
+### Animations
+
+| Attribute              | Description                                              | Example                            |
+| ---------------------- | -------------------------------------------------------- | ---------------------------------- |
+| `beam-transition`      | Run this target's swaps in a native view transition      | `beam-transition="view"`           |
+| `beam-transition-name` | Shared-element morph name across updates/visits          | `beam-transition-name="product-1"` |
+| `beam-swap-transition` | Preset animation on swap (12 presets)                    | `beam-swap-transition="pop"`       |
+| `beam-enter[-start/-end]` | Class triplet applied when content is inserted        | `beam-enter-start="opacity-0"`     |
+| `beam-leave[-start/-end]` | Class triplet run before removal (delete/removeIsland) | `beam-leave-end="opacity-0"`      |
+| `beam-enter-stagger`   | Per-child delay in ms for entering children              | `beam-enter-stagger="80"`          |
+
 ### React Islands
 
 | Attribute             | Description                                            | Example                     |
@@ -1089,6 +1159,66 @@ Control how content is inserted into the target element:
   Refresh
 </button>
 ```
+
+---
+
+## Animations
+
+Beam's animation system is layered and dependency-free, and every layer respects `prefers-reduced-motion` automatically.
+
+### View Transitions (native)
+
+Put `beam-transition="view"` on any swap target and its server-driven updates run inside `document.startViewTransition` — a native cross-fade, no library:
+
+```html
+<div id="results" beam-transition="view">…</div>
+
+<!-- put it on your boost shell and Beam visits animate page navigation -->
+<main beam-boost beam-transition="view">…</main>
+```
+
+**Shared-element morphs** — give the same element a `beam-transition-name` on both sides of an update and the browser animates it between positions (the product-card-flies-into-detail-page effect):
+
+```html
+<!-- grid page -->
+<img beam-transition-name="product-42" src="…" />
+<!-- detail page: same name → the image morphs across the visit -->
+<img beam-transition-name="product-42" src="…" />
+```
+
+Unsupported browsers fall back to an instant swap.
+
+### Swap Presets
+
+`beam-swap-transition` on the target animates each swap. Presets: `fade`, `scale`, `zoom`, `pop` (springy overshoot), `blur`, `slide`, `slide-up`, `slide-down`, `slide-left`, `slide-right`, `flip-x`, `flip-y`.
+
+```html
+<div id="cart" beam-swap-transition="pop" style="--beam-swap-duration: 250ms">…</div>
+```
+
+### Enter/Leave Classes (Tailwind-friendly)
+
+Alpine/Vue-style class triplets on the content itself — full designer control, pure markup (works inside server-rendered fragments, streamed chunks, modals, drawers, and spawned islands):
+
+```html
+<div beam-enter="transition duration-300 ease-out"
+     beam-enter-start="opacity-0 translate-y-2"
+     beam-enter-end="opacity-100 translate-y-0">
+  I animate in whenever the server inserts me
+</div>
+```
+
+`beam-leave` / `beam-leave-start` / `beam-leave-end` run before removal — on `beam-swap="delete"` targets and `ctx.removeIsland()` — and the element is removed when the transition settles.
+
+**Staggering** — `beam-enter-stagger="80"` on a parent delays each entering child by 80ms more than the last. Perfect for product grids and lists:
+
+```html
+<div id="grid" beam-enter-stagger="60">
+  <!-- server renders items with beam-enter classes; they cascade in -->
+</div>
+```
+
+Beyond these layers (springs, scroll-driven, gestures), islands can use any React animation library, and [Motion](https://motion.dev) / [auto-animate](https://auto-animate.formkit.com) pair well with the attribute world — Beam deliberately doesn't bundle one.
 
 ---
 

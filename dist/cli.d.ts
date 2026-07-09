@@ -22,7 +22,11 @@ export declare function writeDevManifest(outDir?: string, now?: number): {
     version: string;
     assets: string;
 };
+export declare const DEV_HEADERS_CONTENT = "/*\n  Cache-Control: no-store\n";
+export declare function writeDevHeaders(outDir?: string): void;
 export declare function cleanDevArtifacts(outDir?: string): void;
+/** Best-effort check that wrangler config rebuilds via beam on file changes */
+export declare function hasBeamBuildHook(cwd?: string): boolean;
 export declare function patchPackageJson(file: string, packageName?: string): boolean;
 export declare function patchWranglerJsonText(input: string, workerName?: string): string;
 export declare function patchWranglerJson(file: string, workerName?: string): boolean;

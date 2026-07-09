@@ -1,4 +1,22 @@
 import type { Context, Env as HonoEnv, Hono, MiddlewareHandler } from 'hono';
+import type { BeamRegisteredActionModules } from './index';
+type UnionToIntersection<U> = (U extends unknown ? (k: U) => void : never) extends (k: infer I) => void ? I : never;
+type RegisteredActionMap = keyof BeamRegisteredActionModules extends never ? {} : UnionToIntersection<BeamRegisteredActionModules[keyof BeamRegisteredActionModules]>;
+/** Names of actions known to the generated registry (never when no codegen) */
+export type RegisteredActionName = {
+    [K in keyof RegisteredActionMap]: RegisteredActionMap[K] extends (...args: never[]) => unknown ? K : never;
+}[keyof RegisteredActionMap] & string;
+/** All callable action names: the registered union, or string without codegen */
+export type BeamActionName = [RegisteredActionName] extends [never] ? string : RegisteredActionName;
+/** Params type of a registered action's second argument (data) */
+export type BeamActionParams<N extends string> = N extends RegisteredActionName ? RegisteredActionMap[N] extends (ctx: never, data: infer D, ...rest: never[]) => unknown ? unknown extends D ? Record<string, unknown> : D : Record<string, unknown> : Record<string, unknown>;
+type ActionChunk<R> = R extends AsyncGenerator<infer Y, unknown, unknown> ? Awaited<Y> : Awaited<R>;
+/** ctx.json payload type produced by a registered action (unknown otherwise) */
+export type BeamActionJson<N extends string> = N extends RegisteredActionName ? RegisteredActionMap[N] extends (...args: never[]) => infer R ? Extract<ActionChunk<R>, {
+    json: unknown;
+}> extends {
+    json: infer J;
+} ? J : unknown : unknown : unknown;
 /**
  * User type - customize per app via module augmentation
  */
@@ -69,6 +87,15 @@ export interface BeamServerEvent {
     name: string;
     data?: unknown;
 }
+/**
+ * Action failure details delivered to the client. Dev builds include the
+ * server stack; production sends an opaque failure instead.
+ */
+export interface BeamActionError {
+    action?: string;
+    message: string;
+    stack?: string;
+}
 export type VisitMode = 'visit' | 'patch' | 'navigate';
 export interface VisitOptions {
     mode?: VisitMode;
@@ -132,10 +159,13 @@ export interface BeamContext<TEnv = object> {
      * Return plain JSON to the caller — no DOM update, no state, no events.
      * The value resolves the calling side's promise (useBeamAction / window.beam),
      * private to that caller. In streaming actions, yield it last: the caller
-     * receives the final chunk.
+     * receives the final chunk. Generic so typed-action codegen can infer the
+     * payload type at the call site.
      * @example return ctx.json(await db.search(q))
      */
-    json(value: unknown): ActionResponse;
+    json<T>(value: T): ActionResponse & {
+        json: T;
+    };
     /**
      * Push a named event to the client (dispatched as 'beam:server-event',
      * received by useBeamEvent / window listeners). Works from streaming
@@ -258,6 +288,8 @@ export interface ActionResponse {
     event?: BeamServerEvent;
     /** Plain JSON payload for the caller — applied nowhere, returned to the call site */
     json?: unknown;
+    /** Action failure details (dev builds carry message/stack; see beam:action-error) */
+    error?: BeamActionError;
     /** JavaScript to execute on client (optional) */
     script?: string;
     /** URL to redirect to (optional) */
@@ -365,4 +397,5 @@ export interface BeamInstance<TEnv extends object = object> {
      */
     generateAuthToken: (ctx: BeamContext<TEnv>) => Promise<string>;
 }
+export {};
 //# sourceMappingURL=types.d.ts.map

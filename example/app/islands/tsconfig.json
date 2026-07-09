@@ -3,5 +3,5 @@
   "compilerOptions": {
     "jsxImportSource": "react"
   },
-  "include": ["./**/*"]
+  "include": ["./**/*", "../beam-actions.d.ts"]
 }

@@ -172,6 +172,13 @@ function identitySelector(el, root) {
     return null;
 }
 async function startDevRefresh() {
+    // Singleton: the module may arrive twice (auto-import from the beam client
+    // in dev builds AND a manual <script src="/static/dev-refresh.js"> tag) —
+    // only one poller may run.
+    const marker = globalThis;
+    if (marker.__BEAM_DEV_REFRESH_ACTIVE__)
+        return;
+    marker.__BEAM_DEV_REFRESH_ACTIVE__ = true;
     const config = readConfig();
     let current = await fetchManifest(config.manifestUrl);
     if (!current)

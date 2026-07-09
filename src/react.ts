@@ -12,7 +12,12 @@
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { beamReactivity } from './reactivity'
-import type { ActionResponse } from './types'
+import type {
+  ActionResponse,
+  BeamActionJson,
+  BeamActionParams,
+  RegisteredActionName,
+} from './types'
 
 export interface BeamCallOptions {
   /** CSS selector applied to html responses (same as beam-target) */
@@ -42,7 +47,20 @@ function beamGlobal(): Record<string, BeamActionCaller> {
  * Call a Beam action over the WebSocket RPC from anywhere in JS/React.
  * Responses are applied like any Beam response (html swaps, state, islands,
  * events, modals, ...) and the final ActionResponse is returned.
+ *
+ * With the generated typed-action registry (beamPlugin `actionTypes`),
+ * action names, params, and the json payload are all inferred.
  */
+export function callBeamAction<N extends RegisteredActionName>(
+  action: N,
+  data?: BeamActionParams<N>,
+  options?: BeamCallOptions
+): Promise<ActionResponse & { json?: BeamActionJson<N> }>
+export function callBeamAction(
+  action: string,
+  data?: Record<string, unknown>,
+  options?: BeamCallOptions
+): Promise<ActionResponse>
 export function callBeamAction(
   action: string,
   data: Record<string, unknown> = {},
@@ -64,14 +82,24 @@ export interface UseBeamActionResult<TJson = unknown> {
   json: TJson | null
 }
 
+/** useBeamAction result with params + json inferred from the typed registry */
+export type UseBeamActionTyped<N extends RegisteredActionName> = Omit<
+  UseBeamActionResult<BeamActionJson<N>>,
+  'call'
+> & {
+  call: (data?: BeamActionParams<N>) => Promise<ActionResponse>
+}
+
 /**
  * React hook to call a Beam action at any time.
  *
  * Streaming actions (async generators) work transparently: every chunk is
  * applied as it arrives and `call` resolves with the last one.
  *
- * Actions returning `ctx.json(value)` deliver plain data — read it from the
- * resolved response or the `json` field:
+ * With the generated typed-action registry (beamPlugin `actionTypes`), the
+ * action name is validated and params/json are inferred. Without it (or for
+ * unregistered names) the classic permissive form applies, including the
+ * explicit json generic.
  *
  * @example
  * const { call: addToCart, loading } = useBeamAction('addToCart')
@@ -81,10 +109,18 @@ export interface UseBeamActionResult<TJson = unknown> {
  * const { call: search, json: results } = useBeamAction<Product[]>('searchProducts')
  * // or imperatively: const results = (await search({ q })).json as Product[]
  */
+export function useBeamAction<N extends RegisteredActionName>(
+  action: N,
+  options?: BeamCallOptions
+): UseBeamActionTyped<N>
 export function useBeamAction<TJson = unknown>(
   action: string,
   options?: BeamCallOptions
-): UseBeamActionResult<TJson> {
+): UseBeamActionResult<TJson>
+export function useBeamAction(
+  action: string,
+  options?: BeamCallOptions
+): UseBeamActionResult<unknown> {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<Error | null>(null)
   const [data, setData] = useState<ActionResponse | null>(null)
@@ -121,7 +157,7 @@ export function useBeamAction<TJson = unknown>(
     [action]
   )
 
-  return { call, loading, error, data, json: (data?.json as TJson | undefined) ?? null }
+  return { call, loading, error, data, json: data?.json ?? null }
 }
 
 // ============ SHARED STATE (server ⇄ attribute-world ⇄ React) ============

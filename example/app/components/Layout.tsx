@@ -39,7 +39,7 @@ export function Layout({ title = 'My App', children, cartCount = 0, authToken }:
             </nav>
           </header>
 
-          <main id="app">
+          <main id="app" beam-transition="view">
             {children}
           </main>
 

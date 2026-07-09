@@ -12,7 +12,7 @@ const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 // back into the mounted component (its local React state is preserved).
 // Also returns a ctx.json payload — private data resolved at the call site,
 // on top of the island push (one response can carry both).
-export function syncCounter(ctx: BeamContext<Env>, { value }: Record<string, unknown>) {
+export function syncCounter(ctx: BeamContext<Env>, { value }: { value?: number }) {
   const serverValue = Number(value) || 0
   return {
     ...ctx.island('reactCounter', {
@@ -51,6 +51,39 @@ export function spawnPromo(ctx: BeamContext<Env>) {
 
 export function dismissPromo(ctx: BeamContext<Env>) {
   return ctx.removeIsland('promoRail')
+}
+
+// Throws on purpose: in dev builds the Beam error overlay shows the action
+// name, message, and server stack; production sends an opaque failure.
+export function boomDemo(): never {
+  throw new Error('boomDemo: simulated server crash — this stack came over the WebSocket')
+}
+
+const DEALS = [
+  'Free shipping', 'BOGO hair oil', '10% off wigs',
+  'VIP early access', 'Bundle & save', 'Weekend flash sale',
+]
+
+// Animation demo: swapped-in chips run beam-enter classes, staggered by the
+// container; the target also uses beam-swap-transition="pop" and
+// beam-transition="view" (native view transition when supported).
+export function shuffleDeals(ctx: BeamContext<Env>) {
+  const picks = [...DEALS].sort(() => Math.random() - 0.5).slice(0, 4)
+  return ctx.render(
+    <>
+      {picks.map((deal) => (
+        <span class="deal-chip" beam-enter="deal-enter" beam-enter-start="deal-from">
+          {deal}
+        </span>
+      ))}
+    </>,
+    { target: '#deal-zone' }
+  )
+}
+
+// Target uses beam-swap="delete"; returning any content is enough to trigger it.
+export function dismissCard() {
+  return ' '
 }
 
 // Stream live data into the StockTicker island: one ctx.island() per tick,

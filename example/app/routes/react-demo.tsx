@@ -69,12 +69,52 @@ export default createRoute(async (c) => {
         <strong beam-text="clicks"></strong> times.
       </div>
 
+      <style>{`
+        .deal-chip { padding: 6px 12px; background: #eef2ff; color: #4338ca; border-radius: 999px; font-size: 0.875rem; }
+        .deal-enter { transition: opacity 0.35s ease, transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1); }
+        .deal-from { opacity: 0; transform: translateY(10px) scale(0.9); }
+        .leave-anim { transition: opacity 0.3s ease, transform 0.3s ease; }
+        .leave-to { opacity: 0; transform: translateX(24px) scale(0.97); }
+      `}</style>
+
+      <h2>Animations</h2>
+      <p>
+        <button class="btn-primary" beam-action="shuffleDeals">
+          Shuffle deals (view transition + pop + stagger)
+        </button>
+      </p>
+      <div
+        id="deal-zone"
+        beam-swap-transition="pop"
+        beam-transition="view"
+        beam-enter-stagger="70"
+        style="display:flex;gap:8px;flex-wrap:wrap;min-height:38px;align-items:center"
+      >
+        <span class="deal-chip">Click shuffle…</span>
+      </div>
+
+      <div id="dismiss-card" class="react-card" beam-leave="leave-anim" beam-leave-end="leave-to" style="margin-top:12px">
+        <strong>Dismissible card</strong>
+        <p class="react-muted">beam-swap="delete" runs the beam-leave classes before removal.</p>
+        <p>
+          <button class="btn-secondary" beam-action="dismissCard" beam-target="#dismiss-card" beam-swap="delete">
+            Dismiss with leave animation
+          </button>
+        </p>
+      </div>
+
       <h2>Server-spawned islands</h2>
       <p>
         <button class="btn-primary" beam-action="spawnPromo">Spawn island (ctx.island upsert)</button>{' '}
         <button class="btn-secondary" beam-action="dismissPromo">Dismiss (ctx.removeIsland)</button>
       </p>
       <div id="promo-zone" class="react-skeleton">nothing spawned yet</div>
+
+      <p>
+        <button class="btn-secondary" beam-action="boomDemo">
+          Crash an action (dev error overlay)
+        </button>
+      </p>
 
       <h2>Crash resilience</h2>
       <p>

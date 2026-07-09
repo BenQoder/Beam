@@ -1,3 +1,4 @@
+/// <reference types="vite/client" />
 /// <reference types="@benqoder/beam/virtual" />
 
 import type { BeamContext } from '@benqoder/beam'
