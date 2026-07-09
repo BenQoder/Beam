@@ -2880,6 +2880,59 @@ If you need to generate tokens outside the middleware:
 const token = await beam.generateAuthToken(ctx);
 ```
 
+### Hardening Checklist
+
+Before deploying, verify each of these — the first is non-negotiable:
+
+**1. Real, secret-managed `SESSION_SECRET` (critical).** The secret is the master key: it signs the auth tokens whose `uid` decides who a request is. Anyone who knows it can forge a token for any user.
+
+- Generate a strong random value: `openssl rand -base64 32`
+- Store it as a **Cloudflare secret**, never a committed `var`: `wrangler secret put SESSION_SECRET`
+- The scaffolded `wrangler.json` ships a placeholder `dev-secret-change-in-production` for local dev only — **never deploy with it.**
+
+**2. Origin allowlist (defense-in-depth).** The WebSocket endpoint is **same-origin only by default**. For split-origin setups (app and WS on different hosts), configure it explicitly:
+
+```typescript
+beam.init(app, {
+  allowedOrigins: ['https://app.example.com'], // or '*' to disable the check
+})
+```
+
+**3. Never interpolate untrusted data into `beam-*` expression attributes or `ctx.script()`.** Beam's reactivity evaluates `beam-click` / `beam-text` / `beam-show` / `beam-class` expressions with `new Function` (like Alpine/Vue), and `ctx.script()` executes JS on the client. Reflecting user input into any of these is **client-side remote code execution**. Interpolate untrusted data into text/attribute *values*, which hono/jsx escapes — never into expression attributes:
+
+```tsx
+// DANGER — user input becomes executable
+<div beam-text={`'${userInput}'`}>            // ✗
+return ctx.script(`showToast('${userInput}')`) // ✗
+
+// SAFE — user input is escaped data
+<div beam-text="message">{userInput}</div>     // ✓  (bind to state, render as text)
+return ctx.state('toast', { message: userInput }) // ✓
+```
+
+**4. Content Security Policy.** A CSP is the strongest blunt mitigation for any HTML-injection XSS. `beamCsp()` builds a Beam-tuned policy — it includes `'unsafe-eval'` for reactivity (drop it with `allowReactivityEval: false` if you don't use client-side reactivity) and lets you add island source origins:
+
+```tsx
+import { beamCsp } from '@benqoder/beam'
+
+app.use('*', async (c, next) => {
+  await next()
+  c.header('Content-Security-Policy', beamCsp({
+    islandSources: ['https://cdn.example.com'], // hosts in your islandSources
+  }))
+})
+```
+
+**5. Dynamic island sources are executable code.** Only add prefixes to `islandSources` you fully trust — a module loaded from there runs with full page privileges. Prefixes are matched on a **path-segment boundary** (a prefix `/islands/` permits `/islands/x.js` but not `/islands-evil/x.js`), same-origin unless the prefix names another origin.
+
+**6. Bound uploads.** Blob-carrying actions are capped at 10 MB by default; tune with `beam.init(app, { maxUploadBytes })` and set `rpcOptions.limits.maxMessageSize` for the WebSocket layer.
+
+**7. Cookie-storage session data is signed, not encrypted** — it is tamper-proof but **readable by the client**. Don't put secrets in `ctx.session` when using the default cookie storage; use `KVSession` (server-side) for anything sensitive.
+
+**8. Build-toolchain advisories.** `npm audit` may flag dev dependencies (Vite/Wrangler → esbuild, undici, ws, postcss). These run **only during local build/dev and are not in the deployed Worker bundle**; keep them current (`npm audit fix`, and upgrade Wrangler deliberately) for supply-chain hygiene, but they carry no production-runtime exposure.
+
+Cookies are set `HttpOnly`, `Secure`, `SameSite=Lax` (browsers honor `Secure` on `localhost` for dev).
+
 ---
 
 ## Per-Call Hono Middleware

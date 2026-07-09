@@ -115,7 +115,14 @@ function readMetaSources() {
         allowIslandSources(content.split(',').map((s) => s.trim()).filter(Boolean));
     }
 }
-/** Resolve src to an absolute URL if it matches an allowed prefix, else null. */
+/**
+ * Resolve src to an absolute URL if it matches an allowed prefix, else null.
+ *
+ * Matching is on a path-segment boundary, NOT a raw string prefix: an allowed
+ * prefix is normalized to end with '/', and the resolved URL must be that exact
+ * directory or a descendant. This blocks sibling-path bypasses — prefix
+ * '/islands' must not also permit '/islands-evil/x.js'. Same origin only.
+ */
 function resolveAllowedSource(src) {
     readMetaSources();
     let resolved;
@@ -128,8 +135,17 @@ function resolveAllowedSource(src) {
     for (const prefix of allowedIslandSources) {
         try {
             const allowed = new URL(prefix, location.origin);
-            if (resolved.href.startsWith(allowed.href))
+            if (resolved.origin !== allowed.origin)
+                continue;
+            // Normalize the allowed path to a directory (trailing slash).
+            const allowedPath = allowed.pathname.endsWith('/')
+                ? allowed.pathname
+                : allowed.pathname + '/';
+            // Descendant of the directory, or the directory index itself.
+            if (resolved.pathname === allowed.pathname ||
+                resolved.pathname.startsWith(allowedPath)) {
                 return resolved.href;
+            }
         }
         catch {
             // skip invalid prefix

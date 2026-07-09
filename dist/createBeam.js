@@ -1,8 +1,9 @@
 import { getSignedCookie, setSignedCookie } from 'hono/cookie';
 import { RpcTarget, newWorkersRpcResponse } from 'capnweb';
-import { BEAM_ACTION_REQUEST_HEADER, BEAM_ACTION_STREAM_CONTENT_TYPE, BEAM_ACTION_TRANSPORT_HEADER, decodeBeamActionStream, encodeBeamActionStream, getBeamActionBasePath, } from './actionStream';
+import { BEAM_ACTION_MULTIPART_PARAMS_FIELD, BEAM_ACTION_REQUEST_HEADER, BEAM_ACTION_STREAM_CONTENT_TYPE, BEAM_ACTION_TRANSPORT_HEADER, decodeBeamActionStream, encodeBeamActionStream, getBeamActionBasePath, } from './actionStream';
 /** Default token lifetime: 5 minutes */
 const DEFAULT_TOKEN_LIFETIME = 5 * 60 * 1000;
+const DEFAULT_MAX_UPLOAD_BYTES = 10 * 1024 * 1024; // 10 MB
 /**
  * Sign an auth token payload using HMAC-SHA256
  */
@@ -30,6 +31,14 @@ async function verifyToken(token, secret) {
         if (!valid)
             return null;
         const payload = JSON.parse(data);
+        // Validate shape: a well-formed token has a numeric exp and an sid.
+        // Reject anything missing them so a malformed-but-signed payload can never
+        // become a non-expiring credential.
+        if (typeof payload !== 'object' || payload === null ||
+            typeof payload.exp !== 'number' ||
+            typeof payload.sid !== 'string') {
+            return null;
+        }
         // Check expiration
         if (payload.exp < Date.now())
             return null;
@@ -517,14 +526,32 @@ class BeamServer extends RpcTarget {
             headers.set(BEAM_ACTION_REQUEST_HEADER, 'action');
             headers.set(BEAM_ACTION_TRANSPORT_HEADER, 'rpc');
             headers.set('accept', BEAM_ACTION_STREAM_CONTENT_TYPE);
-            headers.set('content-type', 'application/json');
+            // Blob params (capnweb ≥0.8 carries them over the socket) must survive
+            // the internal HTTP hop too — JSON would flatten them to {}. Top-level
+            // Blobs travel as multipart fields; everything else stays JSON.
+            const blobEntries = Object.entries(data).filter(([, v]) => v instanceof Blob);
+            let body;
+            if (blobEntries.length > 0) {
+                const rest = { ...data };
+                const form = new FormData();
+                for (const [key, value] of blobEntries) {
+                    delete rest[key];
+                    form.append(key, value);
+                }
+                form.set(BEAM_ACTION_MULTIPART_PARAMS_FIELD, JSON.stringify(rest));
+                body = form; // content-type (with boundary) is set by the runtime
+            }
+            else {
+                headers.set('content-type', 'application/json');
+                body = JSON.stringify(data);
+            }
             return new ReadableStream({
                 async start(controller) {
                     try {
                         const response = await actionFetcher(new Request(actionUrl, {
                             method: 'POST',
                             headers,
-                            body: JSON.stringify(data),
+                            body,
                         }), ctx.env);
                         if (!response.ok) {
                             throw new Error(await readResponseError(response));
@@ -570,7 +597,25 @@ class BeamServer extends RpcTarget {
             };
         }
         const mode = options.mode ?? 'visit';
-        const visitUrl = new URL(url, this.ctx.request.url).toString();
+        const requestUrl = new URL(this.ctx.request.url);
+        const resolvedVisit = new URL(url, this.ctx.request.url);
+        // Clamp visits to same-origin. A cross-origin URL can't be a real Beam
+        // route anyway (routing is by path); rejecting it avoids history/URL
+        // spoofing and any accidental proxying by catch-all routes.
+        if (resolvedVisit.origin !== requestUrl.origin) {
+            return {
+                url,
+                finalUrl: url,
+                status: 400,
+                mode,
+                target: options.target,
+                replace: options.replace,
+                reload: true,
+                reason: 'cross-origin-visit',
+                scroll: mode === 'patch' ? 'preserve' : 'reset',
+            };
+        }
+        const visitUrl = resolvedVisit.toString();
         const headers = new Headers(this.ctx.request.headers);
         [
             'upgrade',
@@ -708,6 +753,7 @@ async function resolveBeamRequest(c, auth, sessionConfig, cookieName, maxAge) {
             await setSignedCookie(c, cookieName, sessionId, sessionSecret, {
                 maxAge,
                 httpOnly: true,
+                secure: true,
                 sameSite: 'Lax',
                 path: '/',
             });
@@ -774,6 +820,7 @@ async function persistCookieSessionIfNeeded(c, resolved, sessionConfig, maxAge) 
     await setSignedCookie(c, SESSION_DATA_COOKIE, dataString, resolved.sessionSecret, {
         maxAge,
         httpOnly: true,
+        secure: true,
         sameSite: 'Lax',
         path: '/',
     });
@@ -885,6 +932,10 @@ export function createBeam(config) {
          */
         init(app, options) {
             const endpoint = options?.endpoint ?? '/beam';
+            const allowedOrigins = options?.allowedOrigins;
+            // Cap multipart (Blob-carrying) action bodies. Defense-in-depth over
+            // capnweb's maxMessageSize; guards the in-memory formData() buffer.
+            const maxUploadBytes = options?.maxUploadBytes ?? DEFAULT_MAX_UPLOAD_BYTES;
             const actionBasePath = getBeamActionBasePath(endpoint);
             const routeFetcher = (request, env) => Promise.resolve(app.fetch(request, env));
             let actionFetcher = options?.actionFetcher;
@@ -900,14 +951,44 @@ export function createBeam(config) {
                 if (!handler) {
                     return c.text(`Unknown action: ${action}`, 404);
                 }
-                const bodyText = await c.req.raw.text();
                 let data = {};
-                if (bodyText.trim()) {
-                    try {
-                        data = JSON.parse(bodyText);
+                const contentType = c.req.header('content-type') ?? '';
+                if (contentType.includes('multipart/form-data')) {
+                    // Reject oversized uploads before buffering them into memory.
+                    const declaredLength = Number(c.req.header('content-length'));
+                    if (Number.isFinite(declaredLength) && declaredLength > maxUploadBytes) {
+                        return c.text('Payload too large', 413);
                     }
-                    catch {
-                        return c.text('Invalid Beam action payload', 400);
+                    // Blob-carrying params (see BeamServer.call): JSON params in the
+                    // __beam_params field, each Blob as its own multipart field.
+                    const form = await c.req.raw.formData();
+                    const paramsJson = form.get(BEAM_ACTION_MULTIPART_PARAMS_FIELD);
+                    if (typeof paramsJson === 'string' && paramsJson.trim()) {
+                        try {
+                            data = JSON.parse(paramsJson);
+                        }
+                        catch {
+                            return c.text('Invalid Beam action payload', 400);
+                        }
+                    }
+                    form.forEach((value, key) => {
+                        if (key === BEAM_ACTION_MULTIPART_PARAMS_FIELD)
+                            return;
+                        // FormData values are string | File; non-strings are the Blobs.
+                        // (typeof beats instanceof here — cross-realm safe.)
+                        if (typeof value !== 'string')
+                            data[key] = value;
+                    });
+                }
+                else {
+                    const bodyText = await c.req.raw.text();
+                    if (bodyText.trim()) {
+                        try {
+                            data = JSON.parse(bodyText);
+                        }
+                        catch {
+                            return c.text('Invalid Beam action payload', 400);
+                        }
                     }
                 }
                 const resolved = c.get('beamResolvedRequest') ?? await resolveBeamRequest(c, auth, sessionConfig, cookieName, maxAge);
@@ -931,6 +1012,29 @@ export function createBeam(config) {
                 if (upgradeHeader !== 'websocket') {
                     return c.text('Expected WebSocket', 426);
                 }
+                // Origin check — defense-in-depth against Cross-Site WebSocket
+                // Hijacking (the in-band token is the primary defense). Default:
+                // same-origin only. Override with allowedOrigins (a list, or '*' to
+                // disable). A missing Origin header (non-browser client) is allowed.
+                if (allowedOrigins !== '*') {
+                    const origin = c.req.header('Origin');
+                    if (origin) {
+                        let ok;
+                        if (allowedOrigins) {
+                            ok = allowedOrigins.includes(origin);
+                        }
+                        else {
+                            try {
+                                ok = new URL(origin).host === new URL(c.req.url).host;
+                            }
+                            catch {
+                                ok = false;
+                            }
+                        }
+                        if (!ok)
+                            return c.text('Forbidden origin', 403);
+                    }
+                }
                 // Get the session secret for token verification
                 const secret = resolveSecret(c.env, sessionConfig);
                 if (!secret) {
@@ -939,7 +1043,7 @@ export function createBeam(config) {
                 // Create PublicBeamServer - client must authenticate to get full API
                 const server = new PublicBeamServer(secret, sessionConfig, c.env, c.req.raw, actions, auth, routeFetcher, actionFetcher, actionBasePath);
                 // Use capnweb to handle the RPC connection
-                return newWorkersRpcResponse(c.req.raw, server);
+                return newWorkersRpcResponse(c.req.raw, server, options?.rpcOptions);
             });
         },
     };

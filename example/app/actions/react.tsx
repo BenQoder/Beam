@@ -59,6 +59,22 @@ export function boomDemo(): never {
   throw new Error('boomDemo: simulated server crash — this stack came over the WebSocket')
 }
 
+// capnweb ≥0.8 serializes Blob over RPC (MIME preserved) — the transport
+// primitive for file uploads over the socket. Send one from the console:
+//   beam.inspectBlob({ file: new Blob(['hello beam'], { type: 'text/plain' }) })
+export async function inspectBlob(ctx: BeamContext<Env>, { file }: { file?: Blob }) {
+  if (!(file instanceof Blob)) {
+    return ctx.json({ error: 'no Blob received' })
+  }
+  const text = await file.text()
+  return ctx.json({
+    received: 'Blob',
+    size: file.size,
+    type: file.type,
+    preview: text.slice(0, 40),
+  })
+}
+
 const DEALS = [
   'Free shipping', 'BOGO hair oil', '10% off wigs',
   'VIP early access', 'Bundle & save', 'Weekend flash sale',

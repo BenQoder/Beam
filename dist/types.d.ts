@@ -363,6 +363,26 @@ export interface BeamInitOptions {
     rpcMiddlewareApp?: Hono<any>;
     /** Optional internal fetcher used by RPC callers to route action invocations through middleware */
     actionFetcher?: (request: Request, env: any) => Promise<Response>;
+    /**
+     * Options passed through to the capnweb RPC session (the WebSocket endpoint).
+     * Use `limits` to tune receiver-side resource caps (message size, nesting
+     * depth, bigint length — sane defaults always apply) and `onSendError` to
+     * log or redact errors at the serialization layer.
+     * @example beam.init(app, { rpcOptions: { limits: { maxMessageSize: 4 * 1024 * 1024 } } })
+     */
+    rpcOptions?: import('capnweb').RpcSessionOptions;
+    /**
+     * Origins allowed to open the WebSocket (defense-in-depth against
+     * Cross-Site WebSocket Hijacking; the in-band token is the primary guard).
+     * Default: same-origin only. Pass a list for split-origin setups, or '*'
+     * to disable the check. A request with no Origin header is always allowed.
+     */
+    allowedOrigins?: string[] | '*';
+    /**
+     * Max size (bytes) of a multipart/Blob-carrying action body before it is
+     * rejected with 413. Guards the in-memory upload buffer. @default 10485760 (10 MB)
+     */
+    maxUploadBytes?: number;
 }
 /**
  * Hono context variables set by beam.authMiddleware()

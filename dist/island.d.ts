@@ -72,4 +72,42 @@ export interface IslandImportMapOptions {
  * {raw(beamIslandImportMap({ extra: { '@ui/button': '/islands/ui/button@f3a9.js' } }))}
  */
 export declare function beamIslandImportMap(options?: string | IslandImportMapOptions): string;
+export interface BeamCspOptions {
+    /**
+     * Extra origins/sources allowed to load island modules (script-src). Include
+     * every host in your islandSources beyond 'self', e.g. a CDN origin.
+     */
+    islandSources?: string[];
+    /** Additional script-src entries (e.g. an analytics host) */
+    scriptSrc?: string[];
+    /** Additional style-src entries */
+    styleSrc?: string[];
+    /** Additional connect-src entries (WebSocket/API hosts beyond 'self') */
+    connectSrc?: string[];
+    /** Additional img-src entries @default ['data:', 'blob:', 'https:'] added */
+    imgSrc?: string[];
+    /**
+     * Allow inline event handlers / expressions. Beam's reactivity uses
+     * new Function for beam-* expression attributes, which needs
+     * 'unsafe-eval'; set false only if you don't use client-side reactivity.
+     * @default true
+     */
+    allowReactivityEval?: boolean;
+}
+/**
+ * Build a Content-Security-Policy value tuned for Beam apps. A CSP is the
+ * strongest blunt-force mitigation for any HTML-injection XSS (an injected
+ * beam-* expression attribute can't run scripts it isn't allowed to load).
+ *
+ * Emit it as a header (preferred) or a <meta http-equiv>. Note: Beam's
+ * reactivity evaluates beam-* expressions via new Function, so
+ * script-src needs 'unsafe-eval' when reactivity is used — see
+ * allowReactivityEval. Islands load ES modules from your islandSources; add
+ * any non-'self' origins here.
+ *
+ * @example
+ * // as a Hono header:
+ * c.header('Content-Security-Policy', beamCsp({ islandSources: ['https://cdn.example.com'] }))
+ */
+export declare function beamCsp(options?: BeamCspOptions): string;
 //# sourceMappingURL=island.d.ts.map

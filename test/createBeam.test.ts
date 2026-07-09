@@ -69,6 +69,18 @@ describe('createBeam server utilities', () => {
     expect(await verifyToken(expiredToken, 'secret')).toBeNull()
   })
 
+  it('rejects signed tokens with a missing/invalid exp or sid (no eternal tokens)', async () => {
+    const { signToken, verifyToken } = __beamCreateBeamInternals
+    // validly signed but malformed payloads must not verify
+    const noExp = await signToken({ sid: 'sid-1', uid: 'u1' } as any, 'secret')
+    const noSid = await signToken({ uid: 'u1', exp: Date.now() + 10_000 } as any, 'secret')
+    const stringExp = await signToken({ sid: 'sid-1', uid: 'u1', exp: '9999999999999' } as any, 'secret')
+
+    expect(await verifyToken(noExp, 'secret')).toBeNull()
+    expect(await verifyToken(noSid, 'secret')).toBeNull()
+    expect(await verifyToken(stringExp, 'secret')).toBeNull()
+  })
+
   it('computes asset signatures from runtime assets only and decodes HTML entities', () => {
     const { computeAssetSignature } = __beamCreateBeamInternals
 
@@ -247,6 +259,24 @@ describe('createBeam server utilities', () => {
     expect(nonHtmlResponse.reason).toBe('non-html-response')
   })
 
+  it('BeamServer.visit rejects cross-origin URLs without fetching', async () => {
+    const ctx = __beamCreateBeamInternals.createBeamContext({
+      env: {},
+      user: null,
+      request: new Request('https://example.com/beam'),
+      session: new CookieSession(),
+    })
+    const fetcher = vi.fn(async () => new Response('<html></html>', {
+      headers: { 'content-type': 'text/html' },
+    }))
+    const server = new BeamServer(ctx, {}, fetcher as any)
+
+    const res = await server.visit('https://evil.com/steal', { mode: 'visit' })
+    expect(res.reason).toBe('cross-origin-visit')
+    expect(res.reload).toBe(true)
+    expect(fetcher).not.toHaveBeenCalled() // never even attempted
+  })
+
   it('BeamServer.visit forces hard reload when the route writes cookies', async () => {
     const ctx = __beamCreateBeamInternals.createBeamContext({
       env: {},
@@ -337,6 +367,79 @@ describe('createBeam server utilities', () => {
     expect(await res.text()).toBe('Expected WebSocket')
   })
 
+  it('rejects cross-origin WebSocket upgrades by default, allows same-origin and no-Origin', async () => {
+    const beam = createBeam({ actions: {}, session: { secret: 'secret' } })
+    const app = new Hono()
+    beam.init(app, { endpoint: '/rpc' })
+
+    const ws = { Upgrade: 'websocket' }
+
+    // cross-origin → 403
+    const cross = await app.request(
+      new Request('https://example.com/rpc', { headers: { ...ws, Origin: 'https://evil.com' } })
+    )
+    expect(cross.status).toBe(403)
+
+    // same-origin → passes the origin gate (reaches the WS handler; 500 in this
+    // non-Workers test env because newWorkersRpcResponse can't upgrade here —
+    // the point is it is NOT 403)
+    const same = await app.request(
+      new Request('https://example.com/rpc', { headers: { ...ws, Origin: 'https://example.com' } })
+    )
+    expect(same.status).not.toBe(403)
+
+    // no Origin header (non-browser client) → allowed past the gate
+    const none = await app.request(new Request('https://example.com/rpc', { headers: ws }))
+    expect(none.status).not.toBe(403)
+  })
+
+  it('honors an allowedOrigins list and the "*" escape hatch', async () => {
+    const listBeam = createBeam({ actions: {}, session: { secret: 's' } })
+    const listApp = new Hono()
+    listBeam.init(listApp, { endpoint: '/rpc', allowedOrigins: ['https://trusted.example'] })
+
+    const allowed = await listApp.request(
+      new Request('https://example.com/rpc', {
+        headers: { Upgrade: 'websocket', Origin: 'https://trusted.example' },
+      })
+    )
+    expect(allowed.status).not.toBe(403)
+
+    const denied = await listApp.request(
+      new Request('https://example.com/rpc', {
+        headers: { Upgrade: 'websocket', Origin: 'https://example.com' }, // even same-origin not in list
+      })
+    )
+    expect(denied.status).toBe(403)
+
+    const wildBeam = createBeam({ actions: {}, session: { secret: 's' } })
+    const wildApp = new Hono()
+    wildBeam.init(wildApp, { endpoint: '/rpc', allowedOrigins: '*' })
+    const wild = await wildApp.request(
+      new Request('https://example.com/rpc', {
+        headers: { Upgrade: 'websocket', Origin: 'https://anywhere.example' },
+      })
+    )
+    expect(wild.status).not.toBe(403)
+  })
+
+  it('rejects oversized multipart action bodies with 413', async () => {
+    const beam = createBeam({ actions: { noop: () => ({ html: 'ok' }) } })
+    const rpcApp = new Hono()
+    beam.init(new Hono(), { endpoint: '/rpc', rpcMiddlewareApp: rpcApp, maxUploadBytes: 1024 })
+
+    const res = await rpcApp.request('https://example.com/rpc/actions/noop', {
+      method: 'POST',
+      headers: {
+        [BEAM_ACTION_REQUEST_HEADER]: 'action',
+        'content-type': 'multipart/form-data; boundary=x',
+        'content-length': String(2048), // over the 1 KB cap
+      },
+      body: '--x--\r\n',
+    })
+    expect(res.status).toBe(413)
+  })
+
   it('init wires rpcMiddlewareApp for internal action fetches without exposing a public route', async () => {
     const beam = createBeam({
       actions: {
@@ -379,6 +482,64 @@ describe('createBeam server utilities', () => {
     })
 
     expect(publicRes.status).toBe(404)
+  })
+
+  it('delivers Blob params through the internal multipart action transport', async () => {
+    const beam = createBeam({
+      actions: {
+        inspect: async (_ctx, data: Record<string, unknown>) => {
+          const file = data.file as Blob | undefined
+          // duck-typed: the test runs cross-realm (jsdom Blob vs undici File)
+          if (!file || typeof file.text !== 'function') return { json: { error: 'not a blob' } }
+          return {
+            json: {
+              size: file.size,
+              type: file.type,
+              text: await file.text(),
+              label: data.label, // JSON params ride alongside the Blob
+            },
+          }
+        },
+      },
+    })
+
+    const rpcApp = new Hono()
+    beam.init(new Hono(), { endpoint: '/rpc', rpcMiddlewareApp: rpcApp })
+
+    // Manual multipart body: pins the exact wire format, and sidesteps the
+    // jsdom-FormData-into-undici-Request stall in the test environment.
+    const boundary = 'beamtestboundary1234'
+    const body = [
+      `--${boundary}`,
+      'Content-Disposition: form-data; name="__beam_params"',
+      '',
+      JSON.stringify({ label: 'metadata' }),
+      `--${boundary}`,
+      'Content-Disposition: form-data; name="file"; filename="note.txt"',
+      'Content-Type: text/plain',
+      '',
+      'blob over the wire',
+      `--${boundary}--`,
+      '',
+    ].join('\r\n')
+
+    const res = await rpcApp.request('https://example.com/rpc/actions/inspect', {
+      method: 'POST',
+      headers: {
+        [BEAM_ACTION_REQUEST_HEADER]: 'action',
+        'content-type': `multipart/form-data; boundary=${boundary}`,
+      },
+      body,
+    })
+
+    expect(res.status).toBe(200)
+    const chunk = JSON.parse((await res.text()).trim())
+    expect(chunk.json).toEqual({
+      size: 18,
+      type: 'text/plain',
+      text: 'blob over the wire',
+      label: 'metadata',
+    })
   })
 
   it('exposes the live Hono request context inside actions routed through rpcMiddlewareApp', async () => {

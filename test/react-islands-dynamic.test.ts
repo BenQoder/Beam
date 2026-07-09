@@ -74,6 +74,42 @@ describe('dynamic island sources (beam-island-src)', () => {
     expect(error).toHaveBeenCalledWith(expect.stringContaining('/other/path.js'))
   })
 
+  it('rejects sibling-path bypasses of a path prefix (segment-boundary match)', async () => {
+    const importer = vi.fn(async () => ({ default: RemoteWidget }))
+    __beamIslandsInternals.setRemoteImporter(importer)
+    // prefix WITHOUT a trailing slash — the classic startsWith footgun
+    allowIslandSources(['/islands'])
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    document.body.innerHTML = `
+      <div beam-island="Evil1" beam-island-src="/islands-evil/x.js"></div>
+      <div beam-island="Evil2" beam-island-src="/islandsX.js"></div>
+      <div beam-island="Good" beam-island-src="/islands/ok.js" beam-props='{"label":"ok"}'></div>
+    `
+    await until(() => document.querySelector('.remote-widget')?.textContent === 'ok:0')
+
+    // only the genuine descendant loaded; siblings refused
+    expect(importer).toHaveBeenCalledTimes(1)
+    expect(importer).toHaveBeenCalledWith(expect.stringMatching(/\/islands\/ok\.js$/))
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('/islands-evil/x.js'))
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('/islandsX.js'))
+  })
+
+  it('rejects a cross-origin subdomain lookalike', async () => {
+    const importer = vi.fn(async () => ({ default: RemoteWidget }))
+    __beamIslandsInternals.setRemoteImporter(importer)
+    allowIslandSources(['https://cdn.example.com'])
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    document.body.innerHTML = `
+      <div beam-island="Look" beam-island-src="https://cdn.example.com.evil.com/x.js"></div>
+    `
+    await flush()
+    await flush()
+    expect(importer).not.toHaveBeenCalled()
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('cdn.example.com.evil.com'))
+  })
+
   it('refuses all sources when no allowlist is configured (secure default)', async () => {
     const importer = vi.fn(async () => ({ default: RemoteWidget }))
     __beamIslandsInternals.setRemoteImporter(importer)

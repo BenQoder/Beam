@@ -11,8 +11,8 @@ export interface BeamRegisteredActionModules {}
 
 export { createBeam, KVSession, CookieSession, beamTokenMeta } from './createBeam'
 export { render } from './render'
-export { Island, beamIslandImportMap, ISLAND_SHARED_MODULES } from './island'
-export type { IslandProps } from './island'
+export { Island, beamIslandImportMap, ISLAND_SHARED_MODULES, beamCsp } from './island'
+export type { IslandProps, BeamCspOptions } from './island'
 
 // Auto-discovery utilities
 export {

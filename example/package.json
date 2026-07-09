@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "@benqoder/beam": "file:..",
-    "capnweb": "^0.6.1",
+    "capnweb": "^0.10.0",
     "hono": "^4.6.0",
     "honox": "^0.1.0",
     "react": "^19.0.0",
