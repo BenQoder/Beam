@@ -1,5 +1,48 @@
 # Changelog
 
+## 1.1.0 — 2026-07-09
+
+- **Typed actions**: the Vite plugin generates a typed-action registry
+  (`beam-actions.d.ts`, `actionTypes` option) — action names, params, and
+  `ctx.json` payloads are inferred in `useBeamAction`, `callBeamAction`, and
+  `window.beam.*`; unknown names and wrong param shapes become compile errors.
+  Zero runtime cost; falls back to the permissive string API without codegen.
+- **`beam dev`**: one command for the dev loop — builds with dev refresh, then
+  runs `wrangler dev` (args pass through). Dev builds emit `dist/_headers`
+  with `Cache-Control: no-store` so rebuilds are never masked by browser or
+  miniflare caches; production builds remove it. The Beam client now
+  auto-loads the dev-refresh poller in dev builds (no layout wiring; the
+  branch and chunk are eliminated from production bundles) and the poller is
+  a singleton, so existing manual script tags stay safe. Templates and
+  `beam init` now use `beam dev` as the dev script.
+- **Error visibility**: in dev builds, server action errors travel with their
+  real details (action name, message, stack) and a full-screen error overlay
+  renders them — island crashes included; Esc dismisses. Production stays
+  opaque and ships zero overlay bytes. All builds dispatch a
+  `beam:action-error` window event for custom reporting. `beam.debug(true)`
+  traces every action call: params, per-chunk summaries, and round-trip
+  duration (persisted via localStorage).
+- **Animations**: layered, dependency-free animation system. Layer 1 —
+  native View Transitions (`beam-transition="view"` on swap targets/boost
+  shells, `beam-transition-name` shared-element morphs). Layer 2 —
+  Alpine/Vue-style enter/leave class triplets (`beam-enter[-start/-end]`,
+  `beam-leave[-start/-end]`) applied across swaps, streamed chunks, modals,
+  drawers, and spawned/removed islands, plus `beam-enter-stagger` for list
+  choreography. `beam-swap-transition` grew from 3 to 12 presets (zoom, pop,
+  blur, directional slides, flips) with `--beam-swap-duration`/`--beam-swap-ease`
+  overrides. Everything respects `prefers-reduced-motion`. Also fixed a
+  long-standing bug where swap presets barely animated — the always-on base
+  transition animated *into* the from-state (a ~16ms dip) instead of snapping
+  there and animating in; the from-state now snaps (`transition: none`) then
+  releases.
+- `IslandLoader` typing loosened to `() => Promise<unknown>` so
+  `import.meta.glob` output assigns without casts.
+- **Append/prepend no longer removes a plain trigger button.** Self-removal now
+  only applies to `beam-load-more` / `beam-infinite` sentinels (the
+  self-replacing pattern, unchanged). A regular `beam-action` button with
+  `beam-swap="append"`/`"prepend"` now persists, so it can be clicked
+  repeatedly — matching htmx and the obvious expectation.
+
 ## 1.0.0 — 2026-07-07
 
 First stable release. Beam's server-driven HTML-over-WebSocket core is joined by a
