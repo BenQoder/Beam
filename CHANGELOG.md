@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.2.1 — 2026-07-10
+
+- **Dynamic islands mount inside `srcdoc` iframes.** `beam-island-src` now
+  resolves against `document.baseURI` instead of `location.href`. In an
+  `srcdoc` document `location.href` is `about:srcdoc` — an opaque-path URL
+  every relative or path-absolute reference throws against — so islands in
+  server-rendered previews injected via `srcDoc` were always refused.
+  `baseURI` inherits the parent document's URL there, and equals
+  `location.href` on normal pages.
+  The allowlist **origin** stays anchored to `location.origin` (not
+  `baseURI`), so an injected `<base>` tag cannot redirect island loading to a
+  foreign origin — the spoofed source resolves against the base but then fails
+  the unspoofable origin check. Absolute-origin prefixes are unaffected.
+
 ## 1.2.0 — 2026-07-10
 
 - **Security hardening.**
