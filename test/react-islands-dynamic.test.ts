@@ -27,7 +27,7 @@ function RemoteWidget({ label }: { label?: string }) {
 
 beforeEach(() => {
   document.body.innerHTML = ''
-  document.head.querySelectorAll('meta[name="beam-island-sources"]').forEach((m) => m.remove())
+  document.head.querySelectorAll('meta[name="beam-island-sources"], base').forEach((m) => m.remove())
   __beamIslandsInternals.resetDynamicSources()
 })
 
@@ -93,6 +93,41 @@ describe('dynamic island sources (beam-island-src)', () => {
     expect(importer).toHaveBeenCalledWith(expect.stringMatching(/\/islands\/ok\.js$/))
     expect(error).toHaveBeenCalledWith(expect.stringContaining('/islands-evil/x.js'))
     expect(error).toHaveBeenCalledWith(expect.stringContaining('/islandsX.js'))
+  })
+
+  it('resolves the src against document.baseURI (srcdoc/preview support)', async () => {
+    const importer = vi.fn(async () => ({ default: RemoteWidget }))
+    __beamIslandsInternals.setRemoteImporter(importer)
+    // A same-origin <base> (as an srcdoc preview inherits from its parent):
+    // baseURI now differs from a bare origin, but a same-origin relative src
+    // still resolves and loads.
+    const base = document.createElement('base')
+    base.href = `${location.origin}/preview/page/`
+    document.head.appendChild(base)
+    allowIslandSources(['/islands/'])
+
+    document.body.innerHTML = `<div beam-island="P" beam-island-src="/islands/ok.js" beam-props='{"label":"srcdoc"}'></div>`
+    await until(() => document.querySelector('.remote-widget')?.textContent === 'srcdoc:0')
+    expect(importer).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects a <base>-spoofed relative source (origin anchored to location, not baseURI)', async () => {
+    const importer = vi.fn(async () => ({ default: RemoteWidget }))
+    __beamIslandsInternals.setRemoteImporter(importer)
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    // Attacker injects a <base> pointing at a foreign origin. A relative src
+    // resolves against it (baseURI) but the allowlist origin is anchored to the
+    // real page origin, so the origins mismatch and the load is refused.
+    const base = document.createElement('base')
+    base.href = 'https://evil.example/islands/'
+    document.head.appendChild(base)
+    allowIslandSources(['/islands/'])
+
+    document.body.innerHTML = `<div beam-island="Spoof" beam-island-src="/islands/x.js"></div>`
+    await flush()
+    await flush()
+    expect(importer).not.toHaveBeenCalled()
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('/islands/x.js'))
   })
 
   it('rejects a cross-origin subdomain lookalike', async () => {

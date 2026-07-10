@@ -172,15 +172,33 @@ function readMetaSources(): void {
  */
 function resolveAllowedSource(src: string): string | null {
   readMetaSources()
+  // Resolve the SRC against the DOCUMENT's base URL, not location.href: in an
+  // srcdoc iframe location.href is 'about:srcdoc' — an opaque-path URL that
+  // every relative or path-absolute reference THROWS against — while baseURI
+  // inherits the parent document's URL, which is exactly what server-rendered
+  // previews injected via srcDoc need. On normal pages baseURI === location.href.
+  const base =
+    typeof document !== 'undefined' && document.baseURI ? document.baseURI : location.href
   let resolved: URL
   try {
-    resolved = new URL(src, location.href)
+    resolved = new URL(src, base)
   } catch {
     return null
   }
+  // Anchor the allowlist ORIGIN to the real page origin, NOT the base URL:
+  // baseURI honors a <base> tag, so resolving relative prefixes against it
+  // would let an injected <base href="evil"> redirect island loading (both the
+  // prefix and a relative src would resolve to the attacker origin and match).
+  // location.origin is unspoofable and is the parent's origin inside srcdoc, so
+  // a spoofed <base> now fails the origin check below. Absolute prefixes carry
+  // their own origin and are unaffected either way.
+  const originBase =
+    typeof location !== 'undefined' && location.origin && location.origin !== 'null'
+      ? location.origin
+      : base
   for (const prefix of allowedIslandSources) {
     try {
-      const allowed = new URL(prefix, location.origin)
+      const allowed = new URL(prefix, originBase)
       if (resolved.origin !== allowed.origin) continue
 
       // Normalize the allowed path to a directory (trailing slash).
