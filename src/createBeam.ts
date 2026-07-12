@@ -191,18 +191,25 @@ function parseCookies(request: Request): Record<string, string> {
 }
 
 /**
+ * Extract the value from Hono's `value.signature` cookie representation.
+ * Cookie values may themselves contain periods (for example JSON containing
+ * an email address), so the signature separator is the final period.
+ */
+function parseSignedCookieValue(signedValue: string | undefined): string | null {
+  if (!signedValue) return null
+
+  const separator = signedValue.lastIndexOf('.')
+  if (separator <= 0 || separator === signedValue.length - 1) return null
+
+  return signedValue.slice(0, separator)
+}
+
+/**
  * Parse session ID from raw request cookies (for WebSocket context)
  */
 function parseSessionFromRequest(request: Request, cookieName: string): string | null {
   const cookies = parseCookies(request)
-  const signedValue = cookies[cookieName]
-  if (!signedValue) return null
-
-  // Hono signed cookie format: value.signature
-  const parts = signedValue.split('.')
-  if (parts.length !== 2) return null
-
-  return parts[0] || null
+  return parseSignedCookieValue(cookies[cookieName])
 }
 
 /**
@@ -210,15 +217,11 @@ function parseSessionFromRequest(request: Request, cookieName: string): string |
  */
 function parseSessionDataFromRequest(request: Request): Record<string, unknown> {
   const cookies = parseCookies(request)
-  const signedValue = cookies[SESSION_DATA_COOKIE]
-  if (!signedValue) return {}
-
-  // Hono signed cookie format: value.signature
-  const parts = signedValue.split('.')
-  if (parts.length !== 2) return {}
+  const value = parseSignedCookieValue(cookies[SESSION_DATA_COOKIE])
+  if (!value) return {}
 
   try {
-    return JSON.parse(decodeURIComponent(parts[0]))
+    return JSON.parse(decodeURIComponent(value))
   } catch {
     return {}
   }
@@ -1371,6 +1374,7 @@ export const __beamCreateBeamInternals = {
   signToken,
   verifyToken,
   parseCookies,
+  parseSignedCookieValue,
   parseSessionFromRequest,
   parseSessionDataFromRequest,
   decodeHtmlEntities,

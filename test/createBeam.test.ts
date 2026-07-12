@@ -52,6 +52,43 @@ describe('createBeam server utilities', () => {
     expect(await session.get('user')).toBeNull()
   })
 
+  it('parses signed WebSocket session cookies whose values contain periods', () => {
+    const { parseSessionFromRequest, parseSessionDataFromRequest } =
+      __beamCreateBeamInternals
+    const sessionData = encodeURIComponent(JSON.stringify({
+      user: {
+        email: 'person@example.com',
+        version: '1.2.3',
+      },
+    }))
+    const request = new Request('https://example.com/beam', {
+      headers: {
+        Cookie: `beam_sid=session.id.signature; beam_data=${sessionData}.signature`,
+      },
+    })
+
+    expect(parseSessionFromRequest(request, 'beam_sid')).toBe('session.id')
+    expect(parseSessionDataFromRequest(request)).toEqual({
+      user: {
+        email: 'person@example.com',
+        version: '1.2.3',
+      },
+    })
+  })
+
+  it('rejects malformed signed WebSocket session cookies', () => {
+    const { parseSessionFromRequest, parseSessionDataFromRequest } =
+      __beamCreateBeamInternals
+    const request = new Request('https://example.com/beam', {
+      headers: {
+        Cookie: 'beam_sid=missing-signature; beam_data=.signature',
+      },
+    })
+
+    expect(parseSessionFromRequest(request, 'beam_sid')).toBeNull()
+    expect(parseSessionDataFromRequest(request)).toEqual({})
+  })
+
   it('beamTokenMeta escapes quotes', () => {
     expect(beamTokenMeta('a"b')).toBe('<meta name="beam-token" content="a&quot;b">')
   })

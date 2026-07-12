@@ -52,6 +52,12 @@ export declare class CookieSession implements BeamSession {
  */
 declare function parseCookies(request: Request): Record<string, string>;
 /**
+ * Extract the value from Hono's `value.signature` cookie representation.
+ * Cookie values may themselves contain periods (for example JSON containing
+ * an email address), so the signature separator is the final period.
+ */
+declare function parseSignedCookieValue(signedValue: string | undefined): string | null;
+/**
  * Parse session ID from raw request cookies (for WebSocket context)
  */
 declare function parseSessionFromRequest(request: Request, cookieName: string): string | null;
@@ -185,6 +191,7 @@ export declare const __beamCreateBeamInternals: {
     signToken: typeof signToken;
     verifyToken: typeof verifyToken;
     parseCookies: typeof parseCookies;
+    parseSignedCookieValue: typeof parseSignedCookieValue;
     parseSessionFromRequest: typeof parseSessionFromRequest;
     parseSessionDataFromRequest: typeof parseSessionDataFromRequest;
     decodeHtmlEntities: typeof decodeHtmlEntities;
