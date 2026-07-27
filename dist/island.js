@@ -25,8 +25,8 @@ export const ISLAND_SHARED_MODULES = {
  * Import map tag for dynamic islands. Emit it in your document <head> (before
  * any module scripts) so remote island modules resolve bare 'react' /
  * '@benqoder/beam/react' imports to the single shared instance the Beam
- * runtime uses. The beamPlugin emits the shared files when `islandSources`
- * is configured.
+ * runtime uses. The beamPlugin emits the shared files for every island-capable
+ * client build.
  *
  * @example
  * // in your renderer/layout head (hono/jsx):
@@ -36,13 +36,22 @@ export const ISLAND_SHARED_MODULES = {
  */
 export function beamIslandImportMap(options = {}) {
     // string form kept for back-compat: beamIslandImportMap('/assets/shared/')
-    const { base = '/static/beam-shared/', extra } = typeof options === 'string' ? { base: options, extra: undefined } : options;
-    const imports = {};
+    const { base = '/static/beam-shared/', extra, nonce } = typeof options === 'string' ? { base: options, extra: undefined, nonce: undefined } : options;
+    const imports = Object.create(null);
     for (const [specifier, file] of Object.entries(ISLAND_SHARED_MODULES)) {
         imports[specifier] = `${base}${file}`;
     }
     Object.assign(imports, extra);
-    return `<script type="importmap">${JSON.stringify({ imports })}</script>`;
+    // Script data must escape "<" so tenant/config values cannot terminate the
+    // tag with </script> and inject executable markup.
+    const json = JSON.stringify({ imports })
+        .replace(/</g, '\\u003c')
+        .replace(/\u2028/g, '\\u2028')
+        .replace(/\u2029/g, '\\u2029');
+    const nonceAttribute = nonce
+        ? ` nonce="${nonce.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}"`
+        : '';
+    return `<script type="importmap"${nonceAttribute}>${json}</script>`;
 }
 /**
  * Build a Content-Security-Policy value tuned for Beam apps. A CSP is the
@@ -64,11 +73,22 @@ export function beamCsp(options = {}) {
     const scriptSrc = [self, ...(options.islandSources ?? []), ...(options.scriptSrc ?? [])];
     if (options.allowReactivityEval !== false)
         scriptSrc.push("'unsafe-eval'");
+    if (options.scriptNonce) {
+        // CSP nonces are base64/base64url values. Reject rather than interpolate
+        // malformed input into a response header.
+        if (!/^[A-Za-z0-9+/_-]+={0,2}$/.test(options.scriptNonce)) {
+            throw new TypeError('Beam CSP scriptNonce must be a base64 or base64url value');
+        }
+        scriptSrc.push(`'nonce-${options.scriptNonce}'`);
+    }
+    else if (options.allowUnsafeInlineScripts) {
+        scriptSrc.push("'unsafe-inline'");
+    }
     const directives = {
         'default-src': [self],
-        // Islands emit an import map and inline module bootstrap; inline styles are
-        // common in server-rendered pages.
-        'script-src': [...scriptSrc, "'unsafe-inline'"],
+        // Inline scripts are denied by default. Dynamic-island import maps must
+        // carry the matching request nonce.
+        'script-src': scriptSrc,
         'style-src': [self, "'unsafe-inline'", ...(options.styleSrc ?? [])],
         'img-src': [self, 'data:', 'blob:', 'https:', ...(options.imgSrc ?? [])],
         // WebSocket RPC: same-origin ws/wss.

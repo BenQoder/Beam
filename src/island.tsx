@@ -16,8 +16,9 @@ export interface IslandProps {
   /**
    * Load the component from this URL at runtime instead of the build-time
    * registry (dynamic islands). The URL must match an allowed source prefix
-   * on the client (beamPlugin islandSources option) and point to an ES module
-   * whose default export is the component, compiled with react as external.
+   * registered on the client with allowIslandSources() (or the equivalent
+   * meta tag) and point to an ES module whose default export is the component,
+   * compiled with react as external.
    */
   src?: string
   /**
@@ -83,14 +84,16 @@ export interface IslandImportMapOptions {
    * single-instance guarantee, so only do that if you fully control it.
    */
   extra?: Record<string, string>
+  /** CSP nonce for the inline import-map tag */
+  nonce?: string
 }
 
 /**
  * Import map tag for dynamic islands. Emit it in your document <head> (before
  * any module scripts) so remote island modules resolve bare 'react' /
  * '@benqoder/beam/react' imports to the single shared instance the Beam
- * runtime uses. The beamPlugin emits the shared files when `islandSources`
- * is configured.
+ * runtime uses. The beamPlugin emits the shared files for every island-capable
+ * client build.
  *
  * @example
  * // in your renderer/layout head (hono/jsx):
@@ -100,14 +103,23 @@ export interface IslandImportMapOptions {
  */
 export function beamIslandImportMap(options: string | IslandImportMapOptions = {}): string {
   // string form kept for back-compat: beamIslandImportMap('/assets/shared/')
-  const { base = '/static/beam-shared/', extra } =
-    typeof options === 'string' ? { base: options, extra: undefined } : options
-  const imports: Record<string, string> = {}
+  const { base = '/static/beam-shared/', extra, nonce } =
+    typeof options === 'string' ? { base: options, extra: undefined, nonce: undefined } : options
+  const imports = Object.create(null) as Record<string, string>
   for (const [specifier, file] of Object.entries(ISLAND_SHARED_MODULES)) {
     imports[specifier] = `${base}${file}`
   }
   Object.assign(imports, extra)
-  return `<script type="importmap">${JSON.stringify({ imports })}</script>`
+  // Script data must escape "<" so tenant/config values cannot terminate the
+  // tag with </script> and inject executable markup.
+  const json = JSON.stringify({ imports })
+    .replace(/</g, '\\u003c')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029')
+  const nonceAttribute = nonce
+    ? ` nonce="${nonce.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}"`
+    : ''
+  return `<script type="importmap"${nonceAttribute}>${json}</script>`
 }
 
 export interface BeamCspOptions {
@@ -125,12 +137,23 @@ export interface BeamCspOptions {
   /** Additional img-src entries @default ['data:', 'blob:', 'https:'] added */
   imgSrc?: string[]
   /**
-   * Allow inline event handlers / expressions. Beam's reactivity uses
-   * new Function for beam-* expression attributes, which needs
-   * 'unsafe-eval'; set false only if you don't use client-side reactivity.
+   * Beam's reactivity uses new Function for beam-* expression attributes,
+   * which needs 'unsafe-eval'; set false if you don't use client-side
+   * reactivity.
    * @default true
    */
   allowReactivityEval?: boolean
+  /**
+   * Request-specific nonce for trusted inline scripts/import maps.
+   */
+  scriptNonce?: string
+  /**
+   * Compatibility escape hatch for applications that still emit inline
+   * scripts without a nonce. This weakens XSS protection and should not be
+   * enabled for untrusted content.
+   * @default false
+   */
+  allowUnsafeInlineScripts?: boolean
 }
 
 /**
@@ -152,12 +175,22 @@ export function beamCsp(options: BeamCspOptions = {}): string {
   const self = "'self'"
   const scriptSrc = [self, ...(options.islandSources ?? []), ...(options.scriptSrc ?? [])]
   if (options.allowReactivityEval !== false) scriptSrc.push("'unsafe-eval'")
+  if (options.scriptNonce) {
+    // CSP nonces are base64/base64url values. Reject rather than interpolate
+    // malformed input into a response header.
+    if (!/^[A-Za-z0-9+/_-]+={0,2}$/.test(options.scriptNonce)) {
+      throw new TypeError('Beam CSP scriptNonce must be a base64 or base64url value')
+    }
+    scriptSrc.push(`'nonce-${options.scriptNonce}'`)
+  } else if (options.allowUnsafeInlineScripts) {
+    scriptSrc.push("'unsafe-inline'")
+  }
 
   const directives: Record<string, string[]> = {
     'default-src': [self],
-    // Islands emit an import map and inline module bootstrap; inline styles are
-    // common in server-rendered pages.
-    'script-src': [...scriptSrc, "'unsafe-inline'"],
+    // Inline scripts are denied by default. Dynamic-island import maps must
+    // carry the matching request nonce.
+    'script-src': scriptSrc,
     'style-src': [self, "'unsafe-inline'", ...(options.styleSrc ?? [])],
     'img-src': [self, 'data:', 'blob:', 'https:', ...(options.imgSrc ?? [])],
     // WebSocket RPC: same-origin ws/wss.

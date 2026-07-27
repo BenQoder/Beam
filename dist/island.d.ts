@@ -12,8 +12,9 @@ export interface IslandProps {
     /**
      * Load the component from this URL at runtime instead of the build-time
      * registry (dynamic islands). The URL must match an allowed source prefix
-     * on the client (beamPlugin islandSources option) and point to an ES module
-     * whose default export is the component, compiled with react as external.
+     * registered on the client with allowIslandSources() (or the equivalent
+     * meta tag) and point to an ES module whose default export is the component,
+     * compiled with react as external.
      */
     src?: string;
     /**
@@ -57,13 +58,15 @@ export interface IslandImportMapOptions {
      * single-instance guarantee, so only do that if you fully control it.
      */
     extra?: Record<string, string>;
+    /** CSP nonce for the inline import-map tag */
+    nonce?: string;
 }
 /**
  * Import map tag for dynamic islands. Emit it in your document <head> (before
  * any module scripts) so remote island modules resolve bare 'react' /
  * '@benqoder/beam/react' imports to the single shared instance the Beam
- * runtime uses. The beamPlugin emits the shared files when `islandSources`
- * is configured.
+ * runtime uses. The beamPlugin emits the shared files for every island-capable
+ * client build.
  *
  * @example
  * // in your renderer/layout head (hono/jsx):
@@ -87,12 +90,23 @@ export interface BeamCspOptions {
     /** Additional img-src entries @default ['data:', 'blob:', 'https:'] added */
     imgSrc?: string[];
     /**
-     * Allow inline event handlers / expressions. Beam's reactivity uses
-     * new Function for beam-* expression attributes, which needs
-     * 'unsafe-eval'; set false only if you don't use client-side reactivity.
+     * Beam's reactivity uses new Function for beam-* expression attributes,
+     * which needs 'unsafe-eval'; set false if you don't use client-side
+     * reactivity.
      * @default true
      */
     allowReactivityEval?: boolean;
+    /**
+     * Request-specific nonce for trusted inline scripts/import maps.
+     */
+    scriptNonce?: string;
+    /**
+     * Compatibility escape hatch for applications that still emit inline
+     * scripts without a nonce. This weakens XSS protection and should not be
+     * enabled for untrusted content.
+     * @default false
+     */
+    allowUnsafeInlineScripts?: boolean;
 }
 /**
  * Build a Content-Security-Policy value tuned for Beam apps. A CSP is the

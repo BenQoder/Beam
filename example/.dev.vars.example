@@ -1,0 +1,1 @@
+SESSION_SECRET=generate-with-openssl-rand-base64-32

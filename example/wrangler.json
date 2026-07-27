@@ -8,7 +8,7 @@
     "directory": "./dist"
   },
   "build": {
-    "command": "npx --no-install beam build --dev",
+    "command": "npx --no-install beam build",
     "watch_dir": "app"
   },
   "d1_databases": [
@@ -23,8 +23,5 @@
       "binding": "KV",
       "id": "cart-kv"
     }
-  ],
-  "vars": {
-    "SESSION_SECRET": "dev-secret-change-in-production"
-  }
+  ]
 }

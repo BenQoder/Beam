@@ -31,6 +31,7 @@ describe('core utilities', () => {
     })
 
     expect(Object.keys(actions).sort()).toEqual(['remove', 'save'])
+    expect(Object.getPrototypeOf(actions)).toBeNull()
   })
 
   it('render resolves sync and async stringables', async () => {
@@ -41,22 +42,61 @@ describe('core utilities', () => {
     expect(asyncValue).toBe('async-html')
   })
 
-  it('beamPlugin resolves and loads the virtual module', () => {
+  it('beamPlugin keeps legacy virtual modules working without migration', () => {
     const plugin = beamPlugin({
       actions: '/app/actions/*.tsx',
       auth: '/app/auth.ts',
-      session: { secretEnvKey: 'APP_SECRET', cookieName: 'sid', maxAge: 60, storage: '/app/session.ts' },
+      session: {
+        secretEnvKey: 'APP_SECRET',
+        cookieName: 'sid',
+        maxAge: 60,
+        storage: '/app/session.ts',
+      },
+      islandSources: ['/islands/'],
     })
 
     expect(plugin.resolveId?.('virtual:beam')).toBe('\0virtual:beam')
+    expect(plugin.resolveId?.('virtual:beam/islands')).toBe('\0virtual:beam/islands')
 
-    const code = plugin.load?.('\0virtual:beam')
-    expect(typeof code).toBe('string')
-    expect(code).toContain("import auth from '/app/auth.ts'")
-    expect(code).toContain("import storageFactory from '/app/session.ts'")
-    expect(code).toContain("collectActions(import.meta.glob('/app/actions/*.tsx', { eager: true }))")
-    expect(code).toContain("secretEnvKey: 'APP_SECRET'")
-    expect(code).toContain("cookieName: 'sid'")
+    const beamCode = plugin.load?.('\0virtual:beam')
+    expect(typeof beamCode).toBe('string')
+    expect(beamCode).toContain("import auth from '/app/auth.ts'")
+    expect(beamCode).toContain("import storageFactory from '/app/session.ts'")
+    expect(beamCode).toContain("collectActions(import.meta.glob('/app/actions/*.tsx', { eager: true }))")
+    expect(beamCode).toContain("secretEnvKey: 'APP_SECRET'")
+    expect(beamCode).toContain("cookieName: 'sid'")
+
+    const islandsCode = plugin.load?.('\0virtual:beam/islands')
+    expect(typeof islandsCode).toBe('string')
+    expect(islandsCode).toContain("allowIslandSources([\"/islands/\"])")
+    expect(islandsCode).toContain("import.meta.glob('/app/islands/*.tsx')")
+  })
+
+  it('emits shared React facades for every island-capable client build', () => {
+    const plugin = beamPlugin({ actionTypes: false })
+    const emitted: Array<{ type: string; id: string; fileName: string }> = []
+
+    ;(plugin.configResolved as any)({
+      root: '/tmp/beam-app',
+      command: 'build',
+      build: { ssr: false },
+    })
+    ;(plugin.buildStart as any).call({
+      emitFile(file: { type: string; id: string; fileName: string }) {
+        emitted.push(file)
+      },
+    })
+
+    expect(emitted.map((file) => file.fileName).sort()).toEqual([
+      'static/beam-shared/beam-react.js',
+      'static/beam-shared/react-dom-client.js',
+      'static/beam-shared/react-jsx-runtime.js',
+      'static/beam-shared/react.js',
+    ])
+
+    const reactFacade = (plugin.load as any)('\0beam-shared:react')
+    expect(reactFacade).toContain('Activity')
+    expect(reactFacade).toContain('useEffectEvent')
   })
 
   it('Beam CLI resolves build command targets', () => {
@@ -111,10 +151,10 @@ describe('core utilities', () => {
     expect(parsed.name).toBe('existing')
     expect(parsed.main).toBe('./dist/index.js')
     expect(parsed.assets.directory).toBe('./dist')
-    expect(parsed.build.command).toBe('npx --no-install beam build --dev')
+    expect(parsed.build.command).toBe('npx --no-install beam build')
     expect(parsed.build.watch_dir).toBe('app')
     expect(parsed.vars.API_URL).toBe('http://localhost')
-    expect(parsed.vars.SESSION_SECRET).toBe('dev-secret-change-in-production')
+    expect(parsed.vars.SESSION_SECRET).toBeUndefined()
   })
 
   it('Beam CLI creates a minimal app template', () => {
@@ -126,14 +166,30 @@ describe('core utilities', () => {
       expect(result.changed).toContain('package.json')
       expect(existsSync(join(appDir, 'package.json'))).toBe(true)
       expect(existsSync(join(appDir, 'wrangler.json'))).toBe(true)
+      expect(existsSync(join(appDir, 'app', 'beam.ts'))).toBe(true)
       expect(existsSync(join(appDir, 'app', 'client.ts'))).toBe(true)
 
       const pkg = JSON.parse(readFileSync(join(appDir, 'package.json'), 'utf8'))
       const wrangler = JSON.parse(readFileSync(join(appDir, 'wrangler.json'), 'utf8'))
+      const beamSource = readFileSync(join(appDir, 'app', 'beam.ts'), 'utf8')
+      const serverSource = readFileSync(join(appDir, 'app', 'server.ts'), 'utf8')
       expect(pkg.name).toBe('my-beam-app')
       expect(pkg.scripts.dev).toBe('beam dev --port 8791')
+      expect(pkg.overrides['@hono/node-server']).toBe('^2.0.5')
+      expect(pkg.dependencies.capnweb).toBe('^0.10.0')
       expect(wrangler.name).toBe('my-beam-app')
-      expect(wrangler.build.command).toBe('npx --no-install beam build --dev')
+      expect(wrangler.build.command).toBe('npx --no-install beam build')
+      expect(wrangler.vars?.SESSION_SECRET).toBeUndefined()
+      const devVars = readFileSync(join(appDir, '.dev.vars'), 'utf8')
+      expect(devVars).toMatch(/^SESSION_SECRET=[A-Za-z0-9_-]{43}\n$/)
+      expect(devVars).not.toContain('dev-secret-change-in-production')
+      expect(readFileSync(join(appDir, '.gitignore'), 'utf8')).toContain('.dev.vars')
+      expect(beamSource).toContain("import.meta.glob('/app/actions/*.tsx', { eager: true })")
+      expect(beamSource).toContain("secretEnvKey: 'SESSION_SECRET'")
+      expect(serverSource).toContain("import { beam } from './beam'")
+      expect(serverSource).not.toContain('virtual:beam')
+      expect(serverSource).toContain('Content-Security-Policy')
+      expect(serverSource).toContain('beamCsp({ scriptNonce: crypto.randomUUID() })')
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

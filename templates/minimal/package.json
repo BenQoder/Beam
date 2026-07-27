@@ -9,16 +9,23 @@
   },
   "dependencies": {
     "@benqoder/beam": "^0.8.0",
-    "capnweb": "^0.6.1",
+    "capnweb": "^0.10.0",
     "hono": "^4.6.0",
-    "honox": "^0.1.0"
+    "honox": "^0.1.60"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260124.0",
     "@hono/vite-build": "^1.0.0",
-    "@hono/vite-dev-server": "^0.17.0",
+    "@hono/vite-dev-server": "^0.26.1",
     "typescript": "^5.0.0",
-    "vite": "^6.0.0",
-    "wrangler": "^3.91.0"
+    "vite": "^6.4.3",
+    "wrangler": "^4.114.0"
+  },
+  "overrides": {
+    "@hono/node-server": "^2.0.5",
+    "brace-expansion": "^5.0.8",
+    "minimatch": "^10.2.5",
+    "postcss": "^8.5.23",
+    "ws": "^8.21.0"
   }
 }

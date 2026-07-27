@@ -13,7 +13,9 @@
  * - `./actions/cart.tsx` exports `addToCart` → `addToCart`
  */
 export function collectActions(glob) {
-    const handlers = {};
+    // A null prototype keeps JavaScript built-ins such as `constructor` from
+    // becoming callable RPC actions if a consumer performs a property lookup.
+    const handlers = Object.create(null);
     for (const [, module] of Object.entries(glob)) {
         for (const [exportName, exportValue] of Object.entries(module)) {
             // Skip non-function exports and default exports

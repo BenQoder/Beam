@@ -1,29 +1,20 @@
 import type { Plugin } from 'vite';
 export interface BeamPluginOptions {
     /**
-     * Glob pattern for action handlers (must start with '/' for virtual modules)
+     * Glob pattern for action handlers, used to generate the typed-action registry.
      * @default '/app/actions/*.tsx'
      */
     actions?: string;
     /**
-     * Path to auth resolver module (must export default AuthResolver function)
-     * @example '/app/auth.ts'
+     * Legacy virtual:beam compatibility. New applications should import their
+     * auth resolver directly in app/beam.ts.
+     * @deprecated Configure auth in createBeam() instead.
      */
     auth?: string;
     /**
-     * Session configuration.
-     * - `secretEnvKey`: Environment variable name containing the session secret (default: 'SESSION_SECRET')
-     * - `cookieName`: Cookie name (default: 'beam_sid')
-     * - `maxAge`: Cookie max age in seconds (default: 1 year)
-     * - `storage`: Path to custom storage factory module (default: cookie storage)
-     *
-     * Set to `true` for defaults (cookie storage), or provide partial config.
-     * @example
-     * ```typescript
-     * session: true // uses cookie storage with env.SESSION_SECRET
-     * session: { secretEnvKey: 'MY_SECRET', cookieName: 'my_sid' }
-     * session: { storage: '/app/session-storage.ts' } // custom KV storage
-     * ```
+     * Legacy virtual:beam compatibility. New applications should configure
+     * sessions directly in app/beam.ts.
+     * @deprecated Configure sessions in createBeam() instead.
      */
     session?: boolean | {
         secretEnvKey?: string;
@@ -34,18 +25,19 @@ export interface BeamPluginOptions {
     };
     /**
      * Glob pattern for React island components (must start with '/').
-     * Matched files are lazily imported (code-split) and compiled with the
-     * React JSX runtime (a \/** @jsxImportSource react *\/ pragma is injected).
-     * Import the registry from 'virtual:beam/islands'. Set false to disable.
+     * Matching files are compiled with the React JSX runtime (a
+     * \/** @jsxImportSource react *\/ pragma is injected). Register the same
+     * glob from application code with registerIslands(import.meta.glob(...)).
+     * Set false to disable.
      * @default '/app/islands/*.tsx'
      */
     islands?: string | false;
     /**
-     * Enable dynamic islands (beam-island-src): URL prefixes the client may
-     * load island modules from at runtime (e.g. ['/islands/']). Setting this
-     * also emits the shared react / react-dom / beam hooks files (stable names
-     * under static/beam-shared/) that remote modules resolve via the import
-     * map — add beamIslandImportMap() to your document head.
+     * Allow dynamic island (beam-island-src) URL prefixes in the legacy virtual
+     * island module. Shared react / react-dom / Beam hook files are emitted for
+     * every island-capable client build, whether this option is present or not.
+     * New applications can register prefixes directly with allowIslandSources().
+     * Add beamIslandImportMap() to your document head.
      * Off by default: remote sources are executable code, so every prefix here
      * is a trust decision.
      */
@@ -62,7 +54,8 @@ export interface BeamPluginOptions {
     actionTypes?: string | false;
 }
 /**
- * Vite plugin that auto-generates the beam instance from handler files.
+ * Vite plugin for typed-action generation, React islands, and Beam's
+ * development build flags.
  *
  * @example
  * ```typescript
@@ -76,11 +69,6 @@ export interface BeamPluginOptions {
  *     })
  *   ]
  * })
- * ```
- *
- * Then import the beam instance:
- * ```typescript
- * import { beam } from 'virtual:beam'
  * ```
  */
 export declare function beamPlugin(options?: BeamPluginOptions): Plugin;

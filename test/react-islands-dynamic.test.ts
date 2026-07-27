@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createElement, useState } from 'react'
 
-import { allowIslandSources, registerIslands, __beamIslandsInternals } from '../src/islands'
+import {
+  allowIslandSources,
+  BeamIslandReactConfigurationError,
+  registerIslands,
+  __beamIslandsInternals,
+} from '../src/islands'
 import { beamIslandImportMap, ISLAND_SHARED_MODULES } from '../src/island'
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
@@ -27,8 +32,22 @@ function RemoteWidget({ label }: { label?: string }) {
 
 beforeEach(() => {
   document.body.innerHTML = ''
-  document.head.querySelectorAll('meta[name="beam-island-sources"], base').forEach((m) => m.remove())
+  document.head
+    .querySelectorAll('meta[name="beam-island-sources"], script[type="importmap"], base')
+    .forEach((m) => m.remove())
   __beamIslandsInternals.resetDynamicSources()
+  __beamIslandsInternals.resetReactRuntimes()
+
+  const importMap = document.createElement('script')
+  importMap.type = 'importmap'
+  importMap.textContent = JSON.stringify({
+    imports: {
+      react: '/static/beam-shared/react.js',
+      'react/jsx-runtime': '/static/beam-shared/react-jsx-runtime.js',
+      'react-dom/client': '/static/beam-shared/react-dom-client.js',
+    },
+  })
+  document.head.appendChild(importMap)
 })
 
 afterEach(async () => {
@@ -40,7 +59,13 @@ afterEach(async () => {
 describe('dynamic island sources (beam-island-src)', () => {
   it('loads and mounts a component from an allowed source URL', async () => {
     const importer = vi.fn(async () => ({ default: RemoteWidget }))
+    const sharedImporter = vi.fn((specifier: string) => {
+      if (specifier === 'react') return import('react')
+      if (specifier === 'react-dom/client') return import('react-dom/client')
+      return Promise.reject(new Error(`unexpected shared module: ${specifier}`))
+    })
     __beamIslandsInternals.setRemoteImporter(importer)
+    __beamIslandsInternals.setSharedModuleImporter(sharedImporter)
     allowIslandSources(['/islands/'])
 
     document.body.innerHTML = `
@@ -53,7 +78,34 @@ describe('dynamic island sources (beam-island-src)', () => {
     expect(importer).toHaveBeenCalledTimes(1)
     // resolved to an absolute URL before importing
     expect(importer).toHaveBeenCalledWith(expect.stringMatching(/^https?:\/\/.+\/islands\/RemoteWidget\.js$/))
+    expect(sharedImporter).toHaveBeenCalledWith('react')
+    expect(sharedImporter).toHaveBeenCalledWith('react-dom/client')
     expect(document.querySelector('.ph')).toBeNull()
+  })
+
+  it('warns clearly when a remote island has no complete shared-React import map', async () => {
+    document.head.querySelector('script[type="importmap"]')?.remove()
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    __beamIslandsInternals.setRemoteImporter(async () => ({ default: RemoteWidget }))
+    allowIslandSources(['/islands/'])
+
+    document.body.innerHTML =
+      '<div beam-island="RemoteWidget" beam-island-src="/islands/RemoteWidget.js"></div>'
+    await until(() => document.querySelector('.remote-widget') !== null)
+
+    expect(warning).toHaveBeenCalledWith(
+      expect.stringContaining('no complete import map for react, react/jsx-runtime, and react-dom/client')
+    )
+  })
+
+  it('turns raw invalid-hook failures into an actionable named error', () => {
+    const normalized = __beamIslandsInternals.normalizeReactRenderError(
+      new TypeError("Cannot read properties of null (reading 'useState')")
+    )
+
+    expect(normalized).toBeInstanceOf(BeamIslandReactConfigurationError)
+    expect((normalized as Error).message).toContain('different React instance')
+    expect((normalized as Error).message).toContain('beamIslandImportMap')
   })
 
   it('refuses sources outside the allowlist without importing', async () => {

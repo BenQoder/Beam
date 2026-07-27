@@ -1,4 +1,5 @@
 import { type RpcStub } from 'capnweb';
+import './islands';
 import type { BeamActionJson, BeamActionParams, RegisteredActionName } from './types';
 interface IslandUpsertSpec {
     props?: Record<string, unknown>;

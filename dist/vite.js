@@ -66,6 +66,9 @@ export {}
         console.warn('[beam] Failed to write typed-action registry:', err);
     }
 }
+// Kept as compatibility shims so existing applications continue to build
+// without a migration. New applications use app/beam.ts and register their
+// island glob directly from app/client.ts.
 const VIRTUAL_MODULE_ID = 'virtual:beam';
 const RESOLVED_VIRTUAL_MODULE_ID = '\0' + VIRTUAL_MODULE_ID;
 const VIRTUAL_ISLANDS_MODULE_ID = 'virtual:beam/islands';
@@ -84,9 +87,10 @@ const REACT_FACADE = `import * as R from 'react'
 const react = R.default && R.default.useState ? R.default : R
 export const {
   Children, Component, Fragment, Profiler, PureComponent, StrictMode, Suspense,
-  act, cache, cloneElement, createContext, createElement, createRef, forwardRef,
+  Activity, act, cache, cacheSignal, captureOwnerStack, cloneElement,
+  createContext, createElement, createRef, forwardRef,
   isValidElement, lazy, memo, startTransition, use, useActionState, useCallback,
-  useContext, useDebugValue, useDeferredValue, useEffect, useId,
+  useContext, useDebugValue, useDeferredValue, useEffect, useEffectEvent, useId,
   useImperativeHandle, useInsertionEffect, useLayoutEffect, useMemo,
   useOptimistic, useReducer, useRef, useState, useSyncExternalStore,
   useTransition, version,
@@ -112,7 +116,8 @@ const SHARED_MODULES = {
     ],
 };
 /**
- * Vite plugin that auto-generates the beam instance from handler files.
+ * Vite plugin for typed-action generation, React islands, and Beam's
+ * development build flags.
  *
  * @example
  * ```typescript
@@ -126,11 +131,6 @@ const SHARED_MODULES = {
  *     })
  *   ]
  * })
- * ```
- *
- * Then import the beam instance:
- * ```typescript
- * import { beam } from 'virtual:beam'
  * ```
  */
 export function beamPlugin(options = {}) {
@@ -162,9 +162,10 @@ export function beamPlugin(options = {}) {
         },
         configResolved(config) {
             projectRoot = config.root;
-            // Shared react files only make sense in the client build artifact —
-            // skip the SSR/worker build and the dev server (no emitFile there).
-            emitSharedModules = dynamicIslands && config.command === 'build' && !config.build.ssr;
+            // Every island-capable client build emits the stable shared ESM facades.
+            // They cost no browser bytes unless an import map references them, and
+            // ensure dynamic-island consumers never have to hand-build React shims.
+            emitSharedModules = Boolean(islands) && config.command === 'build' && !config.build.ssr;
         },
         buildStart() {
             regenerateActionTypes();
@@ -226,8 +227,6 @@ allowIslandSources(${JSON.stringify(islandSources)})
                 if (!islands) {
                     return `${allowSources}export const islands = {}\nexport default islands\n`;
                 }
-                // Lazy glob: each island (and React itself) is code-split and only
-                // downloaded on pages that use it.
                 return `${allowSources}
 export const islands = import.meta.glob('${islands}')
 export default islands
@@ -236,7 +235,6 @@ export default islands
             if (id === RESOLVED_VIRTUAL_MODULE_ID) {
                 const authImport = auth ? `import auth from '${auth}'` : '';
                 const authConfig = auth ? ', auth' : '';
-                // Generate session config code
                 let sessionConfig = '';
                 let storageImport = '';
                 if (session) {
@@ -245,19 +243,16 @@ export default islands
                     const cookieName = sessionOpts.cookieName || 'beam_sid';
                     const maxAge = sessionOpts.maxAge || 365 * 24 * 60 * 60;
                     const storagePath = sessionOpts.storage;
-                    // Import custom storage factory if provided
                     if (storagePath) {
                         storageImport = `import storageFactory from '${storagePath}'`;
                     }
-                    // Session secret is resolved at runtime from env
                     sessionConfig = `, session: {
-    secret: '', // Will be resolved from env.${secretEnvKey} at runtime
+    secret: '',
     secretEnvKey: '${secretEnvKey}',
     cookieName: '${cookieName}',
     maxAge: ${maxAge}${storagePath ? ',\n    storageFactory' : ''}
   }`;
                 }
-                // Generate plain JavaScript - TypeScript types are handled via virtual-beam.d.ts
                 return `
 import { createBeam, collectActions } from '@benqoder/beam'
 ${authImport}

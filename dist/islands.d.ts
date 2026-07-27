@@ -7,6 +7,14 @@ export type IslandComponent = ComponentType<any>;
  */
 export type IslandLoader = () => Promise<unknown>;
 export type IslandRegistration = IslandComponent | IslandLoader;
+export declare class BeamIslandReactConfigurationError extends Error {
+    name: string;
+    constructor(message: string, options?: {
+        cause?: unknown;
+    });
+}
+declare function hasSharedReactImportMap(): boolean;
+declare function normalizeReactRenderError(error: unknown): unknown;
 /**
  * Allow island source URL prefixes for beam-island-src loading.
  * Relative prefixes (e.g. '/islands/') resolve against the current origin.
@@ -17,6 +25,10 @@ export declare function allowIslandSources(prefixes: string[]): void;
 export declare const __beamIslandsInternals: {
     setRemoteImporter(fn: (url: string) => Promise<unknown>): void;
     resetDynamicSources(): void;
+    setSharedModuleImporter(fn: (specifier: string) => Promise<unknown>): void;
+    resetReactRuntimes(): void;
+    hasSharedReactImportMap: typeof hasSharedReactImportMap;
+    normalizeReactRenderError: typeof normalizeReactRenderError;
 };
 /**
  * Mark a function as a lazy island loader so it is not mistaken for a
@@ -43,4 +55,5 @@ export declare function registerIslands(islands: Record<string, IslandRegistrati
  * for containers the observer cannot see (e.g. detached shadow roots).
  */
 export declare function scanIslands(root?: ParentNode): void;
+export {};
 //# sourceMappingURL=islands.d.ts.map

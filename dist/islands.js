@@ -7,24 +7,100 @@
 // without islands never download React. Island components themselves are
 // lazily loaded (code-split) when registered via glob keys or lazyIsland().
 //
-// This module is for the client entry:
-//   import '@benqoder/beam/client'
+// '@benqoder/beam/client' includes this mount runtime automatically. Import this
+// entry directly only for registry/configuration helpers:
 //   import { registerIslands } from '@benqoder/beam/islands'
-//   import islands from 'virtual:beam/islands'
-//   registerIslands(islands)
+//   registerIslands(import.meta.glob('/app/islands/*.tsx'))
 //
 // React components use the hooks from '@benqoder/beam/react' instead — that
 // module stays inside the lazy island chunks.
-let reactRuntimePromise = null;
-function loadReactRuntime() {
-    if (!reactRuntimePromise) {
-        reactRuntimePromise = Promise.all([import('react'), import('react-dom/client')]).then(([react, reactDomClient]) => ({
-            createElement: react.createElement,
-            createRoot: reactDomClient.createRoot,
-            Component: react.Component,
-        }));
+let bundledReactRuntimePromise = null;
+let sharedReactRuntimePromise = null;
+// A variable specifier deliberately survives Vite/Rollup/esbuild. The browser
+// then resolves it through the page import map, guaranteeing that a remote
+// island and its renderer receive the same React instance.
+let sharedModuleImporter = (specifier) => import(/* @vite-ignore */ specifier);
+export class BeamIslandReactConfigurationError extends Error {
+    name = 'BeamIslandReactConfigurationError';
+    constructor(message, options) {
+        super(message, options);
     }
-    return reactRuntimePromise;
+}
+function hasSharedReactImportMap() {
+    if (typeof document === 'undefined')
+        return false;
+    const mapped = new Set();
+    for (const node of document.querySelectorAll('script[type="importmap"]')) {
+        try {
+            const parsed = JSON.parse(node.textContent || '{}');
+            for (const specifier of ['react', 'react-dom/client', 'react/jsx-runtime']) {
+                if (typeof parsed.imports?.[specifier] === 'string')
+                    mapped.add(specifier);
+            }
+        }
+        catch {
+            // The browser reports malformed import maps separately.
+        }
+    }
+    return mapped.size === 3;
+}
+function createReactRuntime(reactModule, reactDomClientModule, kind) {
+    const reactNamespace = reactModule;
+    const react = reactNamespace.default &&
+        typeof reactNamespace.default.createElement === 'function'
+        ? reactNamespace.default
+        : reactNamespace;
+    const domNamespace = reactDomClientModule;
+    const reactDomClient = domNamespace.default &&
+        typeof domNamespace.default.createRoot === 'function'
+        ? domNamespace.default
+        : domNamespace;
+    if (typeof react.createElement !== 'function' ||
+        typeof react.Component !== 'function' ||
+        typeof react.useState !== 'function' ||
+        typeof reactDomClient.createRoot !== 'function') {
+        throw new BeamIslandReactConfigurationError(`[beam] ${kind === 'shared' ? 'Import-map' : 'bundled'} React runtime is incomplete. ` +
+            'Expected compatible react, react/jsx-runtime, and react-dom/client modules.');
+    }
+    return {
+        createElement: react.createElement,
+        createRoot: reactDomClient.createRoot,
+        Component: react.Component,
+        useState: react.useState,
+    };
+}
+function loadReactRuntime(kind) {
+    if (kind === 'shared') {
+        if (!sharedReactRuntimePromise) {
+            sharedReactRuntimePromise = Promise.all([
+                sharedModuleImporter('react'),
+                sharedModuleImporter('react-dom/client'),
+            ])
+                .then(([react, reactDomClient]) => createReactRuntime(react, reactDomClient, kind))
+                .catch((cause) => {
+                throw cause instanceof BeamIslandReactConfigurationError
+                    ? cause
+                    : new BeamIslandReactConfigurationError('[beam] Remote React island could not load the shared React runtime. ' +
+                        'Emit beamIslandImportMap() before module scripts and serve the Beam shared ESM files.', { cause });
+            });
+        }
+        return sharedReactRuntimePromise;
+    }
+    if (!bundledReactRuntimePromise) {
+        bundledReactRuntimePromise = Promise.all([import('react'), import('react-dom/client')])
+            .then(([react, reactDomClient]) => createReactRuntime(react, reactDomClient, kind));
+    }
+    return bundledReactRuntimePromise;
+}
+function normalizeReactRenderError(error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (/invalid hook call/i.test(message) ||
+        /Cannot read properties of null \(reading ['"]use[A-Z]/.test(message)) {
+        return new BeamIslandReactConfigurationError('[beam] React island hooks are using a different React instance than the renderer. ' +
+            'For beam-island-src modules, emit beamIslandImportMap() before module scripts and ' +
+            'do not bundle React into the remote island artifact.', { cause: error });
+    }
+    return error;
 }
 // ============ CRASH RESILIENCE ============
 // A tenant's island crashing must not leave a blank hole: the server-rendered
@@ -40,6 +116,7 @@ function dispatchIslandError(el, entry, phase, error) {
 function failIsland(el, entry, phase, error) {
     if (failedIslands.has(el))
         return;
+    error = normalizeReactRenderError(error);
     failedIslands.add(el);
     if (mountedIslands.get(el) === entry)
         mountedIslands.delete(el);
@@ -58,11 +135,13 @@ function failIsland(el, entry, phase, error) {
         dispatchIslandError(el, entry, phase, error);
     });
 }
-// One error-boundary class per page, built lazily from the shared runtime.
-let boundaryClass = null;
+// Error boundaries must inherit from the matching React instance. Local and
+// remote islands may intentionally use separate, internally consistent roots.
+const boundaryClasses = new WeakMap();
 function getErrorBoundary(runtime) {
-    if (boundaryClass)
-        return boundaryClass;
+    const cached = boundaryClasses.get(runtime);
+    if (cached)
+        return cached;
     const Base = runtime.Component;
     class IslandErrorBoundary extends Base {
         state = { failed: false };
@@ -76,8 +155,8 @@ function getErrorBoundary(runtime) {
             return this.state.failed ? null : this.props.children;
         }
     }
-    boundaryClass = IslandErrorBoundary;
-    return boundaryClass;
+    boundaryClasses.set(runtime, IslandErrorBoundary);
+    return IslandErrorBoundary;
 }
 // ============ DYNAMIC SOURCES (beam-island-src) ============
 // Islands whose component module is fetched at runtime from a URL instead of
@@ -196,6 +275,17 @@ export const __beamIslandsInternals = {
         metaSourcesRead = false;
         remoteComponents.clear();
     },
+    setSharedModuleImporter(fn) {
+        sharedModuleImporter = fn;
+        sharedReactRuntimePromise = null;
+    },
+    resetReactRuntimes() {
+        sharedModuleImporter = (specifier) => import(/* @vite-ignore */ specifier);
+        bundledReactRuntimePromise = null;
+        sharedReactRuntimePromise = null;
+    },
+    hasSharedReactImportMap,
+    normalizeReactRenderError,
 };
 // ============ REGISTRY ============
 const LOADER_MARKER = Symbol.for('beam.islandLoader');
@@ -337,7 +427,7 @@ function mountIsland(el) {
         // Already mounted — catch props that changed while the element was detached
         // (e.g. beam-keep style preservation re-inserting it during a swap).
         if (existing.root && el.getAttribute('beam-props') !== existing.lastProps) {
-            void loadReactRuntime().then((runtime) => renderIsland(el, existing, runtime));
+            void loadReactRuntime(existing.runtimeKind).then((runtime) => renderIsland(el, existing, runtime));
         }
         return;
     }
@@ -368,12 +458,20 @@ function mountIslandNow(el) {
     // Resolution order: an explicit runtime source wins over the build-time
     // registry, so per-tenant/artifact components can override registered names.
     const src = el.getAttribute('beam-island-src');
+    let runtimeKind = 'bundled';
     let componentPromise;
     if (src) {
         const allowedUrl = resolveAllowedSource(src);
         if (!allowedUrl) {
-            console.error(`[beam] Island source "${src}" is not allowed. Add its prefix via the beamPlugin islandSources option, allowIslandSources([...]), or a <meta name="beam-island-sources"> tag.`);
+            console.error(`[beam] Island source "${src}" is not allowed. Add its prefix via allowIslandSources([...]) or a <meta name="beam-island-sources"> tag.`);
             return;
+        }
+        if (hasSharedReactImportMap()) {
+            runtimeKind = 'shared';
+        }
+        else {
+            console.warn('[beam] Remote React island has no complete import map for react, react/jsx-runtime, and react-dom/client. ' +
+                'Beam will try the app-bundled runtime, but hook-based islands may fail. Emit beamIslandImportMap() before module scripts.');
         }
         componentPromise = loadRemoteComponent(allowedUrl);
     }
@@ -392,9 +490,10 @@ function mountIslandNow(el) {
         src,
         // Captured before React clears the container — restored if the island crashes.
         placeholder: el.innerHTML,
+        runtimeKind,
     };
     mountedIslands.set(el, entry);
-    Promise.all([componentPromise, loadReactRuntime()])
+    Promise.all([componentPromise, loadReactRuntime(runtimeKind)])
         .then(([component, runtime]) => {
         // The element may have been removed (or re-claimed) while the chunk loaded.
         if (!component || mountedIslands.get(el) !== entry)
@@ -457,7 +556,7 @@ function initIslands() {
                     if (target instanceof Element) {
                         const entry = mountedIslands.get(target);
                         if (entry?.root) {
-                            void loadReactRuntime().then((runtime) => renderIsland(target, entry, runtime));
+                            void loadReactRuntime(entry.runtimeKind).then((runtime) => renderIsland(target, entry, runtime));
                         }
                     }
                 }

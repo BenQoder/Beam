@@ -1,5 +1,8 @@
 import { newWebSocketRpcSession, type RpcStub } from 'capnweb'
 import { beamReactivity } from './reactivity'
+// The client owns the complete browser runtime. React itself remains lazy:
+// importing Beam on a page without island markers does not download React.
+import './islands'
 import type { BeamActionJson, BeamActionParams, RegisteredActionName } from './types'
 
 // ============ BEAM - capnweb RPC Client ============

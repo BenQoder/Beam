@@ -1,5 +1,42 @@
 # Changelog
 
+## 1.3.0 — 2026-07-27
+
+- Security hardening:
+  - RPC action lookup now requires an own callable property, closing a
+    `constructor` action that returned the full Beam context (including
+    environment secrets, user, and session data).
+  - WebSocket authentication now cryptographically verifies both session
+    cookies before using their ID or data; forged `beam_data` is rejected.
+  - Action request limits are enforced while streaming the body even when
+    `Content-Length` is absent, and non-object JSON payloads are rejected.
+  - Import-map JSON escapes script terminators; `beamCsp()` and
+    `beamIslandImportMap()` support matching script nonces. `beamCsp()` now
+    denies inline scripts by default; legacy inline scripts require the
+    explicit `allowUnsafeInlineScripts` compatibility escape hatch.
+  - Removed an unused example session helper that contained a public signing
+    secret and accepted cookie signatures without verifying them.
+  - New apps generate a random gitignored `.dev.vars` secret, production
+    Wrangler builds no longer use `--dev`, and vulnerable build dependencies
+    are pinned to patched versions.
+- New applications no longer depend on `virtual:beam` or
+  `virtual:beam/islands`. They define their Beam instance in `app/beam.ts` with
+  `createBeam()` and `collectActions(import.meta.glob(...))`, and register
+  islands directly from `app/client.ts` with
+  `registerIslands(import.meta.glob(...))`. Existing applications continue to
+  work unchanged: both virtual modules and their Vite options remain as
+  backward-compatible shims, so no migration process is required.
+- `@benqoder/beam/client` now includes island mounting instead of only
+  preserving island markers during Beam swaps. Pages with `beam-island`
+  markers can no longer fail silently because the separate islands side-effect
+  entry was omitted.
+- Dynamic `beam-island-src` components now load their React renderer through
+  the page import map while registered local islands keep using app-bundled
+  React. This enforces a matched component/renderer instance even when Vite,
+  Rollup, or esbuild bundles the Beam client. Dual-React hook failures are
+  reported as `BeamIslandReactConfigurationError`, and every island-capable
+  client build emits the stable shared ESM facades.
+
 ## 1.2.1 — 2026-07-10
 
 - **Dynamic islands mount inside `srcdoc` iframes.** `beam-island-src` now

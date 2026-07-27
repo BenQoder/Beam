@@ -22,7 +22,9 @@ type GlobImport = Record<string, Record<string, unknown>>
 export function collectActions<TEnv = object>(
   glob: GlobImport
 ): Record<string, ActionHandler<TEnv>> {
-  const handlers: Record<string, ActionHandler<TEnv>> = {}
+  // A null prototype keeps JavaScript built-ins such as `constructor` from
+  // becoming callable RPC actions if a consumer performs a property lookup.
+  const handlers = Object.create(null) as Record<string, ActionHandler<TEnv>>
 
   for (const [, module] of Object.entries(glob)) {
     for (const [exportName, exportValue] of Object.entries(module)) {

@@ -2,4 +2,5 @@
 /example/node_modules
 /example/dist
 /example/.wrangler
+/example/.dev.vars
 .DS_Store

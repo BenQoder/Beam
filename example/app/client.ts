@@ -1,7 +1,7 @@
 import { createClient } from 'honox/client'
 import '@benqoder/beam/client'
-import { registerIslands } from '@benqoder/beam/islands'
-import islands from 'virtual:beam/islands'
+import { allowIslandSources, registerIslands } from '@benqoder/beam/islands'
 
-registerIslands(islands)
+allowIslandSources(['/islands/'])
+registerIslands(import.meta.glob('/app/islands/*.tsx'))
 createClient()

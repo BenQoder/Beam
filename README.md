@@ -120,7 +120,7 @@ beam.debug(false)
 
 Every action call logs its params, each response chunk (summarized by what it carries — html, state, islands, json, …), and the round-trip duration.
 
-Add it to Wrangler's build hook so `wrangler dev` works from a clean checkout without manually running `npm run build` first. Use `--dev` for local development; normal production builds remove dev-only refresh artifacts.
+Add the production-safe build to Wrangler's hook so deploys cannot accidentally ship dev overlays. The `beam dev` command sets `BEAM_BUILD_DEV=1` for Wrangler's watched local rebuilds.
 
 ```json
 {
@@ -129,13 +129,13 @@ Add it to Wrangler's build hook so `wrangler dev` works from a clean checkout wi
     "directory": "./dist"
   },
   "build": {
-    "command": "npx --no-install beam build --dev",
+    "command": "npx --no-install beam build",
     "watch_dir": "app"
   }
 }
 ```
 
-With that configuration, `wrangler dev` runs `beam build --dev` before Miniflare starts and rebuilds when files in `app/` change. This keeps the Worker, assets, and WebSocket endpoint on the same origin, avoiding the split Vite/Worker setup that can break Beam RPC connections.
+With that configuration, `beam dev` runs a dev build before Miniflare starts and supplies the dev-build environment to watched rebuilds. `wrangler deploy` uses a production build. This keeps the Worker, assets, and WebSocket endpoint on the same origin while preventing dev error details from reaching production.
 
 For development-only DOM refresh, add the dev refresh script when `VITE_BEAM_DEV_REFRESH=1` is present:
 
@@ -158,18 +158,36 @@ import { beamPlugin } from "@benqoder/beam/vite";
 export default defineConfig({
   plugins: [
     beamPlugin({
-      actions: "./actions/*.tsx",
+      actions: "/app/actions/*.tsx",
     }),
   ],
 });
 ```
 
-### 2. Initialize Beam Server
+### 2. Create the Beam Instance
+
+```typescript
+// app/beam.ts
+import { collectActions, createBeam } from "@benqoder/beam";
+import type { Env } from "./types";
+
+const actions = collectActions<Env>(
+  import.meta.glob("/app/actions/*.tsx", { eager: true }),
+);
+
+export const beam = createBeam<Env>({ actions });
+```
+
+Existing applications that import `virtual:beam` or
+`virtual:beam/islands` continue to work unchanged. Those imports remain
+supported as compatibility shims; no migration command is required.
+
+### 3. Initialize Beam Server
 
 ```typescript
 // app/server.ts
 import { createApp } from "honox/server";
-import { beam } from "virtual:beam";
+import { beam } from "./beam";
 
 const app = createApp({
   init: beam.init,
@@ -178,14 +196,14 @@ const app = createApp({
 export default app;
 ```
 
-### 3. Add the Client Script
+### 4. Add the Client Script
 
 ```typescript
 // app/client.ts
 import "@benqoder/beam/client";
 ```
 
-### 4. Create an Action
+### 5. Create an Action
 
 ```tsx
 // app/actions/counter.tsx
@@ -195,7 +213,7 @@ export function increment(c) {
 }
 ```
 
-### 5. Use in HTML
+### 6. Use in HTML
 
 ```html
 <div id="counter">Count: 0</div>
@@ -571,7 +589,9 @@ export async function* openProfileModal(ctx: BeamContext<Env>, { id }: Record<st
 
 Mount **pure React** components into server-rendered pages — no SSR, no hydration, no `"use client"`. Islands are first-class citizens of Beam's duplex WebSocket: **the server can push data into them at any time, and they can call the server at any time.**
 
-React is loaded lazily: pages without islands download zero React bytes; island components are code-split per file.
+`@benqoder/beam/client` includes the complete island mount lifecycle, but React
+is still loaded lazily: pages without islands download zero React bytes.
+Island components are code-split per file.
 
 ### Setup
 
@@ -579,7 +599,8 @@ React is loaded lazily: pages without islands download zero React bytes; island 
 npm install react react-dom
 ```
 
-The Vite plugin discovers islands automatically (default glob `/app/islands/*.tsx`; those files are compiled with the React JSX runtime — the rest of your app stays on hono/jsx):
+The Vite plugin compiles matching island files with the React JSX runtime (the
+rest of your app stays on hono/jsx), and the client glob registers them lazily:
 
 ```typescript
 // vite.config.ts
@@ -589,15 +610,15 @@ beamPlugin({
 })
 ```
 
-Register them in your client entry:
+Register local component files in your client entry. You do not need a second
+side-effect import to activate mounting—the main Beam client already does that:
 
 ```typescript
 // app/client.ts
 import '@benqoder/beam/client'
 import { registerIslands } from '@benqoder/beam/islands'
-import islands from 'virtual:beam/islands'
 
-registerIslands(islands)
+registerIslands(import.meta.glob('/app/islands/*.tsx'))
 ```
 
 For editor type-checking, give the islands directory its own tsconfig:
@@ -808,16 +829,25 @@ Islands mounted inside modals, drawers, streamed fragments, and Beam visits all 
 
 Islands normally come from the build-time registry (`app/islands/`). **Dynamic islands** load their component module from a URL at runtime instead — for platforms that compile components from other sources (per-tenant artifacts in R2, a plugin system, a component marketplace) after the app is deployed.
 
-**1. Allow source prefixes** (off by default — a source URL is executable code, so every prefix is a trust decision):
+**1. Allow source prefixes at runtime** (off by default — a source URL is
+executable code, so every prefix is a trust decision):
 
 ```typescript
 // vite.config.ts
 beamPlugin({
-  islandSources: ['/islands/'], // enables dynamic islands + emits shared react files
+  islandSources: ['/islands/'], // legacy virtual-module allowlist
 })
 ```
 
-Alternatively `allowIslandSources([...])` at runtime or `<meta name="beam-island-sources" content="/islands/">`.
+```typescript
+// app/client.ts
+import { allowIslandSources } from '@benqoder/beam/islands'
+
+allowIslandSources(['/islands/'])
+```
+
+Instead of `allowIslandSources([...])`, the runtime allowlist can come from a
+`<meta name="beam-island-sources" content="/islands/">` tag.
 
 **2. Add the import map to your document head** (before any module scripts):
 
@@ -829,7 +859,13 @@ import { beamIslandImportMap } from '@benqoder/beam'
 {raw(beamIslandImportMap())}
 ```
 
-Configuring `islandSources` makes the build emit shared files with stable names (`static/beam-shared/react.js`, `react-jsx-runtime.js`, `react-dom-client.js`, `beam-react.js`). The import map resolves bare `react` / `@benqoder/beam/react` imports in remote modules to these files — which re-export from the **same chunks Beam's own runtime uses**, so there is exactly one React instance on the page (two copies would break hooks).
+Every island-capable client build emits shared files with stable names
+(`static/beam-shared/react.js`, `react-jsx-runtime.js`,
+`react-dom-client.js`, `beam-react.js`). The import map resolves bare `react` /
+`@benqoder/beam/react` imports in remote modules to these files. Beam detects
+that map and loads the remote island's renderer through it too, so the component
+and renderer always use the same React instance—even when a normal app bundler
+has also bundled React for local islands.
 
 `extra` entries turn the import map into a **shared-component registry**: island modules import UI by bare name, and the map pins versions per deploy/tenant — repointing one entry updates every island that uses it, no recompiles:
 
@@ -865,6 +901,10 @@ Notes:
 - `beam-island-src` wins over a registered component of the same name, so runtime artifacts can override built-in defaults
 - Modules are cached per URL — use content-hashed file names so updates bust caches and unchanged components load instantly
 - Disallowed sources are refused loudly (console error, no import); a failed load leaves the placeholder in place
+- A missing shared-React import map produces a direct Beam warning, and an
+  invalid-hook/dual-React failure becomes a named
+  `BeamIslandReactConfigurationError` with remediation instead of a raw
+  `null.useState` exception
 - Everything else works identically to registered islands: `ctx.island()` props pushes, swap preservation, hooks, unmounting
 
 ---
@@ -2431,7 +2471,7 @@ const html = render(<div>Hello</div>)
 
 ```typescript
 beamPlugin({
-  // Glob pattern for action handler files (must start with '/' for virtual modules)
+  // Glob used to generate the typed-action registry
   actions: "/app/actions/*.tsx", // default
 });
 ```
@@ -2480,12 +2520,12 @@ export function myAction(ctx: BeamContext<Env>) {
 }
 ```
 
-### Virtual Module Types
+### Vite Types
 
 Add to your `app/vite-env.d.ts`:
 
 ```typescript
-/// <reference types="@benqoder/beam/virtual" />
+/// <reference types="vite/client" />
 ```
 
 ---
@@ -2606,27 +2646,30 @@ export function addToCart(c) {
 
 ## Session Management
 
-Beam provides automatic session management with a simple `ctx.session` API. No boilerplate middleware required.
+Beam provides session management with a simple `ctx.session` API.
 
 ### Quick Start
 
-1. **Enable sessions in vite.config.ts:**
+1. **Configure sessions in app/beam.ts:**
 
 ```typescript
-beamPlugin({
-  actions: "/app/actions/*.tsx",
-  session: true, // Enable with defaults (cookie storage)
+export const beam = createBeam<Env>({
+  actions,
+  session: {
+    secret: "",
+    secretEnvKey: "SESSION_SECRET",
+  },
 });
 ```
 
-2. **Add SESSION_SECRET to wrangler.json:**
+2. **Add `SESSION_SECRET` locally, then store it as a deployment secret:**
 
-```json
-{
-  "vars": {
-    "SESSION_SECRET": "your-secret-key-change-in-production"
-  }
-}
+```bash
+# .dev.vars (gitignored)
+SESSION_SECRET=generate-a-random-value
+
+# production
+npx wrangler secret put SESSION_SECRET
 ```
 
 3. **Use in actions:**
@@ -2677,14 +2720,11 @@ await ctx.session.delete("cart");
 Session data is stored in a signed cookie. Good for small data (~4KB limit).
 
 ```typescript
-beamPlugin({
-  session: true, // Uses cookie storage
-});
-
-// Or with custom options:
-beamPlugin({
+export const beam = createBeam<Env>({
+  actions,
   session: {
-    secretEnvKey: "MY_SECRET", // Default: 'SESSION_SECRET'
+    secret: "",
+    secretEnvKey: "MY_SECRET", // Read the secret from env.MY_SECRET
     cookieName: "my_sid", // Default: 'beam_sid'
     maxAge: 86400, // Default: 1 year (in seconds)
   },
@@ -2696,9 +2736,16 @@ beamPlugin({
 Cookie storage is read-only in WebSocket context. For actions that modify session data via WebSocket, use KV storage:
 
 ```typescript
-// vite.config.ts
-beamPlugin({
-  session: { storage: "/app/session-storage.ts" },
+// app/beam.ts
+import storageFactory from "./session-storage";
+
+export const beam = createBeam<Env>({
+  actions,
+  session: {
+    secret: "",
+    secretEnvKey: "SESSION_SECRET",
+    storageFactory,
+  },
 });
 ```
 
@@ -2717,12 +2764,12 @@ export default (sessionId: string, env: { KV: KVNamespace }) =>
       "binding": "KV",
       "id": "your-kv-namespace-id"
     }
-  ],
-  "vars": {
-    "SESSION_SECRET": "your-secret-key"
-  }
+  ]
 }
 ```
+
+Store `SESSION_SECRET` in `.dev.vars` locally and with
+`wrangler secret put SESSION_SECRET` for production.
 
 ### Architecture
 
@@ -2744,7 +2791,7 @@ ctx.session.set('cart')  → adapter.set()
 
 ### Key Points
 
-- **Zero boilerplate** - Just enable in vite.config.ts and use `ctx.session`
+- **Explicit configuration** - Session settings live with the Beam instance in `app/beam.ts`
 - **Works in actions** - Use `ctx.session.get/set/delete`
 - **Works in routes** - Use `c.get('beam').session.get/set/delete`
 - **Cookie storage limit** - ~4KB total size
@@ -2778,15 +2825,18 @@ Instead of relying on cookies, Beam requires clients to authenticate explicitly:
 
 ### Setup
 
-#### 1. Enable Sessions (Required)
+#### 1. Configure Sessions (Required)
 
 The auth token is tied to sessions:
 
 ```typescript
-// vite.config.ts
-beamPlugin({
-  actions: "/app/actions/*.tsx",
-  session: true, // Uses env.SESSION_SECRET
+// app/beam.ts
+export const beam = createBeam<Env>({
+  actions,
+  session: {
+    secret: "",
+    secretEnvKey: "SESSION_SECRET",
+  },
 });
 ```
 
@@ -2795,7 +2845,7 @@ beamPlugin({
 ```typescript
 // app/server.ts
 import { createApp } from "honox/server";
-import { beam } from "virtual:beam";
+import { beam } from "./beam";
 
 const app = createApp({
   init(app) {
@@ -2862,7 +2912,7 @@ SESSION_SECRET=your-secret-key-at-least-32-chars
 | -------------------- | -------------------------------------------------- |
 | Cross-site WebSocket | Can connect, but `authenticate()` fails (no token) |
 | Stolen token         | Expires in 5 minutes, tied to session ID           |
-| Replay attack        | Token is single-use per session                    |
+| Replay attack        | Token is reusable only until its 5-minute expiry and still requires the matching signed session cookie |
 | Token tampering      | HMAC-SHA256 signature verification fails           |
 
 ### Token Details
@@ -2884,11 +2934,14 @@ const token = await beam.generateAuthToken(ctx);
 
 Before deploying, verify each of these — the first is non-negotiable:
 
-**1. Real, secret-managed `SESSION_SECRET` (critical).** The secret is the master key: it signs the auth tokens whose `uid` decides who a request is. Anyone who knows it can forge a token for any user.
+**1. Real, secret-managed `SESSION_SECRET` (critical).** The secret is the
+master key for Beam's auth tokens and signed session cookies. Anyone who knows
+it can forge session credentials.
 
 - Generate a strong random value: `openssl rand -base64 32`
 - Store it as a **Cloudflare secret**, never a committed `var`: `wrangler secret put SESSION_SECRET`
-- The scaffolded `wrangler.json` ships a placeholder `dev-secret-change-in-production` for local dev only — **never deploy with it.**
+- The scaffold creates a random, gitignored `.dev.vars` secret for local use and leaves `SESSION_SECRET` out of `wrangler.json`.
+- Before deploying, run `wrangler secret put SESSION_SECRET`; never copy the local `.dev.vars` value into committed configuration.
 
 **2. Origin allowlist (defense-in-depth).** The WebSocket endpoint is **same-origin only by default**. For split-origin setups (app and WS on different hosts), configure it explicitly:
 
@@ -2922,6 +2975,14 @@ app.use('*', async (c, next) => {
   }))
 })
 ```
+
+Inline scripts are denied by default. If the page emits an inline import map,
+generate a request nonce and pass the same value to
+`beamCsp({ scriptNonce: nonce })` and
+`beamIslandImportMap({ nonce })`. Keep nonce values server-generated and
+unpredictable. `allowUnsafeInlineScripts: true` exists only as a temporary
+compatibility escape hatch for legacy inline scripts and weakens XSS
+protection.
 
 **5. Dynamic island sources are executable code.** Only add prefixes to `islandSources` you fully trust — a module loaded from there runs with full page privileges. Prefixes are matched on a **path-segment boundary** (a prefix `/islands/` permits `/islands/x.js` but not `/islands-evil/x.js`), same-origin unless the prefix names another origin.
 
@@ -2966,7 +3027,7 @@ The internal request path is Beam-managed server infrastructure, not a new brows
 // app/server.ts
 import { Hono } from "hono";
 import { createApp } from "honox/server";
-import { beam } from "virtual:beam";
+import { beam } from "./beam";
 
 const app = createApp({
   init(app) {

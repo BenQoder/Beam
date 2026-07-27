@@ -11,7 +11,6 @@ export default defineConfig(({ mode }) => {
     plugins: [
       beamPlugin({
         actions: '/app/actions/*.tsx',
-        session: true,
       }),
     ],
   }

@@ -8,10 +8,7 @@
     "directory": "./dist"
   },
   "build": {
-    "command": "npx --no-install beam build --dev",
+    "command": "npx --no-install beam build",
     "watch_dir": "app"
-  },
-  "vars": {
-    "SESSION_SECRET": "dev-secret-change-in-production"
   }
 }

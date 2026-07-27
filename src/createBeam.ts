@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
 import type { Context, Env as HonoEnv, MiddlewareHandler } from 'hono'
 import { getSignedCookie, setSignedCookie } from 'hono/cookie'
+import { parseSigned } from 'hono/utils/cookie'
 import { RpcTarget, newWorkersRpcResponse } from 'capnweb'
 import type {
   ActionHandler,
@@ -31,6 +32,49 @@ import {
 /** Default token lifetime: 5 minutes */
 const DEFAULT_TOKEN_LIFETIME = 5 * 60 * 1000
 const DEFAULT_MAX_UPLOAD_BYTES = 10 * 1024 * 1024 // 10 MB
+
+class PayloadTooLargeError extends Error {}
+
+async function readRequestBodyWithLimit(
+  request: Request,
+  maxBytes: number
+): Promise<Uint8Array<ArrayBuffer>> {
+  const contentLength = request.headers.get('content-length')
+  if (contentLength !== null) {
+    const declaredLength = Number(contentLength)
+    if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+      throw new PayloadTooLargeError('Payload too large')
+    }
+  }
+
+  if (!request.body) return new Uint8Array()
+
+  const reader = request.body.getReader()
+  const chunks: Uint8Array[] = []
+  let total = 0
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      total += value.byteLength
+      if (total > maxBytes) {
+        await reader.cancel()
+        throw new PayloadTooLargeError('Payload too large')
+      }
+      chunks.push(value)
+    }
+  } finally {
+    reader.releaseLock()
+  }
+
+  const body = new Uint8Array(total)
+  let offset = 0
+  for (const chunk of chunks) {
+    body.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  return body
+}
 
 /**
  * Sign an auth token payload using HMAC-SHA256
@@ -144,10 +188,11 @@ export class CookieSession implements BeamSession {
   private _dirty: boolean = false
 
   constructor(initialData: Record<string, unknown> = {}) {
-    this.data = initialData
+    this.data = Object.assign(Object.create(null), initialData) as Record<string, unknown>
   }
 
   async get<T = unknown>(key: string): Promise<T | null> {
+    if (!Object.prototype.hasOwnProperty.call(this.data, key)) return null
     return (this.data[key] as T) ?? null
   }
 
@@ -191,37 +236,40 @@ function parseCookies(request: Request): Record<string, string> {
 }
 
 /**
- * Extract the value from Hono's `value.signature` cookie representation.
- * Cookie values may themselves contain periods (for example JSON containing
- * an email address), so the signature separator is the final period.
+ * Verify and parse a session ID from raw request cookies (WebSocket context).
  */
-function parseSignedCookieValue(signedValue: string | undefined): string | null {
-  if (!signedValue) return null
+async function parseSessionFromRequest(
+  request: Request,
+  cookieName: string,
+  secret: string
+): Promise<string | null> {
+  const cookieHeader = request.headers.get('Cookie')
+  if (!cookieHeader) return null
 
-  const separator = signedValue.lastIndexOf('.')
-  if (separator <= 0 || separator === signedValue.length - 1) return null
-
-  return signedValue.slice(0, separator)
+  const cookies = await parseSigned(cookieHeader, secret, cookieName)
+  const value = cookies[cookieName]
+  return typeof value === 'string' ? value : null
 }
 
 /**
- * Parse session ID from raw request cookies (for WebSocket context)
+ * Verify and parse session data from raw request cookies (WebSocket context).
  */
-function parseSessionFromRequest(request: Request, cookieName: string): string | null {
-  const cookies = parseCookies(request)
-  return parseSignedCookieValue(cookies[cookieName])
-}
+async function parseSessionDataFromRequest(
+  request: Request,
+  secret: string
+): Promise<Record<string, unknown>> {
+  const cookieHeader = request.headers.get('Cookie')
+  if (!cookieHeader) return {}
 
-/**
- * Parse session data from raw request cookies (for WebSocket context)
- */
-function parseSessionDataFromRequest(request: Request): Record<string, unknown> {
-  const cookies = parseCookies(request)
-  const value = parseSignedCookieValue(cookies[SESSION_DATA_COOKIE])
-  if (!value) return {}
+  const cookies = await parseSigned(cookieHeader, secret, SESSION_DATA_COOKIE)
+  const value = cookies[SESSION_DATA_COOKIE]
+  if (typeof value !== 'string') return {}
 
   try {
-    return JSON.parse(decodeURIComponent(value))
+    const parsed = JSON.parse(value)
+    return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : {}
   } catch {
     return {}
   }
@@ -432,6 +480,19 @@ function normalizeActionResponse(value: ActionResponse | string): ActionResponse
   return typeof value === 'string' ? { html: value } : value
 }
 
+function getActionHandler<TEnv extends object>(
+  actions: Record<string, ActionHandler<TEnv>>,
+  action: string
+): ActionHandler<TEnv> | null {
+  if (!Object.prototype.hasOwnProperty.call(actions, action)) return null
+  const handler = actions[action]
+  return typeof handler === 'function' ? handler : null
+}
+
+function isActionData(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
 function stripConnectionHeaders(headers: Headers): Headers {
   const next = new Headers(headers)
   ;[
@@ -638,9 +699,12 @@ class BeamServer<TEnv extends object> extends RpcTarget {
    * cap'n web 0.6+ transfers ReadableStream natively with flow control and multiplexing.
    */
   call(action: string, data: Record<string, unknown> = {}): ReadableStream<ActionResponse> {
-    const handler = this.actions[action]
+    const handler = getActionHandler(this.actions, action)
     if (!handler) {
       throw new Error(`Unknown action: ${action}`)
+    }
+    if (!isActionData(data)) {
+      throw new Error('Invalid Beam action payload')
     }
 
     const ctx = this.ctx
@@ -1085,7 +1149,7 @@ export function createBeam<TEnv extends object = object>(
       }
 
       // Get session ID from request cookies
-      const sessionId = parseSessionFromRequest(ctx.request, cookieName)
+      const sessionId = await parseSessionFromRequest(ctx.request, cookieName, secret)
       if (!sessionId) {
         throw new Error('No session found - ensure authMiddleware is used')
       }
@@ -1136,26 +1200,37 @@ export function createBeam<TEnv extends object = object>(
         if (!action) {
           return c.text('Missing Beam action name', 400)
         }
-        const handler = actions[action]
+        const handler = getActionHandler(actions, action)
         if (!handler) {
           return c.text(`Unknown action: ${action}`, 404)
         }
 
         let data: Record<string, unknown> = {}
         const contentType = c.req.header('content-type') ?? ''
-        if (contentType.includes('multipart/form-data')) {
-          // Reject oversized uploads before buffering them into memory.
-          const declaredLength = Number(c.req.header('content-length'))
-          if (Number.isFinite(declaredLength) && declaredLength > maxUploadBytes) {
+        let body: Uint8Array<ArrayBuffer>
+        try {
+          body = await readRequestBodyWithLimit(c.req.raw, maxUploadBytes)
+        } catch (error) {
+          if (error instanceof PayloadTooLargeError) {
             return c.text('Payload too large', 413)
           }
+          throw error
+        }
+
+        if (contentType.includes('multipart/form-data')) {
           // Blob-carrying params (see BeamServer.call): JSON params in the
           // __beam_params field, each Blob as its own multipart field.
-          const form = await c.req.raw.formData()
+          const form = await new Response(body, {
+            headers: { 'content-type': contentType },
+          }).formData()
           const paramsJson = form.get(BEAM_ACTION_MULTIPART_PARAMS_FIELD)
           if (typeof paramsJson === 'string' && paramsJson.trim()) {
             try {
-              data = JSON.parse(paramsJson) as Record<string, unknown>
+              const parsed = JSON.parse(paramsJson) as unknown
+              if (!isActionData(parsed)) {
+                return c.text('Invalid Beam action payload', 400)
+              }
+              data = parsed
             } catch {
               return c.text('Invalid Beam action payload', 400)
             }
@@ -1167,10 +1242,14 @@ export function createBeam<TEnv extends object = object>(
             if (typeof value !== 'string') data[key] = value
           })
         } else {
-          const bodyText = await c.req.raw.text()
+          const bodyText = new TextDecoder().decode(body)
           if (bodyText.trim()) {
             try {
-              data = JSON.parse(bodyText) as Record<string, unknown>
+              const parsed = JSON.parse(bodyText) as unknown
+              if (!isActionData(parsed)) {
+                return c.text('Invalid Beam action payload', 400)
+              }
+              data = parsed
             } catch {
               return c.text('Invalid Beam action payload', 400)
             }
@@ -1214,7 +1293,7 @@ export function createBeam<TEnv extends object = object>(
               ok = allowedOrigins.includes(origin)
             } else {
               try {
-                ok = new URL(origin).host === new URL(c.req.url).host
+                ok = new URL(origin).origin === new URL(c.req.url).origin
               } catch {
                 ok = false
               }
@@ -1310,7 +1389,7 @@ class PublicBeamServer<TEnv extends object> extends RpcTarget {
     let session: BeamSession
     if (this.sessionConfig) {
       const cookieName = this.sessionConfig.cookieName ?? 'beam_sid'
-      const sessionId = parseSessionFromRequest(this.request, cookieName)
+      const sessionId = await parseSessionFromRequest(this.request, cookieName, this.secret)
 
       // Verify session ID matches token
       if (sessionId !== payload.sid) {
@@ -1320,7 +1399,7 @@ class PublicBeamServer<TEnv extends object> extends RpcTarget {
       if (sessionId && this.sessionConfig.storageFactory) {
         session = this.sessionConfig.storageFactory(sessionId, this.env)
       } else if (sessionId) {
-        const existingData = parseSessionDataFromRequest(this.request)
+        const existingData = await parseSessionDataFromRequest(this.request, this.secret)
         session = new CookieSession(existingData)
       } else {
         session = { get: async () => null, set: async () => {}, delete: async () => {} }
@@ -1374,7 +1453,6 @@ export const __beamCreateBeamInternals = {
   signToken,
   verifyToken,
   parseCookies,
-  parseSignedCookieValue,
   parseSessionFromRequest,
   parseSessionDataFromRequest,
   decodeHtmlEntities,
@@ -1383,6 +1461,9 @@ export const __beamCreateBeamInternals = {
   isAsyncGenerator,
   createDirectActionStream,
   prepareActionStream,
+  getActionHandler,
+  isActionData,
+  readRequestBodyWithLimit,
 }
 
 // Export BeamServer for advanced usage (e.g., extending with custom methods)

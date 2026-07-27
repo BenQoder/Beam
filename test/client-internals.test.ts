@@ -107,6 +107,19 @@ describe('client internals', () => {
     vi.restoreAllMocks()
   })
 
+  it('boots the island mount runtime from @beam/client instead of failing silently', async () => {
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    document.body.innerHTML = '<div beam-island="MissingProductCard"></div>'
+
+    await loadClientInternals()
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(warning).toHaveBeenCalledWith(
+      expect.stringContaining('React island "MissingProductCard" is not registered')
+    )
+  })
+
   it('does not auto-connect by default', async () => {
     const internals = await loadClientInternalsWithOptions({ disableAutoConnect: false })
     expect(internals.shouldAutoConnect()).toBe(false)

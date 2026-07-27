@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process'
-import { createHash } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -38,7 +38,7 @@ export function buildCommands(args: string[]): string[][] {
 }
 
 export function isDevBuild(args: string[]): boolean {
-  return args.includes('--dev')
+  return args.includes('--dev') || process.env.BEAM_BUILD_DEV === '1'
 }
 
 function collectAssetFiles(dir: string): string[] {
@@ -144,6 +144,7 @@ function patchPackageJsonText(input: string, packageName?: string): string {
     scripts?: Record<string, string>
     dependencies?: Record<string, string>
     devDependencies?: Record<string, string>
+    overrides?: Record<string, string>
   }
   if (packageName) pkg.name = packageName
 
@@ -158,18 +159,26 @@ function patchPackageJsonText(input: string, packageName?: string): string {
   pkg.dependencies = {
     ...pkg.dependencies,
     '@benqoder/beam': pkg.dependencies?.['@benqoder/beam'] ?? `^${version}`,
-    capnweb: pkg.dependencies?.capnweb ?? '^0.6.1',
+    capnweb: pkg.dependencies?.capnweb ?? '^0.10.0',
     hono: pkg.dependencies?.hono ?? '^4.6.0',
-    honox: pkg.dependencies?.honox ?? '^0.1.0',
+    honox: pkg.dependencies?.honox ?? '^0.1.60',
   }
   pkg.devDependencies = {
     ...pkg.devDependencies,
     '@cloudflare/workers-types': pkg.devDependencies?.['@cloudflare/workers-types'] ?? '^4.20260124.0',
     '@hono/vite-build': pkg.devDependencies?.['@hono/vite-build'] ?? '^1.0.0',
-    '@hono/vite-dev-server': pkg.devDependencies?.['@hono/vite-dev-server'] ?? '^0.17.0',
+    '@hono/vite-dev-server': pkg.devDependencies?.['@hono/vite-dev-server'] ?? '^0.26.1',
     typescript: pkg.devDependencies?.typescript ?? '^5.0.0',
-    vite: pkg.devDependencies?.vite ?? '^6.0.0',
-    wrangler: pkg.devDependencies?.wrangler ?? '^3.91.0',
+    vite: pkg.devDependencies?.vite ?? '^6.4.3',
+    wrangler: pkg.devDependencies?.wrangler ?? '^4.114.0',
+  }
+  pkg.overrides = {
+    ...pkg.overrides,
+    '@hono/node-server': pkg.overrides?.['@hono/node-server'] ?? '^2.0.5',
+    'brace-expansion': pkg.overrides?.['brace-expansion'] ?? '^5.0.8',
+    minimatch: pkg.overrides?.minimatch ?? '^10.2.5',
+    postcss: pkg.overrides?.postcss ?? '^8.5.23',
+    ws: pkg.overrides?.ws ?? '^8.21.0',
   }
 
   return `${JSON.stringify(pkg, null, 2)}\n`
@@ -199,15 +208,48 @@ export function patchWranglerJsonText(input: string, workerName?: string): strin
   }
   config.build = {
     ...((typeof config.build === 'object' && config.build) ? config.build as Record<string, unknown> : {}),
-    command: 'npx --no-install beam build --dev',
+    // Production-safe by default. `beam dev` supplies BEAM_BUILD_DEV=1 to
+    // Wrangler so watched rebuilds still include the development runtime.
+    command: 'npx --no-install beam build',
     watch_dir: 'app',
   }
-  config.vars = {
+  const vars = {
     ...((typeof config.vars === 'object' && config.vars) ? config.vars as Record<string, unknown> : {}),
-    SESSION_SECRET: ((typeof config.vars === 'object' && config.vars) ? (config.vars as Record<string, unknown>).SESSION_SECRET : undefined) ?? 'dev-secret-change-in-production',
   }
+  // Automatically remove the old public scaffold key. Local development now
+  // gets a random, gitignored .dev.vars value instead.
+  if (vars.SESSION_SECRET === 'dev-secret-change-in-production') {
+    delete vars.SESSION_SECRET
+  }
+  if (Object.keys(vars).length > 0) config.vars = vars
+  else delete config.vars
 
   return `${JSON.stringify(config, null, 2)}\n`
+}
+
+function ensureDevSecret(cwd: string, result: InitResult, options: InitOptions): void {
+  const file = join(cwd, '.dev.vars')
+  if (existsSync(file)) return
+
+  result.changed.push('.dev.vars')
+  if (!options.dryRun) {
+    mkdirSync(cwd, { recursive: true })
+    writeFileSync(file, `SESSION_SECRET=${randomBytes(32).toString('base64url')}\n`, {
+      mode: 0o600,
+    })
+  }
+}
+
+function ensureDevVarsIgnored(cwd: string, result: InitResult, options: InitOptions): void {
+  const file = join(cwd, '.gitignore')
+  const current = existsSync(file) ? readFileSync(file, 'utf8') : ''
+  if (current.split(/\r?\n/).some((line) => line.trim() === '.dev.vars')) return
+
+  if (!result.changed.includes('.gitignore')) result.changed.push('.gitignore')
+  if (!options.dryRun) {
+    const separator = current.length > 0 && !current.endsWith('\n') ? '\n' : ''
+    writeFileSync(file, `${current}${separator}.dev.vars\n`)
+  }
 }
 
 export function patchWranglerJson(file: string, workerName?: string): boolean {
@@ -260,6 +302,9 @@ export function initProject(options: InitOptions = {}): InitResult {
     if (file === 'package.json' || file === 'wrangler.json') continue
     copyTemplateFile(sourceRoot, cwd, file, result, options)
   }
+  ensureDevSecret(cwd, result, options)
+  ensureDevVarsIgnored(cwd, result, options)
+  result.notes.push('Before deploying, store SESSION_SECRET with `wrangler secret put SESSION_SECRET`; do not deploy the local .dev.vars value.')
 
   if (existsSync(join(cwd, 'vite.config.ts')) && !options.force) {
     const vite = readFileSync(join(cwd, 'vite.config.ts'), 'utf8')
@@ -299,6 +344,9 @@ export function createProject(options: CreateOptions): InitResult {
     patchPackageJson(join(target, 'package.json'), basename(name))
     patchWranglerJson(join(target, 'wrangler.json'), basename(name))
   }
+  ensureDevSecret(target, result, options)
+  ensureDevVarsIgnored(target, result, options)
+  result.notes.push('Before deploying, store SESSION_SECRET with `wrangler secret put SESSION_SECRET`; do not deploy the local .dev.vars value.')
   return result
 }
 
@@ -345,7 +393,7 @@ Wrangler:
 
   {
     "build": {
-      "command": "npx --no-install beam build --dev",
+      "command": "npx --no-install beam build",
       "watch_dir": "app"
     }
   }
@@ -385,7 +433,7 @@ function runDev(args: string[]) {
   if (!hasBeamBuildHook()) {
     console.warn(
       '[beam] No "beam build" hook found in your wrangler config — file changes will not rebuild.\n' +
-      '       Add: "build": { "command": "npx --no-install beam build --dev", "watch_dir": "app" }'
+      '       Add: "build": { "command": "npx --no-install beam build", "watch_dir": "app" }'
     )
   }
 
@@ -393,6 +441,11 @@ function runDev(args: string[]) {
   const result = spawnSync('npx', ['--no-install', 'wrangler', 'dev', ...args], {
     stdio: 'inherit',
     shell: process.platform === 'win32',
+    env: {
+      ...process.env,
+      BEAM_BUILD_DEV: '1',
+      VITE_BEAM_DEV_REFRESH: '1',
+    },
   })
   process.exit(result.status ?? 0)
 }

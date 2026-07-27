@@ -12,6 +12,7 @@ type Props = {
 
 export function Layout({ title = 'My App', children, cartCount = 0, authToken }: Props) {
   const enableDevRefresh = import.meta.env.VITE_BEAM_DEV_REFRESH === '1'
+  const scriptNonce = authToken?.split('.')[1]
 
   return (
     <html lang="en">
@@ -20,7 +21,7 @@ export function Layout({ title = 'My App', children, cartCount = 0, authToken }:
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <title>{title}</title>
         {authToken && <meta name="beam-token" content={authToken} />}
-        {raw(beamIslandImportMap())}
+        {raw(beamIslandImportMap({ nonce: scriptNonce }))}
         <link rel="stylesheet" href="/static/styles.css" />
       </head>
       <body>

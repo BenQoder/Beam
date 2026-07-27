@@ -1,6 +1,7 @@
 import type { Context } from 'hono';
 import { RpcTarget } from 'capnweb';
 import type { ActionHandler, ActionResponse, VisitOptions, VisitResponse, BeamConfig, BeamInstance, BeamContext, BeamSession, SessionConfig, AuthTokenPayload } from './types';
+declare function readRequestBodyWithLimit(request: Request, maxBytes: number): Promise<Uint8Array<ArrayBuffer>>;
 /**
  * Sign an auth token payload using HMAC-SHA256
  */
@@ -52,19 +53,13 @@ export declare class CookieSession implements BeamSession {
  */
 declare function parseCookies(request: Request): Record<string, string>;
 /**
- * Extract the value from Hono's `value.signature` cookie representation.
- * Cookie values may themselves contain periods (for example JSON containing
- * an email address), so the signature separator is the final period.
+ * Verify and parse a session ID from raw request cookies (WebSocket context).
  */
-declare function parseSignedCookieValue(signedValue: string | undefined): string | null;
+declare function parseSessionFromRequest(request: Request, cookieName: string, secret: string): Promise<string | null>;
 /**
- * Parse session ID from raw request cookies (for WebSocket context)
+ * Verify and parse session data from raw request cookies (WebSocket context).
  */
-declare function parseSessionFromRequest(request: Request, cookieName: string): string | null;
-/**
- * Parse session data from raw request cookies (for WebSocket context)
- */
-declare function parseSessionDataFromRequest(request: Request): Record<string, unknown>;
+declare function parseSessionDataFromRequest(request: Request, secret: string): Promise<Record<string, unknown>>;
 type RouteFetcher<TEnv extends object> = (request: Request, env: TEnv) => Promise<Response>;
 type ActionFetcher<TEnv extends object> = (request: Request, env: TEnv) => Promise<Response>;
 declare function decodeHtmlEntities(value: string): string;
@@ -80,6 +75,8 @@ declare function createBeamContext<TEnv>(base: {
     session: BeamSession;
 }): BeamContext<TEnv>;
 declare function isAsyncGenerator(value: unknown): value is AsyncGenerator<unknown>;
+declare function getActionHandler<TEnv extends object>(actions: Record<string, ActionHandler<TEnv>>, action: string): ActionHandler<TEnv> | null;
+declare function isActionData(value: unknown): value is Record<string, unknown>;
 declare function createDirectActionStream<TEnv extends object>(handler: ActionHandler<TEnv>, ctx: BeamContext<TEnv>, data: Record<string, unknown>, action?: string): ReadableStream<ActionResponse>;
 declare function prepareActionStream<TEnv extends object>(handler: ActionHandler<TEnv>, ctx: BeamContext<TEnv>, data: Record<string, unknown>, action?: string): Promise<ReadableStream<ActionResponse>>;
 /**
@@ -191,7 +188,6 @@ export declare const __beamCreateBeamInternals: {
     signToken: typeof signToken;
     verifyToken: typeof verifyToken;
     parseCookies: typeof parseCookies;
-    parseSignedCookieValue: typeof parseSignedCookieValue;
     parseSessionFromRequest: typeof parseSessionFromRequest;
     parseSessionDataFromRequest: typeof parseSessionDataFromRequest;
     decodeHtmlEntities: typeof decodeHtmlEntities;
@@ -200,6 +196,9 @@ export declare const __beamCreateBeamInternals: {
     isAsyncGenerator: typeof isAsyncGenerator;
     createDirectActionStream: typeof createDirectActionStream;
     prepareActionStream: typeof prepareActionStream;
+    getActionHandler: typeof getActionHandler;
+    isActionData: typeof isActionData;
+    readRequestBodyWithLimit: typeof readRequestBodyWithLimit;
 };
 export { BeamServer, PublicBeamServer };
 //# sourceMappingURL=createBeam.d.ts.map

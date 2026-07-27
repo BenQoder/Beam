@@ -1,4 +1,5 @@
 import { Hono } from 'hono'
+import { serializeSigned } from 'hono/utils/cookie'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
@@ -52,23 +53,26 @@ describe('createBeam server utilities', () => {
     expect(await session.get('user')).toBeNull()
   })
 
-  it('parses signed WebSocket session cookies whose values contain periods', () => {
+  it('parses valid signed WebSocket session cookies whose values contain periods', async () => {
     const { parseSessionFromRequest, parseSessionDataFromRequest } =
       __beamCreateBeamInternals
-    const sessionData = encodeURIComponent(JSON.stringify({
+    const secret = 'cookie-secret'
+    const sessionData = JSON.stringify({
       user: {
         email: 'person@example.com',
         version: '1.2.3',
       },
-    }))
+    })
+    const sidCookie = await serializeSigned('beam_sid', 'session.id', secret)
+    const dataCookie = await serializeSigned('beam_data', sessionData, secret)
     const request = new Request('https://example.com/beam', {
       headers: {
-        Cookie: `beam_sid=session.id.signature; beam_data=${sessionData}.signature`,
+        Cookie: `${sidCookie}; ${dataCookie}`,
       },
     })
 
-    expect(parseSessionFromRequest(request, 'beam_sid')).toBe('session.id')
-    expect(parseSessionDataFromRequest(request)).toEqual({
+    expect(await parseSessionFromRequest(request, 'beam_sid', secret)).toBe('session.id')
+    expect(await parseSessionDataFromRequest(request, secret)).toEqual({
       user: {
         email: 'person@example.com',
         version: '1.2.3',
@@ -76,17 +80,17 @@ describe('createBeam server utilities', () => {
     })
   })
 
-  it('rejects malformed signed WebSocket session cookies', () => {
+  it('rejects forged or malformed signed WebSocket session cookies', async () => {
     const { parseSessionFromRequest, parseSessionDataFromRequest } =
       __beamCreateBeamInternals
     const request = new Request('https://example.com/beam', {
       headers: {
-        Cookie: 'beam_sid=missing-signature; beam_data=.signature',
+        Cookie: 'beam_sid=attacker-session.invalid; beam_data=%7B%22role%22%3A%22admin%22%7D.invalid',
       },
     })
 
-    expect(parseSessionFromRequest(request, 'beam_sid')).toBeNull()
-    expect(parseSessionDataFromRequest(request)).toEqual({})
+    expect(await parseSessionFromRequest(request, 'beam_sid', 'cookie-secret')).toBeNull()
+    expect(await parseSessionDataFromRequest(request, 'cookie-secret')).toEqual({})
   })
 
   it('beamTokenMeta escapes quotes', () => {
@@ -195,6 +199,35 @@ describe('createBeam server utilities', () => {
 
     expect(await readAll(server.call('greet'))).toEqual([{ html: 'hello' }])
     expect(await readAll(server.call('stream'))).toEqual([{ html: 'first' }, { html: 'second' }])
+  })
+
+  it('BeamServer.call rejects inherited Object properties as unknown actions', () => {
+    const ctx = __beamCreateBeamInternals.createBeamContext({
+      env: { SESSION_SECRET: 'must-not-leak' },
+      user: { id: 'u1' },
+      request: new Request('https://example.com'),
+      session: new CookieSession({ role: 'admin' }),
+    })
+    const server = new BeamServer(ctx, {})
+
+    expect(() => server.call('constructor')).toThrow('Unknown action: constructor')
+    expect(() => server.call('__proto__')).toThrow('Unknown action: __proto__')
+    expect(() => server.call('toString')).toThrow('Unknown action: toString')
+    expect(() => server.call('missing', null as any)).toThrow('Unknown action: missing')
+  })
+
+  it('BeamServer.call rejects non-object RPC payloads', () => {
+    const ctx = __beamCreateBeamInternals.createBeamContext({
+      env: {},
+      user: null,
+      request: new Request('https://example.com'),
+      session: new CookieSession(),
+    })
+    const server = new BeamServer(ctx, { noop: () => ({ html: 'ok' }) })
+
+    for (const data of [null, [], 'text', 42]) {
+      expect(() => server.call('noop', data as any)).toThrow('Invalid Beam action payload')
+    }
   })
 
   it('BeamServer.call routes through the configured action fetcher when available', async () => {
@@ -342,11 +375,12 @@ describe('createBeam server utilities', () => {
       session: { secret: 'secret' },
     })
 
+    const cookie = await serializeSigned('beam_sid', 'session123', 'secret')
     const ctx = __beamCreateBeamInternals.createBeamContext({
       env: {},
       user: { id: 'u1' },
       request: new Request('https://example.com', {
-        headers: { Cookie: 'beam_sid=session123.sig' },
+        headers: { Cookie: cookie },
       }),
       session: new CookieSession(),
     })
@@ -366,12 +400,14 @@ describe('createBeam server utilities', () => {
       'secret'
     )
 
+    const sidCookie = await serializeSigned('beam_sid', 'session123', 'secret')
+    const dataCookie = await serializeSigned('beam_data', JSON.stringify({ count: 1 }), 'secret')
     const publicServer = new PublicBeamServer(
       'secret',
       { secret: 'secret' },
       {},
       new Request('https://example.com', {
-        headers: { Cookie: 'beam_sid=session123.sig; beam_data=%7B%22count%22%3A1%7D.sig' },
+        headers: { Cookie: `${sidCookie}; ${dataCookie}` },
       }),
       {
         update: (ctx) => ctx.state('cart', { count: 2 }),
@@ -385,6 +421,53 @@ describe('createBeam server utilities', () => {
     reader.releaseLock()
 
     expect(value).toEqual({ state: { cart: { count: 2 } } })
+  })
+
+  it('PublicBeamServer rejects a valid token paired with forged session cookies', async () => {
+    const token = await __beamCreateBeamInternals.signToken(
+      { sid: 'session123', uid: null, exp: Date.now() + 10_000 },
+      'secret'
+    )
+    const publicServer = new PublicBeamServer(
+      'secret',
+      { secret: 'secret' },
+      {},
+      new Request('https://example.com', {
+        headers: {
+          Cookie: 'beam_sid=session123.invalid; beam_data=%7B%22role%22%3A%22admin%22%7D.invalid',
+        },
+      }),
+      {},
+      undefined
+    )
+
+    await expect(publicServer.authenticate(token)).rejects.toThrow('Session mismatch')
+  })
+
+  it('PublicBeamServer ignores forged session data paired with a valid signed ID', async () => {
+    const token = await __beamCreateBeamInternals.signToken(
+      { sid: 'session123', uid: null, exp: Date.now() + 10_000 },
+      'secret'
+    )
+    const sidCookie = await serializeSigned('beam_sid', 'session123', 'secret')
+    const publicServer = new PublicBeamServer(
+      'secret',
+      { secret: 'secret' },
+      {},
+      new Request('https://example.com', {
+        headers: {
+          Cookie: `${sidCookie}; beam_data=%7B%22role%22%3A%22admin%22%7D.invalid`,
+        },
+      }),
+      {
+        inspectRole: async (ctx) => ctx.json(await ctx.session.get('role')),
+      },
+      undefined
+    )
+
+    const authenticated = await publicServer.authenticate(token)
+    const result = await authenticated.call('inspectRole').getReader().read()
+    expect(result.value).toEqual({ json: null })
   })
 
   it('init registers the websocket endpoint on a Hono app', async () => {
@@ -416,6 +499,13 @@ describe('createBeam server utilities', () => {
       new Request('https://example.com/rpc', { headers: { ...ws, Origin: 'https://evil.com' } })
     )
     expect(cross.status).toBe(403)
+
+    const downgradedScheme = await app.request(
+      new Request('https://example.com/rpc', {
+        headers: { Upgrade: 'websocket', Origin: 'http://example.com' },
+      })
+    )
+    expect(downgradedScheme.status).toBe(403)
 
     // same-origin → passes the origin gate (reaches the WS handler; 500 in this
     // non-Workers test env because newWorkersRpcResponse can't upgrade here —
@@ -475,6 +565,59 @@ describe('createBeam server utilities', () => {
       body: '--x--\r\n',
     })
     expect(res.status).toBe(413)
+  })
+
+  it('enforces the action body limit when Content-Length is absent', async () => {
+    const beam = createBeam({ actions: { noop: () => ({ html: 'ok' }) } })
+    const rpcApp = new Hono()
+    beam.init(new Hono(), { endpoint: '/rpc', rpcMiddlewareApp: rpcApp, maxUploadBytes: 16 })
+
+    const res = await rpcApp.request('https://example.com/rpc/actions/noop', {
+      method: 'POST',
+      headers: {
+        [BEAM_ACTION_REQUEST_HEADER]: 'action',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ value: 'this body is larger than sixteen bytes' }),
+    })
+
+    expect(res.status).toBe(413)
+  })
+
+  it('rejects non-object JSON action payloads', async () => {
+    const beam = createBeam({ actions: { noop: () => ({ html: 'ok' }) } })
+    const rpcApp = new Hono()
+    beam.init(new Hono(), { endpoint: '/rpc', rpcMiddlewareApp: rpcApp })
+
+    for (const body of ['null', '[]', '"text"', '42']) {
+      const res = await rpcApp.request('https://example.com/rpc/actions/noop', {
+        method: 'POST',
+        headers: {
+          [BEAM_ACTION_REQUEST_HEADER]: 'action',
+          'content-type': 'application/json',
+        },
+        body,
+      })
+      expect(res.status).toBe(400)
+    }
+  })
+
+  it('rejects inherited Object properties on the internal action route', async () => {
+    const beam = createBeam({ actions: {} })
+    const rpcApp = new Hono()
+    beam.init(new Hono(), { endpoint: '/rpc', rpcMiddlewareApp: rpcApp })
+
+    const res = await rpcApp.request('https://example.com/rpc/actions/constructor', {
+      method: 'POST',
+      headers: {
+        [BEAM_ACTION_REQUEST_HEADER]: 'action',
+        'content-type': 'application/json',
+      },
+      body: '{}',
+    })
+
+    expect(res.status).toBe(404)
+    expect(await res.text()).toBe('Unknown action: constructor')
   })
 
   it('init wires rpcMiddlewareApp for internal action fetches without exposing a public route', async () => {

@@ -12,9 +12,7 @@ export default defineConfig(({ mode }) => {
       beamPlugin({
         actions: '/app/actions/*.tsx',
         islands: '/app/islands/*.tsx', // React islands (default; set false to disable)
-        islandSources: ['/islands/'], // dynamic islands: allow runtime modules from this path
-        auth: '/app/auth.ts',
-        session: { storage: '/app/session-storage.ts' }, // Uses KV for persistence
+        islandSources: ['/islands/'], // dynamic islands: emit shared React/Beam modules
       }),
     ],
   }
