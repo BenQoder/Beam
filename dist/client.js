@@ -3104,79 +3104,106 @@ document.querySelectorAll('[beam-defer]').forEach((el) => {
     el.setAttribute('beam-defer-observed', '');
     deferObserver.observe(el);
 });
-// ============ POLLING ============
-// Usage: <div beam-poll beam-interval="5000" beam-action="getStatus" beam-target="#status">...</div>
 const pollingElements = new Map();
 function startPolling(el) {
-    if (pollingElements.has(el))
+    if (pollingElements.has(el) || !el.hasAttribute('beam-poll') || !el.getAttribute('beam-action'))
         return;
-    const interval = parseInt(el.getAttribute('beam-interval') || '5000', 10);
-    const action = el.getAttribute('beam-action');
-    if (!action)
-        return;
+    const state = {};
+    pollingElements.set(el, state);
+    const active = () => pollingElements.get(el) === state && document.body.contains(el) && el.hasAttribute('beam-poll');
+    const interval = () => {
+        const value = Number(el.getAttribute('beam-interval') || '5000');
+        return Number.isFinite(value) && value > 0 ? value : 5000;
+    };
     const poll = async () => {
-        // Stop if element is no longer in DOM
-        if (!document.body.contains(el)) {
-            stopPolling(el);
+        if (!active()) {
+            if (pollingElements.get(el) === state)
+                stopPolling(el);
             return;
         }
-        // Skip if offline
-        if (!isOnline)
-            return;
-        const params = getParams(el);
-        const targetSelector = el.getAttribute('beam-target');
-        const swapMode = el.getAttribute('beam-swap') || 'replace';
         try {
-            const stream = await api.call(action, params);
+            if (!isOnline)
+                return;
+            const action = el.getAttribute('beam-action');
+            if (!action) {
+                stopPolling(el);
+                return;
+            }
+            const stream = await api.call(action, getParams(el));
             const reader = stream.getReader();
+            state.reader = reader;
             try {
-                while (true) {
+                while (active()) {
                     const { done, value } = await reader.read();
-                    if (done)
+                    if (done || !active())
                         break;
-                    if (value.html) {
-                        const target = targetSelector ? $(targetSelector) : el;
-                        if (target) {
-                            const htmlStr = Array.isArray(value.html) ? value.html[0] : value.html;
-                            if (htmlStr)
-                                swap(target, htmlStr, swapMode);
+                    const target = el.getAttribute('beam-target');
+                    const mode = el.getAttribute('beam-swap') || 'replace';
+                    // Preserve the poller's element fallback when it has no selector.
+                    // Every other response field uses the same path as a normal action.
+                    if (!target && !value.target && value.html) {
+                        swap(el, Array.isArray(value.html) ? value.html.join('') : value.html, mode);
+                        if (applyResponse({ ...value, html: undefined }, null, mode, el)) {
+                            stopPolling(el);
+                            break;
                         }
                     }
-                    if (value.script)
-                        executeScript(value.script);
+                    else if (applyResponse(value, target, mode, el)) {
+                        stopPolling(el);
+                        break;
+                    }
                 }
             }
             finally {
+                if (!active())
+                    await reader.cancel().catch(() => { });
+                state.reader = undefined;
                 reader.releaseLock();
             }
         }
         catch (err) {
-            console.error('Poll error:', err);
+            if (active())
+                handleActionError({ action: el.getAttribute('beam-action') || undefined, message: err instanceof Error ? err.message : String(err) });
+        }
+        finally {
+            // Schedule after the response stream completes: never overlap calls.
+            if (active())
+                state.timer = setTimeout(poll, interval());
+            else if (pollingElements.get(el) === state)
+                stopPolling(el);
         }
     };
-    const timerId = setInterval(poll, interval);
-    pollingElements.set(el, timerId);
-    // Initial poll immediately (unless beam-poll-delay is set)
-    if (!el.hasAttribute('beam-poll-delay')) {
-        poll();
-    }
+    if (el.hasAttribute('beam-poll-delay'))
+        state.timer = setTimeout(poll, interval());
+    else
+        void poll();
 }
 function stopPolling(el) {
-    const timerId = pollingElements.get(el);
-    if (timerId) {
-        clearInterval(timerId);
-        pollingElements.delete(el);
-    }
+    const state = pollingElements.get(el);
+    if (!state)
+        return;
+    clearTimeout(state.timer);
+    pollingElements.delete(el);
+    void state.reader?.cancel().catch(() => { });
+    if (!el.hasAttribute('beam-poll') || !document.body.contains(el) || !el.getAttribute('beam-action'))
+        el.removeAttribute('beam-poll-observed');
 }
-// Observe polling elements (current and future)
 const pollMutationObserver = new MutationObserver(() => {
+    for (const el of pollingElements.keys()) {
+        if (!document.body.contains(el) || !el.hasAttribute('beam-poll') || !el.getAttribute('beam-action'))
+            stopPolling(el);
+    }
     document.querySelectorAll('[beam-poll]:not([beam-poll-observed])').forEach((el) => {
+        if (!el.getAttribute('beam-action'))
+            return;
         el.setAttribute('beam-poll-observed', '');
         startPolling(el);
     });
 });
-pollMutationObserver.observe(document.body, { childList: true, subtree: true });
-// Initialize existing polling elements
+pollMutationObserver.observe(document.body, {
+    childList: true, subtree: true, attributes: true,
+    attributeFilter: ['beam-poll', 'beam-action'],
+});
 document.querySelectorAll('[beam-poll]').forEach((el) => {
     el.setAttribute('beam-poll-observed', '');
     startPolling(el);

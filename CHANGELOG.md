@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Declarative polling now handles the complete action response (including
+  events, state, island updates, errors, and redirects), like normal actions.
+- Poll requests are serialized after stream completion. Disabling/removing a
+  poller cancels its reader and ignores late results; re-enabling restarts it.
+- Poll transport failures emit the normal action-error event and retry on the
+  next interval. Invalid intervals fall back to five seconds.
+
 ## 1.3.0 — 2026-07-27
 
 - Security hardening:
