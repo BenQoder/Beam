@@ -32,6 +32,75 @@ function getAuthToken(): string {
   return meta?.getAttribute('content') ?? ''
 }
 
+function setAuthToken(token: string): void {
+  const meta = document.querySelector('meta[name="beam-token"]')
+  if (meta) meta.setAttribute('content', token)
+}
+
+/** Same-origin refresh path derived from the WS endpoint (`/beam` → `/beam-token`). */
+function tokenRefreshUrl(): string {
+  return `${getEndpoint().replace(/\/+$/, '')}-token`
+}
+
+const TOKEN_REFRESH_SKEW_MS = 15_000
+const TOKEN_REFRESH_INTERVAL_MS = 60_000
+let tokenRefreshTimer: number | undefined
+
+function parseAuthTokenExpiry(token: string): number | null {
+  try {
+    const [data] = token.split('.')
+    if (!data) return null
+    const payload = JSON.parse(atob(data)) as { exp?: unknown }
+    return typeof payload.exp === 'number' ? payload.exp : null
+  } catch {
+    return null
+  }
+}
+
+/** Opaque/test tokens without an exp claim stay usable; signed tokens refresh near expiry. */
+function shouldRefreshAuthToken(token: string): boolean {
+  if (!token) return true
+  const exp = parseAuthTokenExpiry(token)
+  if (exp === null) return false
+  return exp - Date.now() <= TOKEN_REFRESH_SKEW_MS
+}
+
+async function fetchAuthToken(): Promise<string | null> {
+  try {
+    const response = await fetch(tokenRefreshUrl(), {
+      credentials: 'same-origin',
+      headers: { Accept: 'application/json' },
+    })
+    if (!response.ok) return null
+    const body = await response.json() as { token?: unknown }
+    return typeof body.token === 'string' && body.token ? body.token : null
+  } catch {
+    return null
+  }
+}
+
+async function resolveAuthToken(): Promise<string> {
+  const current = getAuthToken()
+  if (!shouldRefreshAuthToken(current) && current) return current
+  const next = await fetchAuthToken()
+  if (next) {
+    setAuthToken(next)
+    return next
+  }
+  return current
+}
+
+function startAuthTokenRefreshLoop(): void {
+  if (tokenRefreshTimer != null) return
+  tokenRefreshTimer = window.setInterval(() => {
+    if (document.visibilityState === 'visible' && shouldRefreshAuthToken(getAuthToken())) {
+      void fetchAuthToken().then((token) => {
+        if (token) setAuthToken(token)
+      })
+    }
+  }, TOKEN_REFRESH_INTERVAL_MS)
+}
+
 // Action response type (mirrors server-side)
 interface IslandUpsertSpec {
   props?: Record<string, unknown>
@@ -263,8 +332,10 @@ function connect(): Promise<BeamServerStub> {
       const endpoint = getEndpoint()
       const url = `${protocol}//${location.host}${endpoint}`
 
-      // Get auth token from page (proves same-origin access)
-      const token = getAuthToken()
+      // Refresh the short-lived page token from the same-origin cookie session
+      // before authenticate(). Reconnects after expiry or a worker restart
+      // must not keep sending the original <meta> value.
+      const token = await resolveAuthToken()
       if (!token) {
         throw new Error('No auth token found. Ensure <meta name="beam-token" content="..."> is set.')
       }
@@ -291,6 +362,7 @@ function connect(): Promise<BeamServerStub> {
       connectingPromise = null
       wsConnected = true
       reconnectAttempts = 0
+      startAuthTokenRefreshLoop()
       window.dispatchEvent(new CustomEvent('beam:connected'))
       return authenticatedSession
     } catch (err) {
@@ -4055,6 +4127,9 @@ export const __beamClientInternals = {
   api,
   shouldAutoConnect,
   canReconnect,
+  tokenRefreshUrl,
+  shouldRefreshAuthToken,
+  resolveAuthToken,
   getCurrentAssetSignature,
   extractRuntimeHeadAssets,
   ensureVisitAssets,

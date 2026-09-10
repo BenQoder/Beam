@@ -394,6 +394,62 @@ describe('createBeam server utilities', () => {
     await expect(beamWithoutSession.generateAuthToken(ctx as any)).rejects.toThrow('Session config is required')
   })
 
+  it.each([
+    { tokenLifetime: 30_000, expectedLifetime: 30_000 },
+    { tokenLifetime: undefined, expectedLifetime: 5 * 60 * 1000 },
+  ])('uses $expectedLifetime ms for bootstrap token expiry', async ({ tokenLifetime, expectedLifetime }) => {
+    const now = Date.now()
+    vi.spyOn(Date, 'now').mockReturnValue(now)
+    const secret = 'secret'
+    const beam = createBeam({ actions: {}, session: { secret, tokenLifetime } })
+    const app = new Hono<{ Variables: { beamAuthToken: string } }>()
+    app.use('*', beam.authMiddleware())
+    app.get('/', (c) => c.json({ token: c.get('beamAuthToken') }))
+
+    const cookie = await serializeSigned('beam_sid', 'session123', secret)
+    const response = await app.request('https://example.com/', {
+      headers: { Cookie: cookie },
+    })
+    expect(response.status).toBe(200)
+    const { token } = await response.json() as { token: string }
+    expect(await __beamCreateBeamInternals.verifyToken(token, secret)).toEqual({
+      sid: 'session123',
+      uid: null,
+      exp: now + expectedLifetime,
+    })
+  })
+
+  it('serves a same-origin token refresh from GET {endpoint}-token', async () => {
+    const secret = 'secret'
+    const beam = createBeam({
+      actions: {},
+      session: { secret },
+    })
+    const app = new Hono()
+    app.use('*', beam.authMiddleware())
+    beam.init(app)
+
+    const cookie = await serializeSigned('beam_sid', 'session123', secret)
+    const ok = await app.request('https://example.com/beam-token', {
+      headers: { Cookie: cookie, Origin: 'https://example.com' },
+    })
+    expect(ok.status).toBe(200)
+    expect(ok.headers.get('cache-control')).toContain('no-store')
+    const body = await ok.json() as { token: string }
+    const payload = await __beamCreateBeamInternals.verifyToken(body.token, secret)
+    expect(payload?.sid).toBe('session123')
+
+    const cross = await app.request('https://example.com/beam-token', {
+      headers: { Cookie: cookie, Origin: 'https://evil.invalid' },
+    })
+    expect(cross.status).toBe(403)
+
+    const anon = await app.request('https://example.com/beam-token', {
+      headers: { Origin: 'https://example.com' },
+    })
+    expect(anon.status).toBe(401)
+  })
+
   it('PublicBeamServer authenticates and returns a working BeamServer', async () => {
     const token = await __beamCreateBeamInternals.signToken(
       { sid: 'session123', uid: null, exp: Date.now() + 10_000 },

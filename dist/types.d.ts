@@ -341,6 +341,9 @@ export interface SessionConfig<TEnv = object> {
     cookieName?: string;
     /** Cookie max age in seconds (default: 1 year) */
     maxAge?: number;
+    /** Auth-token lifetime in milliseconds (default: 5 minutes). Keep short;
+     * the client refreshes from GET `{endpoint}-token` before expiry/reconnect. */
+    tokenLifetime?: number;
     /** Custom storage factory (default: cookie storage) */
     storageFactory?: SessionStorageFactory<TEnv>;
 }
@@ -357,7 +360,7 @@ export interface BeamConfig<TEnv = object> {
  * Options for beam.init()
  */
 export interface BeamInitOptions {
-    /** WebSocket endpoint path (default: '/beam') */
+    /** WebSocket endpoint path (default: '/beam'). Token refresh is GET `{endpoint}-token`. */
     endpoint?: string;
     /** Optional internal Hono app used to run per-call Beam middleware on server-side RPC calls */
     rpcMiddlewareApp?: Hono<any>;

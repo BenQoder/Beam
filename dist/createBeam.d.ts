@@ -1,6 +1,9 @@
 import type { Context } from 'hono';
 import { RpcTarget } from 'capnweb';
 import type { ActionHandler, ActionResponse, VisitOptions, VisitResponse, BeamConfig, BeamInstance, BeamContext, BeamSession, SessionConfig, AuthTokenPayload } from './types';
+/** Same-origin refresh path for the short-lived WS auth token. */
+export declare function tokenRefreshPath(endpoint: string): string;
+declare function isAllowedOrigin(requestUrl: string, originHeader: string | undefined, allowedOrigins?: string[] | '*'): boolean;
 declare function readRequestBodyWithLimit(request: Request, maxBytes: number): Promise<Uint8Array<ArrayBuffer>>;
 /**
  * Sign an auth token payload using HMAC-SHA256
@@ -187,6 +190,8 @@ export declare function beamTokenMeta(token: string): string;
 export declare const __beamCreateBeamInternals: {
     signToken: typeof signToken;
     verifyToken: typeof verifyToken;
+    tokenRefreshPath: typeof tokenRefreshPath;
+    isAllowedOrigin: typeof isAllowedOrigin;
     parseCookies: typeof parseCookies;
     parseSessionFromRequest: typeof parseSessionFromRequest;
     parseSessionDataFromRequest: typeof parseSessionDataFromRequest;

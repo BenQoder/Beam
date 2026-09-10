@@ -5,6 +5,24 @@ import { BEAM_ACTION_MULTIPART_PARAMS_FIELD, BEAM_ACTION_REQUEST_HEADER, BEAM_AC
 /** Default token lifetime: 5 minutes */
 const DEFAULT_TOKEN_LIFETIME = 5 * 60 * 1000;
 const DEFAULT_MAX_UPLOAD_BYTES = 10 * 1024 * 1024; // 10 MB
+/** Same-origin refresh path for the short-lived WS auth token. */
+export function tokenRefreshPath(endpoint) {
+    return `${endpoint.replace(/\/+$/, '')}-token`;
+}
+function isAllowedOrigin(requestUrl, originHeader, allowedOrigins) {
+    if (allowedOrigins === '*')
+        return true;
+    if (!originHeader)
+        return true;
+    if (allowedOrigins)
+        return allowedOrigins.includes(originHeader);
+    try {
+        return new URL(originHeader).origin === new URL(requestUrl).origin;
+    }
+    catch {
+        return false;
+    }
+}
 class PayloadTooLargeError extends Error {
 }
 async function readRequestBodyWithLimit(request, maxBytes) {
@@ -848,7 +866,7 @@ async function resolveBeamRequest(c, auth, sessionConfig, cookieName, maxAge) {
         const tokenPayload = {
             sid: sessionId,
             uid: user?.id ?? null,
-            exp: Date.now() + DEFAULT_TOKEN_LIFETIME,
+            exp: Date.now() + (sessionConfig?.tokenLifetime ?? DEFAULT_TOKEN_LIFETIME),
         };
         authToken = await signToken(tokenPayload, sessionSecret);
     }
@@ -905,6 +923,25 @@ export function createBeam(config) {
     // Session defaults
     const cookieName = sessionConfig?.cookieName ?? 'beam_sid';
     const maxAge = sessionConfig?.maxAge ?? 365 * 24 * 60 * 60; // 1 year
+    const tokenLifetime = sessionConfig?.tokenLifetime ?? DEFAULT_TOKEN_LIFETIME;
+    async function mintAuthToken(ctx) {
+        if (!sessionConfig) {
+            throw new Error('Session config is required for auth token generation');
+        }
+        const secret = resolveSecret(ctx.env, sessionConfig);
+        if (!secret) {
+            throw new Error('Session secret is required for auth token generation');
+        }
+        const sessionId = await parseSessionFromRequest(ctx.request, cookieName, secret);
+        if (!sessionId) {
+            throw new Error('No session found - ensure authMiddleware is used');
+        }
+        return signToken({
+            sid: sessionId,
+            uid: ctx.user?.id ?? null,
+            exp: Date.now() + tokenLifetime,
+        }, secret);
+    }
     return {
         actions,
         auth,
@@ -946,24 +983,7 @@ export function createBeam(config) {
          * ```
          */
         async generateAuthToken(ctx) {
-            if (!sessionConfig) {
-                throw new Error('Session config is required for auth token generation');
-            }
-            const secret = resolveSecret(ctx.env, sessionConfig);
-            if (!secret) {
-                throw new Error('Session secret is required for auth token generation');
-            }
-            // Get session ID from request cookies
-            const sessionId = await parseSessionFromRequest(ctx.request, cookieName, secret);
-            if (!sessionId) {
-                throw new Error('No session found - ensure authMiddleware is used');
-            }
-            const tokenPayload = {
-                sid: sessionId,
-                uid: ctx.user?.id ?? null,
-                exp: Date.now() + DEFAULT_TOKEN_LIFETIME,
-            };
-            return signToken(tokenPayload, secret);
+            return mintAuthToken(ctx);
         },
         /**
          * Init function for HonoX createApp().
@@ -985,6 +1005,7 @@ export function createBeam(config) {
          */
         init(app, options) {
             const endpoint = options?.endpoint ?? '/beam';
+            const tokenPath = tokenRefreshPath(endpoint);
             const allowedOrigins = options?.allowedOrigins;
             // Cap multipart (Blob-carrying) action bodies. Defense-in-depth over
             // capnweb's maxMessageSize; guards the in-memory formData() buffer.
@@ -1075,6 +1096,21 @@ export function createBeam(config) {
                     actionFetcher = (request, env) => Promise.resolve(options.rpcMiddlewareApp.fetch(request, env));
                 }
             }
+            app.get(tokenPath, async (c) => {
+                c.header('Cache-Control', 'private, no-store');
+                if (!isAllowedOrigin(c.req.url, c.req.header('Origin'), allowedOrigins)) {
+                    return c.json({ error: 'forbidden' }, 403);
+                }
+                try {
+                    const resolved = c.get('beamResolvedRequest')
+                        ?? await resolveBeamRequest(c, auth, sessionConfig, cookieName, maxAge);
+                    const token = await mintAuthToken(resolved.ctx);
+                    return c.json({ token });
+                }
+                catch {
+                    return c.json({ error: 'unauthorized' }, 401);
+                }
+            });
             app.get(endpoint, async (c) => {
                 const upgradeHeader = c.req.header('Upgrade');
                 if (upgradeHeader !== 'websocket') {
@@ -1084,24 +1120,8 @@ export function createBeam(config) {
                 // Hijacking (the in-band token is the primary defense). Default:
                 // same-origin only. Override with allowedOrigins (a list, or '*' to
                 // disable). A missing Origin header (non-browser client) is allowed.
-                if (allowedOrigins !== '*') {
-                    const origin = c.req.header('Origin');
-                    if (origin) {
-                        let ok;
-                        if (allowedOrigins) {
-                            ok = allowedOrigins.includes(origin);
-                        }
-                        else {
-                            try {
-                                ok = new URL(origin).origin === new URL(c.req.url).origin;
-                            }
-                            catch {
-                                ok = false;
-                            }
-                        }
-                        if (!ok)
-                            return c.text('Forbidden origin', 403);
-                    }
+                if (!isAllowedOrigin(c.req.url, c.req.header('Origin'), allowedOrigins)) {
+                    return c.text('Forbidden origin', 403);
                 }
                 // Get the session secret for token verification
                 const secret = resolveSecret(c.env, sessionConfig);
@@ -1222,6 +1242,8 @@ export function beamTokenMeta(token) {
 export const __beamCreateBeamInternals = {
     signToken,
     verifyToken,
+    tokenRefreshPath,
+    isAllowedOrigin,
     parseCookies,
     parseSessionFromRequest,
     parseSessionDataFromRequest,

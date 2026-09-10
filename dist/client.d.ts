@@ -1,6 +1,11 @@
 import { type RpcStub } from 'capnweb';
 import './islands';
 import type { BeamActionJson, BeamActionParams, RegisteredActionName } from './types';
+/** Same-origin refresh path derived from the WS endpoint (`/beam` → `/beam-token`). */
+declare function tokenRefreshUrl(): string;
+/** Opaque/test tokens without an exp claim stay usable; signed tokens refresh near expiry. */
+declare function shouldRefreshAuthToken(token: string): boolean;
+declare function resolveAuthToken(): Promise<string>;
 interface IslandUpsertSpec {
     props?: Record<string, unknown>;
     component?: string;
@@ -220,6 +225,9 @@ export declare const __beamClientInternals: {
     };
     shouldAutoConnect: typeof shouldAutoConnect;
     canReconnect: typeof canReconnect;
+    tokenRefreshUrl: typeof tokenRefreshUrl;
+    shouldRefreshAuthToken: typeof shouldRefreshAuthToken;
+    resolveAuthToken: typeof resolveAuthToken;
     getCurrentAssetSignature: typeof getCurrentAssetSignature;
     extractRuntimeHeadAssets: typeof extractRuntimeHeadAssets;
     ensureVisitAssets: typeof ensureVisitAssets;

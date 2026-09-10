@@ -1,5 +1,5 @@
 // Main server-side exports for @benqoder/beam
-export { createBeam, KVSession, CookieSession, beamTokenMeta } from './createBeam';
+export { createBeam, KVSession, CookieSession, beamTokenMeta, tokenRefreshPath } from './createBeam';
 export { render } from './render';
 export { Island, beamIslandImportMap, ISLAND_SHARED_MODULES, beamCsp } from './island';
 // Auto-discovery utilities

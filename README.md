@@ -2822,6 +2822,9 @@ Instead of relying on cookies, Beam requires clients to authenticate explicitly:
 2. **WebSocket connects unauthenticated** (gets `PublicApi`)
 3. **Client calls `authenticate(token)`** to get the full API
 4. **Malicious sites can't get the token** (CORS blocks page requests)
+5. **Client refreshes the token** from same-origin `GET {endpoint}-token` before
+   it expires and on reconnect, so long-lived tabs keep working without
+   lengthening the token. Cross-origin pages still cannot read that JSON.
 
 ### Setup
 

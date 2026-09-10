@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- WebSocket auth tokens stay short-lived (5 minutes) but no longer strand a
+  tab after expiry or a worker reload. `beam.init()` now serves
+  `GET {endpoint}-token` (same-origin cookie session) and the client refreshes
+  that token before `authenticate()`, on reconnect, and while the page is open.
 - Declarative polling now handles the complete action response (including
   events, state, island updates, errors, and redirects), like normal actions.
 - Poll requests are serialized after stream completion. Disabling/removing a

@@ -134,6 +134,41 @@ describe('client internals', () => {
     expect(internals.shouldAutoConnect()).toBe(true)
   })
 
+  it('refreshes an expired page token before authenticate()', async () => {
+    const expiredPayload = btoa(JSON.stringify({ sid: 'session123', uid: null, exp: Date.now() - 1_000 }))
+    document.head.innerHTML = `
+      <meta name="beam-endpoint" content="/beam">
+      <meta name="beam-token" content="${expiredPayload}.sig">
+    `
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ token: 'fresh-token' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    )
+    const internals = await loadClientInternals()
+    expect(internals.tokenRefreshUrl()).toBe('/beam-token')
+    expect(internals.shouldRefreshAuthToken(`${expiredPayload}.sig`)).toBe(true)
+    expect(await internals.resolveAuthToken()).toBe('fresh-token')
+    expect(fetchMock).toHaveBeenCalledWith('/beam-token', expect.objectContaining({
+      credentials: 'same-origin',
+    }))
+    expect(document.querySelector('meta[name="beam-token"]')?.getAttribute('content')).toBe('fresh-token')
+
+    mockCall.mockResolvedValueOnce(streamOf({ html: 'ok' }))
+    await internals.api.call('noop', {})
+    expect(mockAuthenticate).toHaveBeenCalledWith('fresh-token')
+  })
+
+  it('keeps opaque page tokens without fetching when they have no expiry', async () => {
+    document.head.innerHTML = '<meta name="beam-token" content="test-token">'
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+    const internals = await loadClientInternals()
+    expect(internals.shouldRefreshAuthToken('test-token')).toBe(false)
+    expect(await internals.resolveAuthToken()).toBe('test-token')
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
   it('executes beam actions over the authenticated websocket session', async () => {
     document.head.innerHTML = '<meta name="beam-token" content="test-token">'
     const fetchMock = vi.spyOn(globalThis, 'fetch')
