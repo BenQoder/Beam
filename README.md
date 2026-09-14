@@ -34,6 +34,7 @@ A lightweight, declarative UI framework for building interactive web application
 - **Collapse** - Expand/collapse with text swap (no server)
 - **Class Toggle** - Toggle CSS classes on elements (no server)
 - **Reactive State** - Fine-grained reactivity for UI components (tabs, accordions, carousels)
+- **Client Behaviors** - Lifecycle-owned controllers for reusable progressive enhancement without a component framework
 - **Server State Updates** - Update named client state from server actions without swapping DOM
 - **Cloak** - Hide elements until reactivity initializes (no flash of unprocessed content)
 - **Lazy Connections** - Beam connects only when needed by default
@@ -909,6 +910,73 @@ Notes:
 
 ---
 
+## Client Behaviors
+
+Client behaviors progressively enhance server-rendered HTML with trusted,
+application-registered controllers. They are useful for carousels, product
+options, accordions, animation triggers, and other reusable interactions that
+need private state and deterministic cleanup without a React island.
+
+Register definitions from your client entry:
+
+```ts
+// app/behaviors.ts
+import { defineBehavior, registerBehaviors } from '@benqoder/beam/behaviors'
+
+const disclosure = defineBehavior<{ open?: boolean }>({
+  mount(ctx) {
+    const state = ctx.reactive({ open: ctx.props.open === true })
+    const button = ctx.root.querySelector<HTMLButtonElement>('button')!
+
+    ctx.on(button, 'click', () => {
+      state.open = !state.open
+    })
+
+    ctx.effect(() => {
+      ctx.root.toggleAttribute('data-open', state.open)
+      button.setAttribute('aria-expanded', String(state.open))
+    })
+  },
+})
+
+registerBehaviors({
+  'app-disclosure@1': disclosure,
+})
+```
+
+```ts
+// app/client.ts
+import '@benqoder/beam/client'
+import './behaviors'
+```
+
+Reference the registered name and inert JSON props from SSR markup:
+
+```html
+<section
+  beam-behavior="app-disclosure@1"
+  beam-behavior-props='{"open":false}'
+>
+  <button type="button" aria-expanded="false">Show details</button>
+  <div>Useful server-rendered fallback content.</div>
+</section>
+```
+
+Each connected light-DOM root gets one instance. Beam owns listeners, effects,
+abort signaling, and cleanup registered through the context. Inner Beam swaps
+notify the surviving instance; replacing or removing its root aborts the
+instance and runs cleanup exactly once. Behavior roots inside `beam-island`
+trees are left to the island.
+
+Behavior state can drive raw CSS transitions and keyframes by toggling classes
+or data attributes. Animation libraries can be initialized during `mount()` and
+their timelines destroyed with `ctx.cleanup()`.
+
+See [Client Behaviors](docs/behaviors.md) for the complete API, lifecycle,
+ownership, animation, error-handling, and testing guidance. Runnable carousel,
+accordion, product-options, and raw-CSS examples are in the example app at
+`/behaviors`.
+
 ## Attribute Reference
 
 ### Actions
@@ -1151,6 +1219,13 @@ return ctx.drawer(render(<MyDrawer />), { position: "left", size: "medium" });
 | `beam-island-src`     | Load the component module from a URL at runtime        | `beam-island-src="/islands/chart@a1.js"` |
 | `beam-island-load`    | Mount strategy: `eager` (default), `visible`, `idle`   | `beam-island-load="visible"` |
 | `beam-island-remount` | Remount on swaps instead of preserving React state     | `beam-island-remount`       |
+
+### Client Behaviors
+
+| Attribute             | Description                                             | Example                              |
+| --------------------- | ------------------------------------------------------- | ------------------------------------ |
+| `beam-behavior`       | Registered, versioned behavior name                     | `beam-behavior="cart-options@1"`    |
+| `beam-behavior-props` | Inert JSON object parsed and exposed through `ctx.props` | `beam-behavior-props='{"open":true}'` |
 
 ### Client-Side Reactive State (No Server Round-Trip)
 

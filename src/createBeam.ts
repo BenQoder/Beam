@@ -54,6 +54,7 @@ function isAllowedOrigin(
 }
 
 class PayloadTooLargeError extends Error {}
+class InvalidMultipartError extends Error {}
 
 async function readRequestBodyWithLimit(
   request: Request,
@@ -94,6 +95,218 @@ async function readRequestBodyWithLimit(
     offset += chunk.byteLength
   }
   return body
+}
+
+interface MultipartPart {
+  name: string
+  filename?: string
+  contentType: string
+  bytes: Uint8Array<ArrayBuffer>
+}
+
+function createMultipartBlob(part: MultipartPart): Blob {
+  const bytes = part.bytes.slice()
+  const blob = new Blob([bytes], { type: part.contentType })
+  const compatible = blob as Blob & {
+    arrayBuffer?: () => Promise<ArrayBuffer>
+    bytes?: () => Promise<Uint8Array<ArrayBuffer>>
+    stream?: () => ReadableStream<Uint8Array<ArrayBuffer>>
+    text?: () => Promise<string>
+  }
+
+  // jsdom's Blob intentionally implements less of the modern Blob API than
+  // Node/Workers. Fill those methods from the already bounded byte buffer.
+  if (typeof compatible.arrayBuffer !== 'function') {
+    Object.defineProperty(compatible, 'arrayBuffer', {
+      value: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+    })
+  }
+  if (typeof compatible.bytes !== 'function') {
+    Object.defineProperty(compatible, 'bytes', { value: async () => bytes.slice() })
+  }
+  if (typeof compatible.stream !== 'function') {
+    Object.defineProperty(compatible, 'stream', {
+      value: () => new ReadableStream<Uint8Array<ArrayBuffer>>({
+        start(controller) {
+          controller.enqueue(bytes.slice())
+          controller.close()
+        },
+      }),
+    })
+  }
+  if (typeof compatible.text !== 'function') {
+    Object.defineProperty(compatible, 'text', {
+      value: async () => new TextDecoder().decode(bytes),
+    })
+  }
+  return compatible
+}
+
+function findBytes(haystack: Uint8Array, needle: Uint8Array, from = 0): number {
+  if (needle.byteLength === 0) return from <= haystack.byteLength ? from : -1
+  const lastStart = haystack.byteLength - needle.byteLength
+  for (let start = from; start <= lastStart; start += 1) {
+    let matches = true
+    for (let offset = 0; offset < needle.byteLength; offset += 1) {
+      if (haystack[start + offset] !== needle[offset]) {
+        matches = false
+        break
+      }
+    }
+    if (matches) return start
+  }
+  return -1
+}
+
+function findMultipartBoundary(
+  body: Uint8Array,
+  marker: Uint8Array,
+  from = 0,
+): number {
+  let candidate = findBytes(body, marker, from)
+  while (candidate >= 0) {
+    const suffix = candidate + marker.byteLength
+    const isClosing = body[suffix] === 45 && body[suffix + 1] === 45
+    const isPart = body[suffix] === 13 && body[suffix + 1] === 10
+    if (isClosing || isPart) return candidate
+    candidate = findBytes(body, marker, candidate + 1)
+  }
+  return -1
+}
+
+function getMultipartBoundary(contentType: string): string {
+  const match = /(?:^|;)\s*boundary=(?:"([^"]+)"|([^;\s]+))/i.exec(contentType)
+  const boundary = match?.[1] ?? match?.[2]
+  if (!boundary || boundary.length > 70 || /[\r\n]/.test(boundary)) {
+    throw new InvalidMultipartError('Invalid multipart boundary')
+  }
+  return boundary
+}
+
+function unquoteHeaderValue(value: string): string {
+  const trimmed = value.trim()
+  if (!trimmed.startsWith('"') || !trimmed.endsWith('"')) return trimmed
+  return trimmed.slice(1, -1).replace(/\\(["\\])/g, '$1')
+}
+
+function getDispositionParam(disposition: string, name: string): string | undefined {
+  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const match = new RegExp(
+    `(?:^|;)\\s*${escapedName}\\s*=\\s*("(?:\\\\.|[^"])*"|[^;]*)`,
+    'i',
+  ).exec(disposition)
+  return match ? unquoteHeaderValue(match[1]) : undefined
+}
+
+/**
+ * Small fallback for runtimes where the native fetch and DOM File classes come
+ * from different realms (notably Node + jsdom). Boundaries are matched as raw
+ * bytes so file contents are never decoded and re-encoded.
+ */
+function parseMultipartBytes(body: Uint8Array<ArrayBuffer>, contentType: string): MultipartPart[] {
+  const encoder = new TextEncoder()
+  const decoder = new TextDecoder()
+  const boundary = encoder.encode(`--${getMultipartBoundary(contentType)}`)
+  const nextBoundary = encoder.encode(`\r\n--${getMultipartBoundary(contentType)}`)
+  const headerEnd = encoder.encode('\r\n\r\n')
+  const crlf = encoder.encode('\r\n')
+  const parts: MultipartPart[] = []
+
+  let cursor = findMultipartBoundary(body, boundary)
+  if (cursor < 0) throw new InvalidMultipartError('Multipart boundary not found')
+
+  while (cursor >= 0) {
+    cursor += boundary.byteLength
+    if (body[cursor] === 45 && body[cursor + 1] === 45) return parts
+    if (findBytes(body, crlf, cursor) !== cursor) {
+      throw new InvalidMultipartError('Invalid multipart boundary separator')
+    }
+    cursor += crlf.byteLength
+
+    const headersEndAt = findBytes(body, headerEnd, cursor)
+    if (headersEndAt < 0) throw new InvalidMultipartError('Invalid multipart headers')
+    const rawHeaders = decoder.decode(body.subarray(cursor, headersEndAt))
+    const headers = new Map<string, string>()
+    for (const line of rawHeaders.split('\r\n')) {
+      const separator = line.indexOf(':')
+      if (separator <= 0) throw new InvalidMultipartError('Invalid multipart header')
+      headers.set(line.slice(0, separator).trim().toLowerCase(), line.slice(separator + 1).trim())
+    }
+
+    const disposition = headers.get('content-disposition')
+    if (!disposition || !/^form-data(?:;|$)/i.test(disposition)) {
+      throw new InvalidMultipartError('Missing multipart content disposition')
+    }
+    const name = getDispositionParam(disposition, 'name')
+    if (!name) throw new InvalidMultipartError('Missing multipart field name')
+    const filename = getDispositionParam(disposition, 'filename')
+
+    const contentStart = headersEndAt + headerEnd.byteLength
+    const boundaryAt = findMultipartBoundary(body, nextBoundary, contentStart)
+    if (boundaryAt < 0) throw new InvalidMultipartError('Unterminated multipart field')
+    parts.push({
+      name,
+      filename,
+      contentType: headers.get('content-type') ?? 'application/octet-stream',
+      bytes: body.slice(contentStart, boundaryAt),
+    })
+    cursor = boundaryAt + crlf.byteLength
+  }
+
+  throw new InvalidMultipartError('Unterminated multipart body')
+}
+
+async function parseMultipartActionData(
+  body: Uint8Array<ArrayBuffer>,
+  contentType: string,
+): Promise<Record<string, unknown>> {
+  try {
+    const form = await new Response(body, {
+      headers: { 'content-type': contentType },
+    }).formData()
+    const data: Record<string, unknown> = Object.create(null)
+    const paramsJson = form.get(BEAM_ACTION_MULTIPART_PARAMS_FIELD)
+    if (typeof paramsJson === 'string' && paramsJson.trim()) {
+      const parsed = JSON.parse(paramsJson) as unknown
+      if (!isActionData(parsed)) throw new InvalidMultipartError('Invalid Beam action payload')
+      Object.assign(data, parsed)
+    }
+    form.forEach((value, key) => {
+      if (key !== BEAM_ACTION_MULTIPART_PARAMS_FIELD && typeof value !== 'string') {
+        data[key] = value
+      }
+    })
+    return data
+  } catch (nativeError) {
+    try {
+      const parts = parseMultipartBytes(body, contentType)
+      const data: Record<string, unknown> = Object.create(null)
+      const params = parts.find((part) => part.name === BEAM_ACTION_MULTIPART_PARAMS_FIELD)
+      if (params) {
+        const raw = new TextDecoder().decode(params.bytes)
+        if (raw.trim()) {
+          const parsed = JSON.parse(raw) as unknown
+          if (!isActionData(parsed)) throw new InvalidMultipartError('Invalid Beam action payload')
+          Object.assign(data, parsed)
+        }
+      }
+
+      for (const part of parts) {
+        if (part.name === BEAM_ACTION_MULTIPART_PARAMS_FIELD || part.filename === undefined) continue
+        const blob = createMultipartBlob(part)
+        try {
+          Object.defineProperty(blob, 'name', { value: part.filename, enumerable: true })
+        } catch {
+          // A Blob is sufficient for Beam action params when name is not extensible.
+        }
+        data[part.name] = blob
+      }
+      return data
+    } catch (fallbackError) {
+      if (fallbackError instanceof InvalidMultipartError) throw fallbackError
+      throw new InvalidMultipartError('Invalid multipart action body', { cause: nativeError })
+    }
+  }
 }
 
 /**
@@ -1239,27 +1452,11 @@ export function createBeam<TEnv extends object = object>(
         if (contentType.includes('multipart/form-data')) {
           // Blob-carrying params (see BeamServer.call): JSON params in the
           // __beam_params field, each Blob as its own multipart field.
-          const form = await new Response(body, {
-            headers: { 'content-type': contentType },
-          }).formData()
-          const paramsJson = form.get(BEAM_ACTION_MULTIPART_PARAMS_FIELD)
-          if (typeof paramsJson === 'string' && paramsJson.trim()) {
-            try {
-              const parsed = JSON.parse(paramsJson) as unknown
-              if (!isActionData(parsed)) {
-                return c.text('Invalid Beam action payload', 400)
-              }
-              data = parsed
-            } catch {
-              return c.text('Invalid Beam action payload', 400)
-            }
+          try {
+            data = await parseMultipartActionData(body, contentType)
+          } catch {
+            return c.text('Invalid Beam action payload', 400)
           }
-          form.forEach((value, key) => {
-            if (key === BEAM_ACTION_MULTIPART_PARAMS_FIELD) return
-            // FormData values are string | File; non-strings are the Blobs.
-            // (typeof beats instanceof here — cross-realm safe.)
-            if (typeof value !== 'string') data[key] = value
-          })
         } else {
           const bodyText = new TextDecoder().decode(body)
           if (bodyText.trim()) {

@@ -1,5 +1,6 @@
 import { newWebSocketRpcSession } from 'capnweb';
 import { beamReactivity } from './reactivity';
+import { notifyBehaviorContentChanged } from './behaviors';
 // The client owns the complete browser runtime. React itself remains lazy:
 // importing Beam on a page without island markers does not download React.
 import './islands';
@@ -430,6 +431,7 @@ function applyHtml(target, html, options) {
         }
     }
     beamReactivity.scan(nextTarget);
+    notifyBehaviorContentChanged(nextTarget);
     updateLoadingIndicators();
 }
 function getParams(el) {
@@ -1060,6 +1062,7 @@ function performSwap(target, html, mode, trigger) {
             for (const node of appended)
                 target.appendChild(node);
             afterInsert(appended);
+            notifyBehaviorContentChanged(target);
             break;
         }
         case 'prepend': {
@@ -1069,6 +1072,7 @@ function performSwap(target, html, mode, trigger) {
             for (const node of prepended)
                 target.insertBefore(node, anchor);
             afterInsert(prepended);
+            notifyBehaviorContentChanged(target);
             break;
         }
         case 'replace':
@@ -1081,9 +1085,17 @@ function performSwap(target, html, mode, trigger) {
             runSwapTransition(target);
             applyTransitionNames(target);
             runEnterTransitions(target);
+            notifyBehaviorContentChanged(target);
             break;
         case 'delete':
-            void runLeaveTransition(target).then(() => target.remove());
+            {
+                const parent = target.parentElement;
+                void runLeaveTransition(target).then(() => {
+                    target.remove();
+                    if (parent)
+                        notifyBehaviorContentChanged(parent);
+                });
+            }
             break;
     }
     // Out-of-band swaps

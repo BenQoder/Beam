@@ -1,6 +1,7 @@
 {
   "name": "@benqoder/beam",
-  "version": "1.3.1",
+  "version": "1.5.0",
+  "license": "MIT",
   "type": "module",
   "publishConfig": {
     "registry": "https://registry.npmjs.org",
@@ -22,6 +23,10 @@
     "./reactivity": {
       "types": "./dist/reactivity.d.ts",
       "import": "./dist/reactivity.js"
+    },
+    "./behaviors": {
+      "types": "./dist/behaviors.d.ts",
+      "import": "./dist/behaviors.js"
     },
     "./react": {
       "types": "./dist/react.d.ts",
@@ -54,6 +59,7 @@
   },
   "files": [
     "dist",
+    "docs/behaviors.md",
     "templates",
     "src/beam.css",
     "src/virtual-beam.d.ts"

@@ -136,9 +136,31 @@ function createReactiveProxy(obj) {
     reactiveProxyCache.set(obj, proxy);
     return proxy;
 }
+/**
+ * Create reactive state without registering it as an element or named Beam
+ * state. This is the primitive used by lifecycle-owned client behaviors.
+ */
+export function createReactiveState(initial) {
+    return createReactiveProxy(initial);
+}
 // --- State Storage ---
 const reactiveElStates = new WeakMap();
 const reactiveNamedStates = new Map();
+const reactiveNamedStatePresence = new Map();
+function readNamedState(id) {
+    let presence = reactiveNamedStatePresence.get(id);
+    if (!presence) {
+        presence = createSignal(0);
+        reactiveNamedStatePresence.set(id, presence);
+    }
+    readSignal(presence);
+    return reactiveNamedStates.get(id);
+}
+function notifyNamedStateCreated(id) {
+    const presence = reactiveNamedStatePresence.get(id);
+    if (presence)
+        writeSignal(presence, presence.value + 1);
+}
 // --- Get State (walks up DOM tree) ---
 function getReactiveState(el) {
     let current = el;
@@ -456,6 +478,7 @@ function ensureNamedState(id, initial) {
     const state = createReactiveProxy({ ...(initial ?? {}) });
     reactiveNamedStates.set(id, state);
     reactiveNamedStateKinds.set(id, 'object');
+    notifyNamedStateCreated(id);
     return state;
 }
 function updateNamedState(id, value) {
@@ -514,6 +537,7 @@ function setupReactiveScope(el) {
         if (id) {
             reactiveNamedStates.set(id, state);
             reactiveNamedStateKinds.set(id, detectNamedStateKind(stateAttr));
+            notifyNamedStateCreated(id);
         }
     }
     // Register the scope before wiring descendants so initial effects can resolve state.
@@ -669,7 +693,7 @@ export const beamReactivity = {
      * Get reactive state by element or named ID
      * @param elOrId - Element with beam-state or string ID from beam-id
      */
-    getState: (elOrId) => typeof elOrId === 'string' ? reactiveNamedStates.get(elOrId) : reactiveElStates.get(elOrId),
+    getState: (elOrId) => typeof elOrId === 'string' ? readNamedState(elOrId) : reactiveElStates.get(elOrId),
     /**
      * Batch multiple state updates into a single flush
      * @param fn - Function containing state mutations

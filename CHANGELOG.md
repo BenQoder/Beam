@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+## 1.5.0 — 2026-09-14
+
+- Added lifecycle-owned client behaviors through the new
+  `@benqoder/beam/behaviors` entry point. Applications can define and register
+  trusted, versioned controllers and attach them to SSR markup with
+  `beam-behavior` and inert `beam-behavior-props` JSON.
+- Behavior contexts provide private reactive state, owned effects and event
+  listeners, an `AbortSignal`, deterministic async cleanup, named Beam state
+  access, and optional serialized `props` / `content` update handling.
+- Behavior discovery is limited to connected light DOM, reserves
+  `beam-island` trees for their island owner, isolates failures through the
+  bubbling `beam:behavior-error` event, and exposes `behaviorsSettled()` for
+  deterministic tests.
+- Beam swaps now notify surviving behavior roots after append, prepend,
+  replace, and delete operations. Outer replacement/removal aborts the old
+  instance and runs every owned cleanup exactly once.
+- Named-state creation is now observable, allowing a behavior effect that
+  reads an absent state to react when the state is registered later.
+- Added complete example-app implementations for a carousel, accordion,
+  production-style product options, and an attribute-driven raw CSS animation
+  with a `prefers-reduced-motion` fallback.
+- Multipart action parsing now falls back safely across incompatible
+  Node/jsdom/web Blob realms, preserves binary bytes, filename, and content
+  type, and returns `400` for malformed multipart bodies instead of `500`.
 - WebSocket auth tokens stay short-lived (5 minutes) but no longer strand a
   tab after expiry or a worker reload. `beam.init()` now serves
   `GET {endpoint}-token` (same-origin cookie session) and the client refreshes

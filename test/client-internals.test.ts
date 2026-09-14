@@ -495,6 +495,64 @@ describe('client internals', () => {
     expect((globalThis as any).__beamScriptRan).toBe(true)
   })
 
+  it('delivers behavior content updates through the real swap path', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const internals = await loadClientInternals()
+    const {
+      behaviorsSettled,
+      defineBehavior,
+      registerBehaviors,
+    } = await import('../src/behaviors')
+    const updates: string[] = []
+    const cleanup = vi.fn()
+    let mounts = 0
+
+    registerBehaviors({
+      'client-swap-integration@1': defineBehavior((ctx) => {
+        const local = ctx.reactive({ mount: ++mounts })
+        ctx.cleanup(cleanup)
+        return {
+          update(change) {
+            const text = ctx.root.textContent?.replace(/\s+/g, '')
+            updates.push(`${change.kind}:${local.mount}:${text}`)
+          },
+        }
+      }),
+    })
+    document.body.innerHTML = `
+      <section id="behavior-target" beam-behavior="client-swap-integration@1">
+        <span>Before</span>
+      </section>
+    `
+    const target = document.querySelector<HTMLElement>('#behavior-target')!
+    await behaviorsSettled(document)
+
+    internals.swap(target, '<span>Added</span>', 'append')
+    await behaviorsSettled(target)
+    internals.swap(target, '<span>First</span>', 'prepend')
+    await behaviorsSettled(target)
+    internals.swap(target, '<span>After</span>', 'replace')
+    await behaviorsSettled(target)
+
+    expect(updates).toEqual([
+      'content:1:BeforeAdded',
+      'content:1:FirstBeforeAdded',
+      'content:1:After',
+    ])
+    expect(document.querySelector('#behavior-target')).toBe(target)
+
+    internals.applyHtml(
+      target,
+      '<section id="behavior-target" beam-behavior="client-swap-integration@1"><span>Replaced</span></section>',
+      { style: 'outerHTML' },
+    )
+    await behaviorsSettled(document)
+
+    expect(document.querySelector('#behavior-target')).not.toBe(target)
+    expect(mounts).toBe(2)
+    expect(cleanup).toHaveBeenCalledOnce()
+  })
+
   it('applies streamed state chunks sequentially to named state', async () => {
     const internals = await loadClientInternals()
     const { beamReactivity } = await import('../src/reactivity')

@@ -1,5 +1,6 @@
 import { newWebSocketRpcSession, type RpcStub } from 'capnweb'
 import { beamReactivity } from './reactivity'
+import { notifyBehaviorContentChanged } from './behaviors'
 // The client owns the complete browser runtime. React itself remains lazy:
 // importing Beam on a page without island markers does not download React.
 import './islands'
@@ -586,6 +587,7 @@ function applyHtml(
   }
 
   beamReactivity.scan(nextTarget as unknown as ParentNode)
+  notifyBehaviorContentChanged(nextTarget)
   updateLoadingIndicators()
 }
 
@@ -1287,6 +1289,7 @@ function performSwap(target: Element, html: string, mode: string, trigger?: HTML
       const appended = htmlToNodes(dedupeItems(target, normalizedMain))
       for (const node of appended) target.appendChild(node)
       afterInsert(appended)
+      notifyBehaviorContentChanged(target)
       break
     }
     case 'prepend': {
@@ -1295,6 +1298,7 @@ function performSwap(target: Element, html: string, mode: string, trigger?: HTML
       const anchor = target.firstChild
       for (const node of prepended) target.insertBefore(node, anchor)
       afterInsert(prepended)
+      notifyBehaviorContentChanged(target)
       break
     }
     case 'replace':
@@ -1306,9 +1310,16 @@ function performSwap(target: Element, html: string, mode: string, trigger?: HTML
       runSwapTransition(target)
       applyTransitionNames(target)
       runEnterTransitions(target)
+      notifyBehaviorContentChanged(target)
       break
     case 'delete':
-      void runLeaveTransition(target).then(() => target.remove())
+      {
+        const parent = target.parentElement
+        void runLeaveTransition(target).then(() => {
+          target.remove()
+          if (parent) notifyBehaviorContentChanged(parent)
+        })
+      }
       break
   }
 

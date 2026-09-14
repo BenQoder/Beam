@@ -31,6 +31,7 @@ export default createRoute((c) => {
         <div class="hero-buttons">
           <a href="/products" class="btn-primary">View Products</a>
           <a href="/reactivity" class="btn-secondary">Reactivity Demo</a>
+          <a href="/behaviors" class="btn-secondary">Behavior Examples</a>
           <a href="/react-demo" class="btn-secondary">React Islands</a>
           <a href="/animations" class="btn-secondary">Animations</a>
           <a href="/auth-demo" class="btn-secondary">Auth Demo</a>

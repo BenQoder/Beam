@@ -623,6 +623,24 @@ describe('createBeam server utilities', () => {
     expect(res.status).toBe(413)
   })
 
+  it('rejects malformed multipart action bodies with 400', async () => {
+    const beam = createBeam({ actions: { noop: () => ({ html: 'ok' }) } })
+    const rpcApp = new Hono()
+    beam.init(new Hono(), { endpoint: '/rpc', rpcMiddlewareApp: rpcApp })
+
+    const res = await rpcApp.request('https://example.com/rpc/actions/noop', {
+      method: 'POST',
+      headers: {
+        [BEAM_ACTION_REQUEST_HEADER]: 'action',
+        'content-type': 'multipart/form-data',
+      },
+      body: 'not a multipart body',
+    })
+
+    expect(res.status).toBe(400)
+    expect(await res.text()).toBe('Invalid Beam action payload')
+  })
+
   it('enforces the action body limit when Content-Length is absent', async () => {
     const beam = createBeam({ actions: { noop: () => ({ html: 'ok' }) } })
     const rpcApp = new Hono()
@@ -730,8 +748,10 @@ describe('createBeam server utilities', () => {
           return {
             json: {
               size: file.size,
+              arrayBufferSize: (await file.arrayBuffer()).byteLength,
               type: file.type,
               text: await file.text(),
+              name: (file as Blob & { name?: string }).name,
               label: data.label, // JSON params ride alongside the Blob
             },
           }
@@ -745,6 +765,7 @@ describe('createBeam server utilities', () => {
     // Manual multipart body: pins the exact wire format, and sidesteps the
     // jsdom-FormData-into-undici-Request stall in the test environment.
     const boundary = 'beamtestboundary1234'
+    const fileContents = `blob\r\n--${boundary}-not-a-boundary\r\nover the wire`
     const body = [
       `--${boundary}`,
       'Content-Disposition: form-data; name="__beam_params"',
@@ -754,7 +775,7 @@ describe('createBeam server utilities', () => {
       'Content-Disposition: form-data; name="file"; filename="note.txt"',
       'Content-Type: text/plain',
       '',
-      'blob over the wire',
+      fileContents,
       `--${boundary}--`,
       '',
     ].join('\r\n')
@@ -771,9 +792,11 @@ describe('createBeam server utilities', () => {
     expect(res.status).toBe(200)
     const chunk = JSON.parse((await res.text()).trim())
     expect(chunk.json).toEqual({
-      size: 18,
+      size: new TextEncoder().encode(fileContents).byteLength,
+      arrayBufferSize: new TextEncoder().encode(fileContents).byteLength,
       type: 'text/plain',
-      text: 'blob over the wire',
+      text: fileContents,
+      name: 'note.txt',
       label: 'metadata',
     })
   })

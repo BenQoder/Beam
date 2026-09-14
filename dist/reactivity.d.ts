@@ -1,3 +1,8 @@
+/**
+ * Create reactive state without registering it as an element or named Beam
+ * state. This is the primitive used by lifecycle-owned client behaviors.
+ */
+export declare function createReactiveState<T extends object>(initial: T): T;
 declare function initReactivity(): void;
 export declare const beamReactivity: {
     /**
