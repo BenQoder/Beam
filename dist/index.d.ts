@@ -12,5 +12,5 @@ export { render } from './render';
 export { Island, beamIslandImportMap, ISLAND_SHARED_MODULES, beamCsp } from './island';
 export type { IslandProps, BeamCspOptions } from './island';
 export { collectActions, } from './collect';
-export type { ActionHandler, ActionResponse, ModalOptions, DrawerOptions, NamedStateUpdates, IslandPropsUpdates, BeamServerEvent, RegisteredActionName, BeamActionName, BeamActionParams, BeamActionJson, BeamConfig, BeamInstance, BeamInitOptions, BeamUser, BeamContext, BeamVariables, AuthResolver, BeamSession, SessionConfig, SessionStorageFactory, AuthTokenPayload, VisitMode, VisitOptions, VisitResponse, } from './types';
+export type { ActionHandler, ActionResponse, ModalOptions, DrawerOptions, NamedStateUpdates, IslandPropsUpdates, BeamServerEvent, RegisteredActionName, BeamActionName, BeamActionParams, BeamActionJson, BeamCallOptions, BeamResponseGuard, BeamRuntimeCapabilities, BeamRuntimeInfo, BeamConfig, BeamInstance, BeamInitOptions, BeamUser, BeamContext, BeamVariables, AuthResolver, BeamSession, SessionConfig, SessionStorageFactory, AuthTokenPayload, VisitMode, VisitOptions, VisitResponse, } from './types';
 //# sourceMappingURL=index.d.ts.map

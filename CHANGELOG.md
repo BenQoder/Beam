@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+## 1.5.1 — 2026-09-14
+
+- Added a synchronous per-chunk `guard(response)` option to programmatic
+  actions. A veto happens before application and consistently suppresses the
+  complete response chunk, including errors, redirects, overlays, named state,
+  React island operations, events, HTML, and scripts, while still returning
+  the raw response to the caller.
+- Documented latest-intent-wins and streaming semantics. Accepted streaming
+  chunks remain committed; later stale chunks can be suppressed without
+  partial application. Calls without guards and declarative action paths are
+  unchanged.
+- Error-bearing response chunks now report the error and continue applying
+  co-located authoritative effects, preventing a fragment-render failure from
+  discarding confirmed state for an already-committed mutation.
+- Exposed immutable `window.beam.runtime` version and capability metadata so
+  applications can feature-detect `actionResponseGuard`.
+- Exported `BeamCallOptions`, `BeamResponseGuard`, `BeamRuntimeCapabilities`,
+  and `BeamRuntimeInfo`, with matching support in the React action helpers.
+
 ## 1.5.0 — 2026-09-14
 
 - Added lifecycle-owned client behaviors through the new

@@ -1384,7 +1384,6 @@ function handleActionError(error) {
 function applyResponse(response, frontendTarget, frontendSwap, trigger) {
     if (response.error) {
         handleActionError(response.error);
-        return false;
     }
     if (response.redirect) {
         location.href = response.redirect;
@@ -3607,6 +3606,13 @@ updateConditionalFields();
 // Observe for new conditional elements
 const conditionalObserver = new MutationObserver(updateConditionalFields);
 conditionalObserver.observe(document.body, { childList: true, subtree: true });
+// ============ EXPORTS ============
+export const beamRuntime = Object.freeze({
+    version: '1.5.1',
+    capabilities: Object.freeze({
+        actionResponseGuard: true,
+    }),
+});
 // Clear scroll state for current page or all pages
 // Usage: clearScrollState() - clear all for current URL
 //        clearScrollState('loadMore') - clear specific action
@@ -3668,6 +3674,7 @@ const beamUtils = {
     reconnect: manualReconnect,
     visit: manualVisit,
     getSession: api.getSession,
+    runtime: beamRuntime,
     // Reactive state API (from reactivity.ts)
     ...beamReactivity,
 };
@@ -3745,6 +3752,14 @@ window.beam = new Proxy(beamUtils, {
                             break;
                         last = value;
                         trace.chunk(value);
+                        if (opts.guard) {
+                            const allowed = opts.guard(value);
+                            if (typeof allowed !== 'boolean') {
+                                throw new TypeError('[beam] Response guards must return a boolean synchronously');
+                            }
+                            if (!allowed)
+                                continue;
+                        }
                         const targetSelector = value.target || opts.target || null;
                         const swapMode = value.swap || opts.swap || 'replace';
                         if (applyResponse(value, targetSelector, swapMode))

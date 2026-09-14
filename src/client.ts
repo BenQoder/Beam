@@ -4,7 +4,16 @@ import { notifyBehaviorContentChanged } from './behaviors'
 // The client owns the complete browser runtime. React itself remains lazy:
 // importing Beam on a page without island markers does not download React.
 import './islands'
-import type { BeamActionJson, BeamActionParams, RegisteredActionName } from './types'
+import type {
+  ActionResponse,
+  BeamActionJson,
+  BeamActionParams,
+  BeamCallOptions,
+  BeamRuntimeInfo,
+  RegisteredActionName,
+} from './types'
+
+type IslandUpsertSpec = NonNullable<ActionResponse['islandUpserts']>[string]
 
 // ============ BEAM - capnweb RPC Client ============
 //
@@ -100,33 +109,6 @@ function startAuthTokenRefreshLoop(): void {
       })
     }
   }, TOKEN_REFRESH_INTERVAL_MS)
-}
-
-// Action response type (mirrors server-side)
-interface IslandUpsertSpec {
-  props?: Record<string, unknown>
-  component?: string
-  src?: string
-  target?: string
-  swap?: 'append' | 'prepend' | 'replace'
-  load?: 'eager' | 'visible' | 'idle'
-}
-
-interface ActionResponse {
-  html?: string | string[]
-  state?: Record<string, unknown>
-  islands?: Record<string, Record<string, unknown>>
-  islandUpserts?: Record<string, IslandUpsertSpec>
-  removeIslands?: string[]
-  event?: { name: string; data?: unknown }
-  json?: unknown
-  error?: { action?: string; message: string; stack?: string }
-  script?: string
-  redirect?: string
-  target?: string  // Can be comma-separated: "#a, #b, #c"
-  swap?: string
-  modal?: string | { html: string; size?: string; spacing?: number }
-  drawer?: string | { html: string; position?: string; size?: string; spacing?: number }
 }
 
 type VisitMode = 'visit' | 'patch' | 'navigate'
@@ -1629,7 +1611,6 @@ function applyResponse(
 ): boolean {
   if (response.error) {
     handleActionError(response.error)
-    return false
   }
   if (response.redirect) {
     location.href = response.redirect
@@ -4062,10 +4043,12 @@ conditionalObserver.observe(document.body, { childList: true, subtree: true })
 
 // ============ EXPORTS ============
 
-interface CallOptions {
-  target?: string
-  swap?: string  // 'replace' | 'append' | 'prepend' | 'delete'
-}
+export const beamRuntime: BeamRuntimeInfo = Object.freeze({
+  version: '1.5.1',
+  capabilities: Object.freeze({
+    actionResponseGuard: true,
+  }),
+})
 
 // Clear scroll state for current page or all pages
 // Usage: clearScrollState() - clear all for current URL
@@ -4130,6 +4113,7 @@ const beamUtils = {
   reconnect: manualReconnect,
   visit: manualVisit,
   getSession: api.getSession,
+  runtime: beamRuntime,
   // Reactive state API (from reactivity.ts)
   ...beamReactivity,
 }
@@ -4188,7 +4172,7 @@ export const __beamClientInternals = {
 }
 
 // Type for the dynamic action caller
-type ActionCaller = (data?: Record<string, unknown>, options?: string | CallOptions) => Promise<ActionResponse>
+type ActionCaller = (data?: Record<string, unknown>, options?: string | BeamCallOptions) => Promise<ActionResponse>
 
 // Typed callers derived from the generated action registry (beamPlugin
 // actionTypes). Empty registry → empty map; the index signature keeps the
@@ -4196,7 +4180,7 @@ type ActionCaller = (data?: Record<string, unknown>, options?: string | CallOpti
 type TypedActionCallers = {
   [N in RegisteredActionName]: (
     data?: BeamActionParams<N>,
-    options?: string | CallOptions
+    options?: string | BeamCallOptions
   ) => Promise<ActionResponse & { json?: BeamActionJson<N> }>
 }
 
@@ -4217,8 +4201,8 @@ window.beam = new Proxy(beamUtils, {
     }
 
     // Return a dynamic action caller for any other property
-    return async (data: Record<string, unknown> = {}, options?: string | CallOptions): Promise<ActionResponse> => {
-      const opts: CallOptions = typeof options === 'string' ? { target: options } : (options || {})
+    return async (data: Record<string, unknown> = {}, options?: string | BeamCallOptions): Promise<ActionResponse> => {
+      const opts: BeamCallOptions = typeof options === 'string' ? { target: options } : (options || {})
       const trace = traceAction(prop, data)
       try {
         const stream = await api.call(prop, data)
@@ -4230,6 +4214,13 @@ window.beam = new Proxy(beamUtils, {
             if (done) break
             last = value
             trace.chunk(value)
+            if (opts.guard) {
+              const allowed = opts.guard(value)
+              if (typeof allowed !== 'boolean') {
+                throw new TypeError('[beam] Response guards must return a boolean synchronously')
+              }
+              if (!allowed) continue
+            }
             const targetSelector = value.target || opts.target || null
             const swapMode = value.swap || opts.swap || 'replace'
             if (applyResponse(value, targetSelector, swapMode)) break

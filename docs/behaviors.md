@@ -115,6 +115,105 @@ Resources registered after abort are suppressed or cleaned immediately.
 Application code should still check `ctx.signal.aborted` after an `await`
 before performing late DOM work; aborting cannot stop arbitrary JavaScript.
 
+## Guarding programmatic action responses
+
+Beam 1.5.1 adds a pre-apply guard for behaviors that dispatch actions
+imperatively. This lets an instance implement latest-intent-wins without
+allowing an older response to overwrite newer server-confirmed UI:
+
+```ts
+const productOptions = defineBehavior((ctx) => {
+  let latestIntent = 0
+
+  ctx.on(ctx.root, 'click', async (event) => {
+    const option = ownedTarget(ctx.root, event.target, '[data-option]')
+    if (!option) return
+
+    // Do not also let beam-action dispatch the same interaction.
+    event.preventDefault()
+
+    const intent = ++latestIntent
+    try {
+      const response = await window.beam.selectProductOption(
+        { value: option.dataset.option },
+        {
+          guard: () => !ctx.signal.aborted && intent === latestIntent,
+        },
+      )
+
+      // The guard protects Beam-owned effects. Guard local reconciliation too.
+      if (ctx.signal.aborted || intent !== latestIntent) return
+      reconcile(response.json)
+    } catch (error) {
+      // Transport failures reject independently. Ignore stale local failures.
+      if (ctx.signal.aborted || intent !== latestIntent) return
+      showFailure(error)
+    }
+  })
+})
+```
+
+The `guard(response)` callback is synchronous and runs exactly once for each
+action-response chunk, immediately before Beam applies that chunk. Returning
+`false` skips the complete chunk: errors, redirects, modals, drawers, named
+state, island updates/upserts/removals, events, HTML, and scripts are all
+suppressed. Beam never partially applies a vetoed chunk. The raw chunk is still
+read from the stream and can still be the value returned when the action
+promise resolves.
+
+Streaming guards are deliberately **per chunk**, not whole-response buffers.
+An accepted progress chunk remains applied; if a newer intent begins, later
+chunks from the older stream can be rejected. Use one final effect-bearing
+chunk when a stream must commit atomically as a whole.
+
+If the guard throws, the action promise rejects and that chunk is not applied.
+A non-boolean return value—including a `Promise` from an async guard—also
+rejects before application; guards must make their decision synchronously.
+A transport failure has no response to guard: it rejects that dispatch and
+emits the normal `beam:action-error`, without cancelling or suppressing another
+dispatch. Revision-check a behavior's local `catch` and post-`await`
+reconciliation as shown above.
+
+An accepted chunk may contain both `error` and authoritative effects. Beam
+reports the error and still applies co-located state, HTML, and other fields;
+this matters when a server mutation commits but rendering its fragment fails.
+Use `response.json` to distinguish mutation outcome from presentation outcome.
+For shared mirrors such as cart counts, include a server revision in the same
+effect-bearing chunk and reject revisions older than the newest confirmed one:
+
+```ts
+import type { BeamResponseGuard } from '@benqoder/beam'
+
+let newestCartRevision = 0
+
+const guard: BeamResponseGuard = (response) => {
+  const revision = (response.json as { cartRevision?: number } | undefined)
+    ?.cartRevision
+  if (revision == null) return true
+  if (revision < newestCartRevision) return false
+  newestCartRevision = revision
+  return true
+}
+```
+
+A guard cannot order a shared-state chunk that carries no ordering identity;
+the server must colocate the revision with the effects it protects.
+
+The guard is available only on programmatic calls (`window.beam.*`,
+`callBeamAction`, and `useBeamAction` options). Declarative `beam-action`,
+polling, visits, and server-pushed events keep their existing behavior. Calls
+without a guard are unchanged.
+
+Feature-detect the API before using it when an application may run against
+different Beam client builds:
+
+```ts
+const supportsGuard =
+  window.beam.runtime?.capabilities?.actionResponseGuard === true
+
+console.log(window.beam.runtime.version) // "1.5.1"
+```
+
 ## Lifecycle and updates
 
 - Beam mounts one behavior instance per connected `beam-behavior` root.

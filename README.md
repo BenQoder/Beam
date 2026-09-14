@@ -3214,6 +3214,7 @@ await window.beam.addToCart(
   {
     target: "#cart-badge",
     swap: "replace", // 'replace' | 'append' | 'prepend'
+    guard: (response) => shouldApply(response),
   },
 );
 ```
@@ -3224,9 +3225,9 @@ await window.beam.addToCart(
 window.beam.actionName(data?, options?) → Promise<ActionResponse>
 
 // data: Record<string, unknown> - parameters passed to the action
-// options: string | { target?: string, swap?: string }
+// options: string | { target?: string, swap?: string, guard?: (response) => boolean }
 //   - string shorthand: treated as target selector
-//   - object: full options with target and swap mode
+//   - object: target, swap mode, and optional pre-apply response guard
 
 // ActionResponse: { html?: string | string[], script?: string, redirect?: string, target?: string }
 ```
@@ -3249,6 +3250,58 @@ await window.beam.logout(); // ctx.redirect('/login')
 // Server returns HTML + script - both handled
 await window.beam.addToCart({ id: 42 }, "#cart-badge");
 ```
+
+### Pre-apply response guards
+
+Beam 1.5.1+ lets programmatic callers veto a response chunk before any of its
+effects commit. This is intended for optimistic interfaces where an older
+request must not overwrite a newer intent:
+
+```typescript
+let latestIntent = 0
+
+async function selectOption(value: string) {
+  const intent = ++latestIntent
+  const response = await window.beam.selectProductOption(
+    { value },
+    {
+      guard: () => intent === latestIntent,
+    },
+  )
+
+  if (intent !== latestIntent) return
+  reconcile(response.json)
+}
+```
+
+The synchronous `guard(response)` runs once immediately before each streamed
+chunk is applied. Returning `false` suppresses the entire chunk—including
+errors, redirects, overlays, state, island operations, events, HTML, and
+scripts—but the chunk is still returned to the caller normally. Earlier
+accepted stream chunks are not rolled back. A thrown guard rejects the call;
+a non-boolean or async result also rejects before application. Transport
+failures reject independently and never block another action.
+
+If an accepted chunk contains both `error` and authoritative effects, Beam
+reports the error and continues applying its co-located fields. This preserves
+confirmed state when a mutation succeeds but a fragment render fails. A guard
+can inspect a co-located server revision in `response.json` and reject an older
+shared-state snapshot before it applies.
+
+Calls without a guard, declarative `beam-action` elements, polling, visits,
+and server-pushed events retain their existing behavior.
+
+Runtime discovery is available without parsing package metadata:
+
+```typescript
+if (window.beam.runtime?.capabilities?.actionResponseGuard === true) {
+  console.log(window.beam.runtime.version) // "1.5.1"
+}
+```
+
+The public option and guard types are `BeamCallOptions` and
+`BeamResponseGuard`. React callers can pass the same options to
+`callBeamAction()` or `useBeamAction()`.
 
 ### Utility Methods
 

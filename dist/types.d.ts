@@ -304,6 +304,34 @@ export interface ActionResponse {
     drawer?: string | DrawerOptions;
 }
 /**
+ * Runs immediately before one programmatic action-response chunk is applied.
+ * Returning false suppresses every effect in that chunk while leaving the
+ * response available to the caller.
+ */
+export type BeamResponseGuard = (response: Readonly<ActionResponse>) => boolean;
+/** Options for programmatic Beam action calls. */
+export interface BeamCallOptions {
+    /** CSS selector applied to HTML responses (same as beam-target). */
+    target?: string;
+    /** Swap mode for HTML responses: replace, append, prepend, or delete. */
+    swap?: string;
+    /**
+     * Per-chunk pre-apply guard. Returning false skips the complete chunk,
+     * including errors, redirects, overlays, state, islands, events, HTML, and scripts.
+     */
+    guard?: BeamResponseGuard;
+}
+/** Client features that applications may inspect at runtime. */
+export interface BeamRuntimeCapabilities {
+    /** Programmatic action calls support BeamCallOptions.guard. */
+    readonly actionResponseGuard: boolean;
+}
+/** Version and capabilities exposed at window.beam.runtime. */
+export interface BeamRuntimeInfo {
+    readonly version: string;
+    readonly capabilities: Readonly<BeamRuntimeCapabilities>;
+}
+/**
  * Type for action handlers - receives context and data, returns ActionResponse.
  * Supports async generators for streaming multiple responses (e.g. skeleton → result).
  *

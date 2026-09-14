@@ -1,10 +1,5 @@
-import type { ActionResponse, BeamActionJson, BeamActionParams, RegisteredActionName } from './types';
-export interface BeamCallOptions {
-    /** CSS selector applied to html responses (same as beam-target) */
-    target?: string;
-    /** Swap mode for html responses: 'replace' | 'append' | 'prepend' | 'delete' */
-    swap?: string;
-}
+import type { ActionResponse, BeamActionJson, BeamActionParams, BeamCallOptions, RegisteredActionName } from './types';
+export type { BeamCallOptions, BeamResponseGuard } from './types';
 /**
  * Call a Beam action over the WebSocket RPC from anywhere in JS/React.
  * Responses are applied like any Beam response (html swaps, state, islands,
@@ -90,5 +85,4 @@ interface BeamConnectionState {
  * {!connected && <span>Reconnecting…</span>}
  */
 export declare function useBeamConnection(): BeamConnectionState;
-export {};
 //# sourceMappingURL=react.d.ts.map

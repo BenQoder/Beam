@@ -1,51 +1,11 @@
 import { type RpcStub } from 'capnweb';
 import './islands';
-import type { BeamActionJson, BeamActionParams, RegisteredActionName } from './types';
+import type { ActionResponse, BeamActionJson, BeamActionParams, BeamCallOptions, BeamRuntimeInfo, RegisteredActionName } from './types';
 /** Same-origin refresh path derived from the WS endpoint (`/beam` → `/beam-token`). */
 declare function tokenRefreshUrl(): string;
 /** Opaque/test tokens without an exp claim stay usable; signed tokens refresh near expiry. */
 declare function shouldRefreshAuthToken(token: string): boolean;
 declare function resolveAuthToken(): Promise<string>;
-interface IslandUpsertSpec {
-    props?: Record<string, unknown>;
-    component?: string;
-    src?: string;
-    target?: string;
-    swap?: 'append' | 'prepend' | 'replace';
-    load?: 'eager' | 'visible' | 'idle';
-}
-interface ActionResponse {
-    html?: string | string[];
-    state?: Record<string, unknown>;
-    islands?: Record<string, Record<string, unknown>>;
-    islandUpserts?: Record<string, IslandUpsertSpec>;
-    removeIslands?: string[];
-    event?: {
-        name: string;
-        data?: unknown;
-    };
-    json?: unknown;
-    error?: {
-        action?: string;
-        message: string;
-        stack?: string;
-    };
-    script?: string;
-    redirect?: string;
-    target?: string;
-    swap?: string;
-    modal?: string | {
-        html: string;
-        size?: string;
-        spacing?: number;
-    };
-    drawer?: string | {
-        html: string;
-        position?: string;
-        size?: string;
-        spacing?: number;
-    };
-}
 type VisitMode = 'visit' | 'patch' | 'navigate';
 interface VisitOptions {
     mode?: VisitMode;
@@ -189,10 +149,7 @@ declare function stopPolling(el: HTMLElement): void;
 declare function processHungryElements(html: string): void;
 declare function isFormDirty(form: HTMLFormElement): boolean;
 declare function setupDirtyTracking(form: HTMLFormElement): void;
-interface CallOptions {
-    target?: string;
-    swap?: string;
-}
+export declare const beamRuntime: BeamRuntimeInfo;
 declare function clearScrollState(actionOrAll?: string | boolean): void;
 declare function checkWsConnected(): boolean;
 declare function manualReconnect(): Promise<BeamServerStub>;
@@ -216,6 +173,7 @@ declare const beamUtils: {
     reconnect: typeof manualReconnect;
     visit: typeof manualVisit;
     getSession: () => Promise<BeamServerStub>;
+    runtime: BeamRuntimeInfo;
 };
 export declare const __beamClientInternals: {
     api: {
@@ -273,9 +231,9 @@ export declare const __beamClientInternals: {
     setupDirtyTracking: typeof setupDirtyTracking;
     isFormDirty: typeof isFormDirty;
 };
-type ActionCaller = (data?: Record<string, unknown>, options?: string | CallOptions) => Promise<ActionResponse>;
+type ActionCaller = (data?: Record<string, unknown>, options?: string | BeamCallOptions) => Promise<ActionResponse>;
 type TypedActionCallers = {
-    [N in RegisteredActionName]: (data?: BeamActionParams<N>, options?: string | CallOptions) => Promise<ActionResponse & {
+    [N in RegisteredActionName]: (data?: BeamActionParams<N>, options?: string | BeamCallOptions) => Promise<ActionResponse & {
         json?: BeamActionJson<N>;
     }>;
 };

@@ -268,6 +268,31 @@ describe('useBeamAction', () => {
     await until(() => document.querySelector('.search')?.textContent === 'a,b')
     expect(resolved).toEqual({ items: ['a', 'b'] })
   })
+
+  it('passes response guards through React action helpers unchanged', async () => {
+    const actionFn = vi.fn(async () => ({ json: { accepted: true } }))
+    ;(window as unknown as { beam: Record<string, unknown> }).beam = { rctGuarded: actionFn }
+    const guard = vi.fn(() => true)
+
+    function GuardedAction() {
+      const { call, json } = useBeamAction<{ accepted: boolean }>('rctGuarded', { guard })
+      return createElement(
+        'button',
+        { className: 'guarded', onClick: () => { void call({ id: 7 }) } },
+        json?.accepted ? 'accepted' : 'call',
+      )
+    }
+    registerIslands({ GuardedAction })
+
+    document.body.innerHTML = '<div beam-island="GuardedAction"></div>'
+    await until(() => document.querySelector('.guarded')?.textContent === 'call')
+    document.querySelector<HTMLButtonElement>('.guarded')!.dispatchEvent(
+      new MouseEvent('click', { bubbles: true }),
+    )
+    await until(() => document.querySelector('.guarded')?.textContent === 'accepted')
+
+    expect(actionFn).toHaveBeenCalledWith({ id: 7 }, { guard })
+  })
 })
 
 describe('server context helpers', () => {

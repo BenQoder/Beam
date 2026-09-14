@@ -16,15 +16,11 @@ import type {
   ActionResponse,
   BeamActionJson,
   BeamActionParams,
+  BeamCallOptions,
   RegisteredActionName,
 } from './types'
 
-export interface BeamCallOptions {
-  /** CSS selector applied to html responses (same as beam-target) */
-  target?: string
-  /** Swap mode for html responses: 'replace' | 'append' | 'prepend' | 'delete' */
-  swap?: string
-}
+export type { BeamCallOptions, BeamResponseGuard } from './types'
 
 type BeamActionCaller = (
   data?: Record<string, unknown>,

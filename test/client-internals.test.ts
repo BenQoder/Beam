@@ -68,6 +68,21 @@ function streamOf(...responses: any[]): ReadableStream<any> {
   })
 }
 
+function controlledStream() {
+  let controller!: ReadableStreamDefaultController<any>
+  const stream = new ReadableStream<any>({
+    start(value) {
+      controller = value
+    },
+  })
+  return {
+    stream,
+    enqueue: (value: any) => controller.enqueue(value),
+    close: () => controller.close(),
+    error: (value: unknown) => controller.error(value),
+  }
+}
+
 describe('client internals', () => {
   beforeEach(() => {
     document.body.innerHTML = ''
@@ -198,6 +213,234 @@ describe('client internals', () => {
       { html: 'Result' },
       { script: 'globalThis.__beamActionRan = true' },
     ])
+  })
+
+  it('exposes the client version and response-guard capability', async () => {
+    await loadClientInternals()
+
+    expect(window.beam.runtime).toEqual({
+      version: '1.5.1',
+      capabilities: { actionResponseGuard: true },
+    })
+    expect(Object.isFrozen(window.beam.runtime)).toBe(true)
+    expect(Object.isFrozen(window.beam.runtime.capabilities)).toBe(true)
+  })
+
+  it('keeps programmatic response application unchanged without a guard', async () => {
+    document.head.innerHTML = '<meta name="beam-token" content="test-token">'
+    document.body.innerHTML = '<div id="result">Original</div>'
+    await loadClientInternals()
+    const cart = window.beam.ensureState('cart', { count: 0 }) as { count: number }
+    const serverEvent = vi.fn()
+    window.addEventListener('beam:server-event', serverEvent)
+    ;(globalThis as any).__beamGuardScript = 'original'
+    mockCall.mockResolvedValueOnce(streamOf({
+      target: '#result',
+      html: '<p>Applied</p>',
+      state: { cart: { count: 2 } },
+      event: { name: 'cart:updated', data: { count: 2 } },
+      script: 'globalThis.__beamGuardScript = "applied"',
+    }))
+
+    const response = await window.beam.updateCart({ count: 2 })
+
+    expect(response.html).toBe('<p>Applied</p>')
+    expect(document.querySelector('#result')?.textContent).toBe('Applied')
+    expect(cart.count).toBe(2)
+    expect((globalThis as any).__beamGuardScript).toBe('applied')
+    expect(serverEvent).toHaveBeenCalledTimes(1)
+  })
+
+  it('vetoes complete streamed chunks before any response effect commits', async () => {
+    document.head.innerHTML = '<meta name="beam-token" content="test-token">'
+    document.body.innerHTML = '<div id="result">Original</div><div id="island-target"></div>'
+    await loadClientInternals()
+    const cart = window.beam.ensureState('cart', { count: 1 }) as { count: number }
+    const serverEvent = vi.fn()
+    const actionError = vi.fn()
+    const guard = vi.fn(() => false)
+    window.addEventListener('beam:server-event', serverEvent)
+    window.addEventListener('beam:action-error', actionError)
+    ;(globalThis as any).__beamGuardScript = 'original'
+    const originalUrl = window.location.href
+    mockCall.mockResolvedValueOnce(streamOf(
+      {
+        target: '#result',
+        html: '<p>Stale</p>',
+        state: { cart: { count: 99 } },
+        islandUpserts: {
+          staleIsland: { component: 'Missing', target: '#island-target' },
+        },
+        event: { name: 'stale:event' },
+        modal: '<p>Stale modal</p>',
+        drawer: '<p>Stale drawer</p>',
+        script: 'globalThis.__beamGuardScript = "stale"',
+      },
+      { redirect: '/stale' },
+      { error: { action: 'selectOption', message: 'stale failure' } },
+    ))
+
+    const response = await window.beam.selectOption(
+      { value: 'A' },
+      { guard },
+    )
+
+    expect(guard).toHaveBeenCalledTimes(3)
+    expect(response.error?.message).toBe('stale failure')
+    expect(document.querySelector('#result')?.textContent).toBe('Original')
+    expect(document.querySelector('#island-target')?.childElementCount).toBe(0)
+    expect(document.querySelector('#modal-backdrop')).toBeNull()
+    expect(document.querySelector('#drawer-backdrop')).toBeNull()
+    expect(cart.count).toBe(1)
+    expect((globalThis as any).__beamGuardScript).toBe('original')
+    expect(serverEvent).not.toHaveBeenCalled()
+    expect(actionError).not.toHaveBeenCalled()
+    expect(window.location.href).toBe(originalUrl)
+  })
+
+  it('applies authoritative effects that share a chunk with an action error', async () => {
+    document.head.innerHTML = '<meta name="beam-token" content="test-token">'
+    await loadClientInternals()
+    const cart = window.beam.ensureState('cart', { count: 0 }) as { count: number }
+    const actionError = vi.fn()
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    window.addEventListener('beam:action-error', actionError)
+    mockCall.mockResolvedValueOnce(streamOf({
+      state: { cart: { count: 3 } },
+      json: { committed: true, cartRevision: 3 },
+      error: { action: 'addToCart', message: 'Purchase fragment unavailable' },
+    }))
+
+    const response = await window.beam.addToCart({ productId: 42 })
+
+    expect(response.json).toEqual({ committed: true, cartRevision: 3 })
+    expect(cart.count).toBe(3)
+    expect(actionError).toHaveBeenCalledTimes(1)
+    expect((actionError.mock.calls[0][0] as CustomEvent).detail).toMatchObject({
+      action: 'addToCart',
+      message: 'Purchase fragment unavailable',
+    })
+  })
+
+  it('guards streamed responses per chunk without rolling back accepted progress', async () => {
+    document.head.innerHTML = '<meta name="beam-token" content="test-token">'
+    document.body.innerHTML = '<div id="result">Original</div>'
+    await loadClientInternals()
+    const guard = vi.fn()
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(false)
+    mockCall.mockResolvedValueOnce(streamOf(
+      { target: '#result', html: '<p>Accepted progress</p>' },
+      { target: '#result', html: '<p>Rejected final</p>' },
+    ))
+
+    const response = await window.beam.streamProduct({}, { guard })
+
+    expect(guard).toHaveBeenCalledTimes(2)
+    expect(response.html).toBe('<p>Rejected final</p>')
+    expect(document.querySelector('#result')?.textContent).toBe('Accepted progress')
+  })
+
+  it('fails closed before application when a response guard throws or is async', async () => {
+    document.head.innerHTML = '<meta name="beam-token" content="test-token">'
+    document.body.innerHTML = '<div id="result">Original</div>'
+    await loadClientInternals()
+    mockCall
+      .mockResolvedValueOnce(streamOf({ target: '#result', html: '<p>Thrown</p>' }))
+      .mockResolvedValueOnce(streamOf({ target: '#result', html: '<p>Async</p>' }))
+
+    await expect(window.beam.throwingGuard({}, {
+      guard: () => { throw new Error('guard failed') },
+    })).rejects.toThrow('guard failed')
+    await expect(window.beam.asyncGuard({}, {
+      guard: (async () => true) as any,
+    })).rejects.toThrow('must return a boolean synchronously')
+
+    expect(document.querySelector('#result')?.textContent).toBe('Original')
+  })
+
+  it('supports latest-intent-wins across concurrent programmatic actions', async () => {
+    document.head.innerHTML = '<meta name="beam-token" content="test-token">'
+    document.body.innerHTML = '<div id="result">Original</div>'
+    await loadClientInternals()
+    const cart = window.beam.ensureState('cart', { count: 0 }) as { count: number }
+    const slow = controlledStream()
+    const fast = controlledStream()
+    mockCall.mockResolvedValueOnce(slow.stream).mockResolvedValueOnce(fast.stream)
+    const events: string[] = []
+    window.addEventListener('beam:server-event', (event) => {
+      events.push((event as CustomEvent<{ event: string }>).detail.event)
+    })
+    ;(globalThis as any).__beamGuardScript = 'original'
+    let latestIntent = 0
+    const select = (value: string) => {
+      const intent = ++latestIntent
+      return window.beam.selectOption(
+        { value },
+        { guard: () => intent === latestIntent },
+      )
+    }
+
+    const older = select('A')
+    await Promise.resolve()
+    const newer = select('B')
+    await Promise.resolve()
+    fast.enqueue({
+      target: '#result',
+      html: '<p>Newer B</p>',
+      state: { cart: { count: 2 } },
+      event: { name: 'selection:B' },
+      script: 'globalThis.__beamGuardScript = "newer"',
+    })
+    fast.close()
+    await newer
+
+    slow.enqueue({
+      target: '#result',
+      html: '<p>Older A</p>',
+      state: { cart: { count: 1 } },
+      event: { name: 'selection:A' },
+      script: 'globalThis.__beamGuardScript = "older"',
+    })
+    slow.close()
+    const staleResponse = await older
+
+    expect(staleResponse.html).toBe('<p>Older A</p>')
+    expect(document.querySelector('#result')?.textContent).toBe('Newer B')
+    expect(cart.count).toBe(2)
+    expect((globalThis as any).__beamGuardScript).toBe('newer')
+    expect(events).toEqual(['selection:B'])
+  })
+
+  it('does not let an older transport failure suppress a newer successful result', async () => {
+    document.head.innerHTML = '<meta name="beam-token" content="test-token">'
+    document.body.innerHTML = '<div id="result">Original</div>'
+    await loadClientInternals()
+    const cart = window.beam.ensureState('cart', { count: 0 }) as { count: number }
+    const slow = controlledStream()
+    const fast = controlledStream()
+    mockCall.mockResolvedValueOnce(slow.stream).mockResolvedValueOnce(fast.stream)
+    let latestIntent = 0
+    const dispatch = (value: string) => {
+      const intent = ++latestIntent
+      return window.beam.selectOption(
+        { value },
+        { target: '#result', guard: () => intent === latestIntent },
+      )
+    }
+
+    const older = dispatch('A')
+    await Promise.resolve()
+    const newer = dispatch('B')
+    await Promise.resolve()
+    fast.enqueue({ html: '<p>Newer B</p>', state: { cart: { count: 4 } } })
+    fast.close()
+    await newer
+    slow.error(new Error('older request failed'))
+
+    await expect(older).rejects.toThrow('older request failed')
+    expect(document.querySelector('#result')?.textContent).toBe('Newer B')
+    expect(cart.count).toBe(4)
   })
 
   it('upgrades descendant links inside beam-boost containers into Beam visits', async () => {
