@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.5.2 — 2026-11-04
+
 - Fixed a false "Something went wrong" toast (and a pointless WebSocket
   reconnect) when an action navigates away with a script. Errors raised while
   the page is unloading are now treated as expected: no toast, rollback or
