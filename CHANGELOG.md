@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Fixed a false "Something went wrong" toast (and a pointless WebSocket
+  reconnect) when an action navigates away with a script. Errors raised while
+  the page is unloading are now treated as expected: no toast, rollback or
+  reconnect, and `beam:action-error` carries `leaving: true`. A bfcache restore
+  clears the state.
+- Fixed Back navigation through Beam visits. Infinite-scroll/load-more state
+  and plain-page scroll position are now restored after a Back visit, and Back
+  to the page the user first landed on is handled instead of being ignored.
+
 ## 1.5.1 — 2026-09-14
 
 - Added a synchronous per-chunk `guard(response)` option to programmatic

@@ -161,8 +161,46 @@ function handleServerEvent(event, data) {
         window.dispatchEvent(new CustomEvent('beam:refresh', { detail: { selector } }));
     }
 }
+// True while the page is unloading (navigation, reload, tab close). Stream and
+// socket errors in that window are expected and must not surface as failures.
+let pageLeaving = false;
+let pageLeavingTimer = null;
+const PAGE_LEAVING_EXPIRY = 10_000;
+function setPageLeaving(value) {
+    pageLeaving = value;
+    if (pageLeavingTimer) {
+        clearTimeout(pageLeavingTimer);
+        pageLeavingTimer = null;
+    }
+    // A navigation can start and never commit (download, 204, aborted load);
+    // don't let that suppress real errors forever.
+    if (value)
+        pageLeavingTimer = setTimeout(() => setPageLeaving(false), PAGE_LEAVING_EXPIRY);
+}
+window.addEventListener('beforeunload', (e) => {
+    // Other listeners (beam-warn-unsaved) may cancel the unload after this one
+    // runs, so decide once they have had their say.
+    setPageLeaving(true);
+    setTimeout(() => {
+        if (e.defaultPrevented)
+            setPageLeaving(false);
+    }, 0);
+});
+window.addEventListener('pagehide', () => setPageLeaving(true));
+// bfcache restore: the page is live again
+window.addEventListener('pageshow', (e) => {
+    setPageLeaving(false);
+    if (e.persisted)
+        maybeConnect('pageshow');
+});
 // Handle WebSocket disconnection
 function handleWsDisconnect(error) {
+    if (pageLeaving) {
+        wsConnected = false;
+        rpcSession = null;
+        connectingPromise = null;
+        return;
+    }
     const reconnect = canReconnect();
     if (reconnect) {
         console.warn('[beam] WebSocket disconnected:', error);
@@ -1449,12 +1487,15 @@ async function rpc(action, data, el) {
     }
     catch (err) {
         trace.done(err);
-        opt.rollback();
-        placeholder.restore();
-        showToast('Something went wrong. Please try again.', 'error');
-        console.error('RPC error:', err);
+        const leaving = pageLeaving;
+        if (!leaving) {
+            opt.rollback();
+            placeholder.restore();
+            showToast('Something went wrong. Please try again.', 'error');
+            console.error('RPC error:', err);
+        }
         window.dispatchEvent(new CustomEvent('beam:action-error', {
-            detail: { action, message: err instanceof Error ? err.message : String(err) },
+            detail: { action, message: err instanceof Error ? err.message : String(err), leaving },
         }));
     }
     finally {
@@ -1574,6 +1615,8 @@ document.addEventListener('click', async (e) => {
             }
         }
         catch (err) {
+            if (pageLeaving)
+                return;
             closeModal();
             showToast('Failed to open modal.', 'error');
             console.error('Modal error:', err);
@@ -1632,6 +1675,8 @@ document.addEventListener('click', async (e) => {
             }
         }
         catch (err) {
+            if (pageLeaving)
+                return;
             closeDrawer();
             showToast('Failed to open drawer.', 'error');
             console.error('Drawer error:', err);
@@ -2163,7 +2208,36 @@ function applyVisitScroll(response) {
     }
     window.scrollTo(0, 0);
 }
-async function applyVisitResponse(response, targetSelector) {
+let currentVisitPath = location.pathname + location.search;
+function getSavedHistoryScroll() {
+    const y = history.state?.scrollY;
+    return typeof y === 'number' ? y : undefined;
+}
+// Record where the user is on the current history entry so Back/Forward can return here.
+function persistScrollPosition() {
+    const state = history.state;
+    if (!state?.beamVisit)
+        return;
+    if (state.scrollY === window.scrollY)
+        return;
+    try {
+        history.replaceState({ ...state, scrollY: window.scrollY }, '');
+    }
+    catch {
+        // Ignore: replaceState can throw in sandboxed contexts
+    }
+}
+// Re-apply a Back/Forward entry: restore saved list state, else the saved scroll position.
+function applyRestoredScroll() {
+    const savedY = getSavedHistoryScroll();
+    if (restoreScrollState(savedY))
+        return;
+    if ('scrollRestoration' in history) {
+        history.scrollRestoration = 'manual';
+    }
+    window.scrollTo(0, savedY ?? 0);
+}
+async function applyVisitResponse(response, targetSelector, restore = false) {
     if (response.redirect) {
         hardNavigate(response.redirect);
         return 'hard-navigate';
@@ -2198,18 +2272,31 @@ async function applyVisitResponse(response, targetSelector) {
     syncManagedHead(doc);
     swap(target, source.innerHTML, 'replace');
     updateNavigation();
-    applyVisitScroll(response);
+    if (restore) {
+        applyRestoredScroll();
+    }
+    else {
+        // A fresh visit starts from the server-rendered list, not a stale saved one
+        clearSentinelScrollState();
+        applyVisitScroll(response);
+    }
     focusAfterVisit(targetSelector);
     return 'applied';
 }
-function commitVisitHistory(url, mode, target, replace) {
+function commitVisitHistory(url, mode, target, replace, keepScroll = false) {
     const state = { beamVisit: true, url, mode, target };
+    if (keepScroll) {
+        const scrollY = getSavedHistoryScroll();
+        if (scrollY !== undefined)
+            state.scrollY = scrollY;
+    }
     if (replace) {
         history.replaceState(state, '', url);
     }
     else {
         history.pushState(state, '', url);
     }
+    currentVisitPath = location.pathname + location.search;
 }
 async function prefetchVisit(link) {
     if (!isBeamVisitLink(link) || !isLocalHttpLink(link))
@@ -2234,6 +2321,9 @@ async function prefetchVisit(link) {
 }
 async function performVisit(url, options) {
     const requestId = ++activeVisitRequestId;
+    // Leaving a page via a normal visit: remember where the user was
+    if (!options.restore)
+        persistScrollPosition();
     const visitDetail = {
         url,
         mode: options.mode,
@@ -2249,8 +2339,8 @@ async function performVisit(url, options) {
     dispatchVisitEvent('beam:before-visit', visitDetail);
     try {
         if (options.preview && cached && cached.expires > Date.now()) {
-            if (await applyVisitResponse(cached.response, options.target) === 'applied') {
-                commitVisitHistory(cached.response.finalUrl || url, options.mode, options.target, options.replace);
+            if (await applyVisitResponse(cached.response, options.target, options.restore) === 'applied') {
+                commitVisitHistory(cached.response.finalUrl || url, options.mode, options.target, options.replace, options.restore);
                 historyCommitted = true;
             }
         }
@@ -2262,9 +2352,9 @@ async function performVisit(url, options) {
         if (requestId !== activeVisitRequestId)
             return;
         visitCache.set(cacheKey, { response, expires: Date.now() + VISIT_CACHE_TTL });
-        if (await applyVisitResponse(response, options.target) !== 'applied')
+        if (await applyVisitResponse(response, options.target, options.restore) !== 'applied')
             return;
-        commitVisitHistory(response.finalUrl || url, options.mode, options.target, historyCommitted || options.replace);
+        commitVisitHistory(response.finalUrl || url, options.mode, options.target, historyCommitted || options.replace, options.restore);
         setVisitLoading(false);
         visitLoadingSettled = true;
         dispatchVisitEvent('beam:after-visit', {
@@ -2287,13 +2377,40 @@ async function performVisit(url, options) {
         }
     }
 }
+// Mark the page the user landed on as a Beam entry so Back to it is handled
+// by the visit path instead of being ignored.
+if (history.state == null) {
+    try {
+        history.replaceState({ beamVisit: true, url: location.href, mode: 'visit', target: 'body' }, '', location.href);
+    }
+    catch {
+        // Ignore: replaceState can throw in sandboxed contexts
+    }
+}
+// Remember scroll position on the current entry (debounced) for Back/Forward.
+let scrollPersistTimer = null;
+window.addEventListener('scroll', () => {
+    if (scrollPersistTimer)
+        clearTimeout(scrollPersistTimer);
+    scrollPersistTimer = setTimeout(() => {
+        scrollPersistTimer = null;
+        persistScrollPosition();
+    }, 100);
+}, { passive: true });
+// A popstate that only changes the hash is not a visit (see currentVisitPath).
 window.addEventListener('popstate', (e) => {
+    const path = location.pathname + location.search;
+    const samePath = path === currentVisitPath;
+    currentVisitPath = path;
     if (e.state?.beamVisit) {
+        if (samePath)
+            return;
         performVisit(location.href, {
             mode: e.state.mode || 'visit',
             target: e.state.target || 'body',
             replace: true,
             preview: true,
+            restore: true,
         }).catch((err) => {
             console.error('Beam popstate visit failed:', err);
             hardNavigate(location.href);
@@ -2375,7 +2492,19 @@ function saveScrollState(targetSelector, action) {
         console.warn('[beam] Could not save scroll state:', e);
     }
 }
-function restoreScrollState() {
+function clearSentinelScrollState() {
+    const sentinel = document.querySelector('[beam-infinite], [beam-load-more]');
+    const action = sentinel?.getAttribute('beam-action');
+    if (!action)
+        return;
+    try {
+        sessionStorage.removeItem(getScrollStateKey(action));
+    }
+    catch {
+        // sessionStorage might be disabled
+    }
+}
+function restoreScrollState(scrollYOverride) {
     // Find infinite scroll or load more container
     const sentinel = document.querySelector('[beam-infinite], [beam-load-more]');
     if (!sentinel)
@@ -2431,7 +2560,7 @@ function restoreScrollState() {
         });
         // Restore scroll position and fade in
         requestAnimationFrame(() => {
-            window.scrollTo(0, state.scrollY);
+            window.scrollTo(0, scrollYOverride ?? state.scrollY);
             requestAnimationFrame(() => {
                 target.style.opacity = '1';
             });
@@ -2595,6 +2724,8 @@ document.addEventListener('click', async (e) => {
         handleHistory(trigger);
     }
     catch (err) {
+        if (pageLeaving)
+            return;
         console.error('Load more error:', err);
         trigger.removeAttribute('beam-loading');
         trigger.classList.remove('loading');
@@ -2866,6 +2997,8 @@ document.addEventListener('submit', async (e) => {
         }
     }
     catch (err) {
+        if (pageLeaving)
+            return;
         placeholder.restore();
         console.error('Beam form error:', err);
         showToast('Something went wrong. Please try again.', 'error');

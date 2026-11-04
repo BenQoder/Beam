@@ -250,8 +250,46 @@ function handleServerEvent(event: string, data: unknown): void {
   }
 }
 
+// True while the page is unloading (navigation, reload, tab close). Stream and
+// socket errors in that window are expected and must not surface as failures.
+let pageLeaving = false
+let pageLeavingTimer: ReturnType<typeof setTimeout> | null = null
+const PAGE_LEAVING_EXPIRY = 10_000
+
+function setPageLeaving(value: boolean): void {
+  pageLeaving = value
+  if (pageLeavingTimer) {
+    clearTimeout(pageLeavingTimer)
+    pageLeavingTimer = null
+  }
+  // A navigation can start and never commit (download, 204, aborted load);
+  // don't let that suppress real errors forever.
+  if (value) pageLeavingTimer = setTimeout(() => setPageLeaving(false), PAGE_LEAVING_EXPIRY)
+}
+
+window.addEventListener('beforeunload', (e) => {
+  // Other listeners (beam-warn-unsaved) may cancel the unload after this one
+  // runs, so decide once they have had their say.
+  setPageLeaving(true)
+  setTimeout(() => {
+    if (e.defaultPrevented) setPageLeaving(false)
+  }, 0)
+})
+window.addEventListener('pagehide', () => setPageLeaving(true))
+// bfcache restore: the page is live again
+window.addEventListener('pageshow', (e) => {
+  setPageLeaving(false)
+  if (e.persisted) maybeConnect('pageshow')
+})
+
 // Handle WebSocket disconnection
 function handleWsDisconnect(error: unknown): void {
+  if (pageLeaving) {
+    wsConnected = false
+    rpcSession = null
+    connectingPromise = null
+    return
+  }
   const reconnect = canReconnect()
   if (reconnect) {
     console.warn('[beam] WebSocket disconnected:', error)
@@ -1674,12 +1712,15 @@ async function rpc(action: string, data: Record<string, unknown>, el: HTMLElemen
     if (!redirected) handleHistory(el)
   } catch (err) {
     trace.done(err)
-    opt.rollback()
-    placeholder.restore()
-    showToast('Something went wrong. Please try again.', 'error')
-    console.error('RPC error:', err)
+    const leaving = pageLeaving
+    if (!leaving) {
+      opt.rollback()
+      placeholder.restore()
+      showToast('Something went wrong. Please try again.', 'error')
+      console.error('RPC error:', err)
+    }
     window.dispatchEvent(new CustomEvent('beam:action-error', {
-      detail: { action, message: err instanceof Error ? err.message : String(err) },
+      detail: { action, message: err instanceof Error ? err.message : String(err), leaving },
     }))
   } finally {
     setLoading(el, false, action, data)
@@ -1806,6 +1847,7 @@ document.addEventListener('click', async (e) => {
         reader.releaseLock()
       }
     } catch (err) {
+      if (pageLeaving) return
       closeModal()
       showToast('Failed to open modal.', 'error')
       console.error('Modal error:', err)
@@ -1862,6 +1904,7 @@ document.addEventListener('click', async (e) => {
         reader.releaseLock()
       }
     } catch (err) {
+      if (pageLeaving) return
       closeDrawer()
       showToast('Failed to open drawer.', 'error')
       console.error('Drawer error:', err)
@@ -2477,9 +2520,39 @@ function applyVisitScroll(response: VisitResponse): void {
   window.scrollTo(0, 0)
 }
 
+let currentVisitPath = location.pathname + location.search
+
+function getSavedHistoryScroll(): number | undefined {
+  const y = (history.state as { scrollY?: unknown } | null)?.scrollY
+  return typeof y === 'number' ? y : undefined
+}
+
+// Record where the user is on the current history entry so Back/Forward can return here.
+function persistScrollPosition(): void {
+  const state = history.state as Record<string, unknown> | null
+  if (!state?.beamVisit) return
+  if (state.scrollY === window.scrollY) return
+  try {
+    history.replaceState({ ...state, scrollY: window.scrollY }, '')
+  } catch {
+    // Ignore: replaceState can throw in sandboxed contexts
+  }
+}
+
+// Re-apply a Back/Forward entry: restore saved list state, else the saved scroll position.
+function applyRestoredScroll(): void {
+  const savedY = getSavedHistoryScroll()
+  if (restoreScrollState(savedY)) return
+  if ('scrollRestoration' in history) {
+    history.scrollRestoration = 'manual'
+  }
+  window.scrollTo(0, savedY ?? 0)
+}
+
 async function applyVisitResponse(
   response: VisitResponse,
-  targetSelector: string
+  targetSelector: string,
+  restore = false
 ): Promise<'applied' | 'hard-navigate'> {
   if (response.redirect) {
     hardNavigate(response.redirect)
@@ -2519,18 +2592,29 @@ async function applyVisitResponse(
   syncManagedHead(doc)
   swap(target, source.innerHTML, 'replace')
   updateNavigation()
-  applyVisitScroll(response)
+  if (restore) {
+    applyRestoredScroll()
+  } else {
+    // A fresh visit starts from the server-rendered list, not a stale saved one
+    clearSentinelScrollState()
+    applyVisitScroll(response)
+  }
   focusAfterVisit(targetSelector)
   return 'applied'
 }
 
-function commitVisitHistory(url: string, mode: VisitMode, target: string, replace: boolean): void {
-  const state = { beamVisit: true, url, mode, target }
+function commitVisitHistory(url: string, mode: VisitMode, target: string, replace: boolean, keepScroll = false): void {
+  const state: Record<string, unknown> = { beamVisit: true, url, mode, target }
+  if (keepScroll) {
+    const scrollY = getSavedHistoryScroll()
+    if (scrollY !== undefined) state.scrollY = scrollY
+  }
   if (replace) {
     history.replaceState(state, '', url)
   } else {
     history.pushState(state, '', url)
   }
+  currentVisitPath = location.pathname + location.search
 }
 
 async function prefetchVisit(link: HTMLAnchorElement): Promise<void> {
@@ -2555,9 +2639,11 @@ async function prefetchVisit(link: HTMLAnchorElement): Promise<void> {
 
 async function performVisit(
   url: string,
-  options: { mode: VisitMode; target: string; replace: boolean; preview?: boolean }
+  options: { mode: VisitMode; target: string; replace: boolean; preview?: boolean; restore?: boolean }
 ): Promise<void> {
   const requestId = ++activeVisitRequestId
+  // Leaving a page via a normal visit: remember where the user was
+  if (!options.restore) persistScrollPosition()
   const visitDetail: VisitLifecycleDetail = {
     url,
     mode: options.mode,
@@ -2574,8 +2660,8 @@ async function performVisit(
 
   try {
     if (options.preview && cached && cached.expires > Date.now()) {
-      if (await applyVisitResponse(cached.response, options.target) === 'applied') {
-        commitVisitHistory(cached.response.finalUrl || url, options.mode, options.target, options.replace)
+      if (await applyVisitResponse(cached.response, options.target, options.restore) === 'applied') {
+        commitVisitHistory(cached.response.finalUrl || url, options.mode, options.target, options.replace, options.restore)
         historyCommitted = true
       }
     }
@@ -2589,9 +2675,9 @@ async function performVisit(
     if (requestId !== activeVisitRequestId) return
 
     visitCache.set(cacheKey, { response, expires: Date.now() + VISIT_CACHE_TTL })
-    if (await applyVisitResponse(response, options.target) !== 'applied') return
+    if (await applyVisitResponse(response, options.target, options.restore) !== 'applied') return
 
-    commitVisitHistory(response.finalUrl || url, options.mode, options.target, historyCommitted || options.replace)
+    commitVisitHistory(response.finalUrl || url, options.mode, options.target, historyCommitted || options.replace, options.restore)
     setVisitLoading(false)
     visitLoadingSettled = true
     dispatchVisitEvent('beam:after-visit', {
@@ -2612,13 +2698,44 @@ async function performVisit(
   }
 }
 
+// Mark the page the user landed on as a Beam entry so Back to it is handled
+// by the visit path instead of being ignored.
+if (history.state == null) {
+  try {
+    history.replaceState(
+      { beamVisit: true, url: location.href, mode: 'visit', target: 'body' },
+      '',
+      location.href
+    )
+  } catch {
+    // Ignore: replaceState can throw in sandboxed contexts
+  }
+}
+
+// Remember scroll position on the current entry (debounced) for Back/Forward.
+let scrollPersistTimer: ReturnType<typeof setTimeout> | null = null
+window.addEventListener('scroll', () => {
+  if (scrollPersistTimer) clearTimeout(scrollPersistTimer)
+  scrollPersistTimer = setTimeout(() => {
+    scrollPersistTimer = null
+    persistScrollPosition()
+  }, 100)
+}, { passive: true })
+
+// A popstate that only changes the hash is not a visit (see currentVisitPath).
 window.addEventListener('popstate', (e) => {
+  const path = location.pathname + location.search
+  const samePath = path === currentVisitPath
+  currentVisitPath = path
+
   if (e.state?.beamVisit) {
+    if (samePath) return
     performVisit(location.href, {
       mode: e.state.mode || 'visit',
       target: e.state.target || 'body',
       replace: true,
       preview: true,
+      restore: true,
     }).catch((err) => {
       console.error('Beam popstate visit failed:', err)
       hardNavigate(location.href)
@@ -2720,7 +2837,18 @@ function saveScrollState(targetSelector: string, action: string): void {
   }
 }
 
-function restoreScrollState(): boolean {
+function clearSentinelScrollState(): void {
+  const sentinel = document.querySelector('[beam-infinite], [beam-load-more]')
+  const action = sentinel?.getAttribute('beam-action')
+  if (!action) return
+  try {
+    sessionStorage.removeItem(getScrollStateKey(action))
+  } catch {
+    // sessionStorage might be disabled
+  }
+}
+
+function restoreScrollState(scrollYOverride?: number): boolean {
   // Find infinite scroll or load more container
   const sentinel = document.querySelector('[beam-infinite], [beam-load-more]')
   if (!sentinel) return false
@@ -2783,7 +2911,7 @@ function restoreScrollState(): boolean {
 
     // Restore scroll position and fade in
     requestAnimationFrame(() => {
-      window.scrollTo(0, state.scrollY)
+      window.scrollTo(0, scrollYOverride ?? state.scrollY)
       requestAnimationFrame(() => {
         target.style.opacity = '1'
       })
@@ -2955,6 +3083,7 @@ document.addEventListener('click', async (e) => {
     }
     handleHistory(trigger)
   } catch (err) {
+    if (pageLeaving) return
     console.error('Load more error:', err)
     trigger.removeAttribute('beam-loading')
     trigger.classList.remove('loading')
@@ -3260,6 +3389,7 @@ document.addEventListener('submit', async (e) => {
       handleHistory(form)
     }
   } catch (err) {
+    if (pageLeaving) return
     placeholder.restore()
     console.error('Beam form error:', err)
     showToast('Something went wrong. Please try again.', 'error')
