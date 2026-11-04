@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 1.5.3 — 2026-11-04
+
+- Fixed `window.beam.runtime.version` reporting `1.5.1` in 1.5.2. The runtime
+  version is now generated from `package.json` at build time
+  (`scripts/sync-version.mjs`), so it can no longer drift from the published
+  version.
+
 ## 1.5.2 — 2026-11-04
 
 - Fixed a false "Something went wrong" toast (and a pointless WebSocket

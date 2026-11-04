@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import pkg from '../package.json'
 
 const mockVisit = vi.fn(async () => ({
   url: 'http://localhost:3000/about',
@@ -219,7 +220,7 @@ describe('client internals', () => {
     await loadClientInternals()
 
     expect(window.beam.runtime).toEqual({
-      version: '1.5.1',
+      version: pkg.version,
       capabilities: { actionResponseGuard: true },
     })
     expect(Object.isFrozen(window.beam.runtime)).toBe(true)

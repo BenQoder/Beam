@@ -68,7 +68,9 @@
     "example"
   ],
   "scripts": {
+    "prebuild": "node scripts/sync-version.mjs",
     "build": "tsc",
+    "version": "node scripts/sync-version.mjs && git add src/version.ts",
     "dev": "tsc --watch",
     "test": "vitest run --environment jsdom"
   },

@@ -1,6 +1,7 @@
 import { newWebSocketRpcSession, type RpcStub } from 'capnweb'
 import { beamReactivity } from './reactivity'
 import { notifyBehaviorContentChanged } from './behaviors'
+import { BEAM_VERSION } from './version'
 // The client owns the complete browser runtime. React itself remains lazy:
 // importing Beam on a page without island markers does not download React.
 import './islands'
@@ -4174,7 +4175,7 @@ conditionalObserver.observe(document.body, { childList: true, subtree: true })
 // ============ EXPORTS ============
 
 export const beamRuntime: BeamRuntimeInfo = Object.freeze({
-  version: '1.5.1',
+  version: BEAM_VERSION,
   capabilities: Object.freeze({
     actionResponseGuard: true,
   }),
